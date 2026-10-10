@@ -10,7 +10,7 @@ Access: *Open* means free full text. *Paywalled* means you need a publisher subs
 
 ## Surveys and theses
 
-- **A Review of Digital Techniques for Modeling Vacuum-Tube Guitar Amplifiers.** J. Pakarinen, D. T. Yeh. *Computer Music Journal* 33(2), 2009. DOI [10.1162/comj.2009.33.2.85](https://doi.org/10.1162/comj.2009.33.2.85). *Paywalled.*
+- **A Review of Digital Techniques for Modeling Vacuum-Tube Guitar Amplifiers.** J. Pakarinen, D. T. Yeh. *Computer Music Journal* 33(2), 2009. DOI [10.1162/comj.2009.33.2.85](https://doi.org/10.1162/comj.2009.33.2.85). *Paywalled; no verified free copy.* Unpaywall, Semantic Scholar and OpenAlex list a free-to-read published version on MIT Press (<https://direct.mit.edu/comj/article/33/2/85/94251>). Its PDF download blocked automated fetching, so this is **unverified**.
   - Surveys the approaches, from static waveshapers to full circuit simulation. Use it to choose a method and justify the choice.
 - **Digital Implementation of Musical Distortion Circuits by Analysis and Simulation.** D. T. Yeh, PhD dissertation, Stanford University (CCRMA), June 2009. <https://ccrma.stanford.edu/~dtyeh/papers/DavidYehThesissinglesided.pdf>. *Open.*
   - The core reference for nodal state-space (K-method / DK-style) simulation of distortion circuits, including valve stages, with real-time-oriented discretisation.
@@ -40,7 +40,7 @@ Access: *Open* means free full text. *Paywalled* means you need a publisher subs
   - An early WDF valve-stage model. It shows how to embed a triode nonlinearity in a WDF tree.
 - **Enhanced Wave Digital Triode Model for Real-Time Tube Amplifier Emulation.** J. Pakarinen, M. Karjalainen. *IEEE Trans. Audio, Speech, and Language Processing* 18(4), 2010, pp. 738–746. DOI [10.1109/TASL.2009.2033306](https://doi.org/10.1109/TASL.2009.2033306). *Paywalled.*
   - A refined real-time WDF triode model. Check how it treats grid current, which matters when Overdrive slams the 6AS6 grid.
-- **New Family of Wave-Digital Triode Models.** S. D'Angelo, J. Pakarinen, V. Välimäki. *IEEE Trans. Audio, Speech, and Language Processing* 21(2), 2013. DOI [10.1109/TASL.2012.2224340](https://doi.org/10.1109/TASL.2012.2224340). *Paywalled.*
+- **New Family of Wave-Digital Triode Models.** S. D'Angelo, J. Pakarinen, V. Välimäki. *IEEE Trans. Audio, Speech, and Language Processing* 21(2), 2013. DOI [10.1109/TASL.2012.2224340](https://doi.org/10.1109/TASL.2012.2224340). *Paywalled; free author copy:* <https://aaltodoc.aalto.fi/bitstreams/c94fca6e-463e-4f8e-a25d-9dce4aa4e8c8/download> (Aaltodoc, Aalto University repository; accepted manuscript, linked from the first author's site).
   - A newer family of WDF triode models that builds on the two above. Compare accuracy against cost before choosing one.
 - **Resolving Wave Digital Filters with Multiple/Multiport Nonlinearities.** K. J. Werner, V. Nangia, J. O. Smith III, J. S. Abel. *Proc. DAFx-15*, Trondheim, 2015. <https://dafx.de/paper-archive/2015/DAFx-15_submission_54.pdf>. *Open.*
   - How to put a multiport nonlinearity into a WDF (a pentode with control and screen grids is one). Needed if we model the 6AS6 as a full multi-terminal device.
