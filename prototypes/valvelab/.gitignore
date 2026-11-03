@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.pytest_cache/
+bench/adaa_bench
+bench/*.f32
+bench/*.bin
+sources/*.lib
+sources/*.sub
+results/figs/
