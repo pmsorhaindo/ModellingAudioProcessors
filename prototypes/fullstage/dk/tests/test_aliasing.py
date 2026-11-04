@@ -1,9 +1,10 @@
 """Aliasing limit per quality setting and resampler (#6). Each limit in dk.aliasing.LIMIT_DBC is the worst total
 non-harmonic energy over the full offset-tone sweep (1037 ... 19037 Hz at 2 V and 8 V, 1 s windows; validate.py
-runs it) plus aliasing.MARGIN_DB. Here a lean subset: aliasing.CI_TONES (each setting's worst tone per drive, and
-10037 Hz at 8 V) with short buffers (CI_SETTLE_S settling, CI_WINDOW_S window), which reproduce the full-sweep totals
-within 0.05 dB at those tones (dk/RESULTS.md). The metric itself (periodic Hann, coherent bins, masks) is checked on
-synthetic signals.
+runs it) plus aliasing.MARGIN_DB. The per-setting limit check on the lean subset (aliasing.CI_TONES with CI_SETTLE_S /
+CI_WINDOW_S buffers) is enforced by dk.aliasing_guard, the blocking `aliasing` CI job (#35), together with a baseline
+ratchet; run it locally with `python -m dk.aliasing_guard`. Here: the limits and CI tones cover every setting, filter
+and drive, the metric itself (periodic Hann, coherent bins, masks) is checked on synthetic signals, and the 64x ground
+truth sits below every limit.
 """
 import os, sys
 import numpy as np
@@ -65,14 +66,3 @@ def test_ground_truth_covers_the_sweep_and_sits_below_every_limit():
             sel = A.select(gt, f"{A.GROUND_TRUTH_OS}x", flt, d)
             assert sorted(r["tone"] for r in sel) == list(A.SWEEP_HZ)
             assert all(max(r["total_dbc"] for r in sel) < A.LIMIT_DBC[(q, flt)][d] for q in QUALITY)
-
-
-@pytest.mark.parametrize("drive", A.DRIVES)
-@pytest.mark.parametrize("quality,filt", list(A.LIMIT_DBC))
-def test_alias_within_setting_limit(quality, filt, drive):
-    recs = A.sweep([(quality, filt)], drives=(drive,), tones=A.CI_TONES[(quality, filt)][drive],
-                   window=A.CI_WINDOW_S, settle=A.CI_SETTLE_S)
-    lim = A.LIMIT_DBC[(quality, filt)][drive]
-    print(f"{quality}/{filt}/{drive:g} V: " + ", ".join(f"{r['f_hz']:.0f} Hz {r['total_dbc']:.2f}" for r in recs)
-          + f" dBc (limit {lim})")
-    assert max(r["total_dbc"] for r in recs) <= lim
