@@ -13,8 +13,8 @@ No lookup tables. Iteration counts are returned so callers can histogram them.
 import math
 from .triode import currents, currents_only, DZ_12AX7_RSD1
 
-TOL_V = 1e-9      # V
-TOL_F = 1e-9      # V (residual of a voltage equation)
+TOL_V = 1e-6      # V  (was 1e-9: ~5e-12 relative on Vak, below float32 and audio relevance; #15)
+TOL_F = 1e-6      # V (residual of a voltage equation)
 MAX_IT = 50
 LS_MAX = 10
 VT = 1.0 / DZ_12AX7_RSD1["Cg"]   # ~0.10 V, the exponential scale of the grid-current law
