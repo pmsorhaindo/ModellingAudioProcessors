@@ -1,0 +1,42 @@
+# 6AS6 / 5725 / 6AS6W / 6187 / M8196 datasheet review
+
+Reviewed 2026-11-04 by rendering every page (pdftoppm) and reading it. The PDFs are not in this repo; the File column is the frank.pocnet.net file name, download each from its Source URL.
+Notation: Eb/Va plate, Ec1/Vg1 control grid, Ec2/Vg2 screen, Ec3/Vg3 suppressor. "Curves" lists conditions printed on each graph.
+
+## Summary of what exists
+- **Screen-voltage families (Vg2 ≠ 120 V): YES**, in RCA, Philips, Tung-Sol, Raytheon. Raytheon 5725/6AS6W is the best (plate curves Vg2 = 60–140 V, transfer and g3 curves at Vg2 = 60–140 V).
+- **Suppressor (g3) vs screen current: YES**, in every sheet except RCA 5725 and the ratings-only ones. Raytheon also gives **g3 current (Ic3) for positive g3 (to +10 V)** and Tung-Sol gives Ib/Ic2 for **Ec3 from 0 to +125 V**.
+- **Positive g1 / control-grid current curves: NONE in any sheet found.** Only the CSF and Mullard sheets give spot data: Ec1 positive limit 0 V max (Mazda/CSF), grid-current *spec* numbers (reverse/gas current ≤0.1 µA in Tung-Sol; Mullard "Vg1 (Ia=100 µA), Vg1 (Ig1=…)" lines on p. D1). Positive-grid behaviour must come from measurement or from generic Langmuir-Child grid-diode modelling.
+
+## Per sheet
+| File | Source URL | Maker / date | Contents (curves & conditions) | Ratings / typical op. noted |
+|---|---|---|---|---|
+| `084_6_6AS6.pdf` | https://frank.pocnet.net/sheets/084/6/6AS6.pdf | GE ET-T706, 12-49 | **already digitised.** Ib/Ic2 vs Eb at Ec2=120, Ec3=0, Ec1 0..−4; Ib vs Ec3 | Eb 180, Ec2 140, +Ec3 27 V, Pa 1.7 W, Pg2 0.75 W, Ik 18 mA; typ. 120/120/−2: Ib 3.6/5.2 mA, Ic2 4.8/3.5 mA at Ec3 −3/0 |
+| `127_6_6AS6.pdf` | https://frank.pocnet.net/sheets/127/6/6AS6.pdf | Tung-Sol 6AS6 | Ib/Ic2 vs Eb (Ec2=120, Ec3=0, Ec1 0..−4); µ/rp/gm vs Ec1 at Eb=Ec2=60/90/120/150; Ib/Ic2 vs Ec1 at Eb=Ec2=60..150; Ib/Ic2 vs Ec3 −10..+10 (Ec1 −1,−2,−3); Ib/Ic2 vs **Ec3 0..+125 V**; gm(g1), gm(g3) vs Ec3 | same as Tung-Sol 5725 below |
+| `049_5_5725.pdf` | https://frank.pocnet.net/sheets/049/5/5725.pdf | RCA 5725 | ratings & limits, no curves | — |
+| `049_6_6AS6.pdf` **new** | https://frank.pocnet.net/sheets/049/6/6AS6.pdf | RCA 6AS6, Feb 1950 tentative (curves 1949) | gm(g1) vs Ec1 at Eb=Ec2=60/90/120/150; **Ib & Ic2 vs Ec1 at Eb=Ec2=60/90/120/150 (Ec3=0)**; Ib/Ic2 vs Eb (Ec2=120, Ec3=0); **Ib/Ic2 vs Ec3 −10..+10 at Ec1 −1,−2,−3** (Eb=Ec2=120); gm(g3), gm(g1) vs Ec3 | Eb 180, Ec2 140, Ec3 +27, Ik 18 mA, Pa 1.7 W, Pg2 0.75 W; typ. = GE; rp 0.15 MΩ (Ec3=0) (GE says 0.11) ; Ib ≤100 µA at Ec1=−10; ≤20 µA at Ec3=−15 |
+| `009_5_5725.pdf` **new** | https://frank.pocnet.net/sheets/009/5/5725.pdf | Philips 5725 "S.Q." Dec 1968 | p.6 **Ia & Ig2 vs Vg1 at Va=Vg2=60/90/120/150 (Vg3=0)**, with gm contours; p.7 Ia/Ig2 vs Va (Vg2=120, Vg3=0, Vg1 0..−4); p.8 **Ia/Ig2 vs Vg3 −12..+12 at Vg1 −1,−2,−3**, Sg1/Sg3 vs Vg3 | Va 200, Vg2 155, Vg3 30, Pa 1.85 W, Pg2 0.85 W, Ik 20 mA; typ. 120/120/−2/Vg3 0: Ia 5.2 (2.5–9.0), Ig2 3.5, gm1 3.2, gm3 0.47 mA/V, Ri 150 kΩ; cutoff table (Vg1 for Ia=50 µA etc.) |
+| `020_5_5725.pdf` **new** | https://frank.pocnet.net/sheets/020/5/5725.pdf | Mazda-Belvu 5725, 1-68 (French) | Ia/Ig2 vs Va (Vg2=120, Vg3=0, Vg1 0..−4); Ia/Ig2 vs Vg3 −10..+10 (Va=Vg2=120, Vg1=−2) | **Vg1 positive max listed as 0 V**; table also lists max g1 and g3 currents, Ik 18 mA, Rg1 limit — read at low resolution, re-check before use |
+| `087_5_5725.pdf`, `127_5_5725.pdf` **new** | https://frank.pocnet.net/sheets/087/5/5725.pdf ; https://frank.pocnet.net/sheets/127/5/5725.pdf | Tung-Sol 5725/6AS6W/6187 premium (two scans/issues of same sheet) | as Tung-Sol 6AS6, incl. **Ib/Ic2 vs Ec3 0..+125 V at Ec1 −1/−2/−3** (Ic2 rises sharply, Ib flat, both collapse past ~+100 V) | Eb 200, Ec2 155, Ec3 30, Pa 1.65 W, Pg2 0.55 W, Ik 20 mA; range: Ib 2.5–9.0 mA, gm 2500–4500 µmho; grid current 0 to −0.1 µA (Rg=0.1 M) |
+| `093_5_5725.pdf` **new** | https://frank.pocnet.net/sheets/093/5/5725.pdf | GE GL-5725 ETX-258A, 6-52 | gm(g3)/gm(g1) vs Ec3; Ib/Ic2 vs Ec3; Ib/Ic2 vs Eb (Ec2=120?); gm & Ib/Ic2 vs Ec1 | GE 5725 ratings ≈ GE 6AS6; typ. Ec2 120, Ec1 −2: Ib 5.2, Ic2 3.5 mA |
+| `138_5_5725.pdf` **new, best** | https://frank.pocnet.net/sheets/138/5/5725.pdf | Raytheon 5725/6AS6W, 15 Dec 1960, 13 pp. | p.8 **Ib/Ic2 vs Eb for Ec2 = 60/80/100/120/140 (Ec1=Ec3=0)**; p.8 Ib/Ic2 vs Eb for **Ec3 = −14..+10 with Ic3 (g3 current, 0–2 mA) for Ec3 > 0** (Ec2=120, Ec1=−2); p.9 Ib/Ic2 vs Eb (Ec2=120, Ec3=0, Ec1 0..−5); **Ib vs Ec1 at Ec2 60..140** (Eb=120); p.10 **Ic2 vs Ec1 at Ec2 60..140**; **Ib/Ic2 vs Ec3 −12..+12 at Ec2 60..140** (Ec1=−2); p.11 Ib/Ic2 vs Ec3 at Ec1 0..−5 (Ec2=120); gm1 vs Ec3 at Ec2 60..140; p.12 gm1 vs Ec1 at Ec2 60..140; gm1 vs Ec3 at Ec1; p.13 gm3 vs Ec3 at Ec2 60..140 and at Ec1 0..−4 | MIL-E-1 test tables (pp.1-6): grid current, Ic3 etc. limits |
+| `138_6_6187.pdf` **new** | https://frank.pocnet.net/sheets/138/6/6187.pdf | Raytheon CK6187, 8 pp. | standard set: plate chars (Ec2=120), transfer vs Ec1, Ib/Ic2/gm vs Ec3 | MIL test tables |
+| `181_5_5725.pdf` **new** | https://frank.pocnet.net/sheets/181/5/5725.pdf | CSF "Miniatron" 5725/6AS6W (French) | Ia/Ig2 vs Va (Vg2=120, Vg3=0); Ia/Ig2 vs Vg3 −10..+10; Sg3/Sg1 vs Vg3; Sg1/Ia/Ig2 vs Vg1; **screen dissipation derating chart Pg2 vs Vg2** | grid-1 current and reverse-current spec lines; Vg1 for cutoff |
+| `129_m_M8196.pdf` **new** | https://frank.pocnet.net/sheets/129/m/M8196.pdf | Mullard M8196 (CV4011-class SQ), 1959-63, 12 pp. | C1 **Ia vs Vg1 at Va=Vg2=60/90/120/150**; C2 Ia/Ig2 vs Va (Vg2=120, Vg3=0, Vg1 0..−4) with Pa hyperbola; C3 Ia, Ig2, gm, ra vs Vg1; C4 Ia vs Vg3 (Vg1 −1..−3); C5 gm(g1-a) vs Vg3; C6 gm(g3-a) vs Vg3 | typ. 120/120/−2: Ia 3.5/5.1 mA, Ig2 4.8/3.5 at Vg3 −3/0; Va 200, Vg2 155, Vg3 30, Pa 1.65 W, Ik 20 mA, Rg1 max 1 MΩ; Vg1 (Ia=100 µA) ≈ −7.5; Vg3 (Ia=20 µA) ≈ −15 |
+
+Removed after inspection: `129_e_EF732` (Mullard EF732 — different subminiature pentode, g3 tied to cathode; not an equivalent).
+Not retrievable: Peter Millett's 6AS6 PDF (listed on TDSL, URL guess failed); Western Electric made no 6AS6 that I could find; r-type.org has a description page only (https://www.r-type.org/exhib/aaa0065.htm).
+
+## Manufacturer differences worth knowing
+- Ratings: GE/RCA 6AS6 (Eb 180, Ec2 140, Pa 1.7 W, Pg2 0.75 W, Ik 18 mA) vs ruggedised 5725 (Eb 200, Ec2 155, Ec3 30, Ik 20 mA; Pg2 0.55 Tung-Sol, 0.85 Philips; Pa 1.65–1.85 W).
+- Plate resistance at 120/120/−2/0: RCA 0.15 MΩ, GE 0.11 MΩ, Philips 150 kΩ.
+- Typical Ib/Ic2 agree across GE/RCA/Tung-Sol/Philips/Mullard (5.2/3.5 mA at Ec3=0; 3.6/4.8 at Ec3=−3). Production spread is wide: Ib 2.5–9.0 mA, gm 2500–4500 µmho (Tung-Sol, Philips) — i.e. our 7% RMS fit is well inside unit-to-unit spread.
+- Philips p.6/p.8 curves look redrawn from RCA (same conditions, axes).
+
+## Data that would improve our fit (fit6as6/README.md uses only GE p.3, Vg2=120 V, g1 −4..0 V, and GE p.4 Ib vs Ec3)
+1. **Screen-voltage dependence** — digitise Raytheon p.8 top (Ib/Ic2 vs Eb, Ec2 60–140, Ec1=0) and p.9–10 (Ib, Ic2 vs Ec1 at Ec2 60–140). Cross-check with RCA p.4 / Philips p.6 (Eb=Ec2 60–150). This fixes the Koren pentode screen exponent and removes the extrapolation caveat.
+2. **Suppressor split with screen current** — Raytheon p.10 bottom (Ib/Ic2 vs Ec3 at Ec2 60–140) and p.11 top (vs Ec3 at Ec1 0..−5); RCA/Philips/Tung-Sol (Ec1 −1..−3). Directly validates our plate/screen split term, which currently is fitted on Ib only.
+3. **Positive suppressor + g3 current** — Raytheon p.8 bottom (Ic3 for Ec3 0..+10, plus plate curves at 15 Ec3 values) and Tung-Sol Ec3 0..+125 V. Needed if any Culture Vulture mode drives g3 positive.
+4. **Deeper cut-off / low current region** — the unit runs at 0.1–0.6 mA (see culture-vulture-controls.md). Use Raytheon Ec1 to −5 V, RCA/Mullard transfer curves to −7 V, and spot cutoff data (Ib ≤100 µA at Ec1=−10, Mullard Vg1(Ia=100 µA)), and fit with a log-scale error weight.
+5. **Small-signal checks** — gm1/gm3/rp/µ vs Ec1 and Ec3 (Tung-Sol, Raytheon pp.11-13, Mullard C3/C5/C6) as held-out validation of derivatives, which matter for distortion.
+6. **Not available anywhere found:** positive-g1 grid current curves. Options: measure a real 6AS6/5725, or adopt a generic grid-diode model (e.g. Dempwolf/Cardarilli-style) with an explicitly unvalidated parameter, flagged as such.
