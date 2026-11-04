@@ -7,23 +7,28 @@ Run: python -m dk.validate   (from prototypes/fullstage). Writes dk/results.json
 """
 import json, os, sys, time
 import numpy as np
-from scipy.signal import freqz
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 from analysis import harmonics, thd, db_rel
 from spice.run_refs import burst_metrics, AMPS
-from dk.stage import Stage, os_filter, OS
+from dk.stage import Stage, OS
 from dk.triode import currents
 
 FS = 48000.0
 CRIT = dict(op_rel=0.01, ac_db=0.1, ac_band=(20.0, 20000.0), harm_db=1.0, harm_floor_dbc=-100.0,
             burst_min_rel=0.05, burst_tau_rel=0.10, burst_traj_rel=0.05)
-# Stage.process resamples a whole buffer offline, so the last ~1.3 ms (FIR group delay at 8x) of its output is
-# the interpolation/decimation filters ringing against the zero padding past the end of the input. harmonics()
-# analyses the LAST cycles of what it is given, so the sine runs are simulated GUARD_S longer and the analysis
-# window ends before that tail (issue #2). Streaming resampling with fixed latency is #14.
-GUARD_S = 0.02
+# Stage.process streams through stateful resamplers (#14): its output lags the input by stage.latency_samples
+# (base rate). Each run below generates its input latency_samples longer than the window it analyses and drops
+# the first latency_samples of output, so out[n] lines up with x[n] and the analysed samples never depend on
+# input past the end of the signal (that edge was the #2 artefact; this replaces its GUARD_S trim).
+
+
+def aligned(stage, x, record=("out",)):
+    """x must run stage.latency_samples past the analysis window; returns outputs aligned with x[:len(x) - L]."""
+    L = stage.latency_samples
+    r = stage.process(x, record)
+    return {k: (v[L:] if k != "_internal" else v) for k, v in r.items()}
 
 
 def ref(model):
@@ -45,14 +50,15 @@ def small_signal(stage, f):
     z = np.exp(2j * np.pi * np.asarray(f) / stage.fs)
     n = Al.shape[0]
     Hs = np.array([(Cl @ np.linalg.solve(zz * np.eye(n) - Al, Bl) + Dl)[0, 0] for zz in z])
-    _, Hh = freqz(os_filter(stage.fs_base, stage.os), worN=np.asarray(f), fs=stage.fs)
-    Hh = np.abs(Hh)            # linear phase; delay is trimmed in Stage.process
+    Hh = np.abs(stage.rs.chain_response(np.asarray(f, float))) if stage.rs is not None else 1.0
     return 20 * np.log10(np.abs(Hs)), 20 * np.log10(np.abs(Hs) * Hh ** 2)
 
 
-def run(T=0.5, os=OS):
-    out = dict(criteria=CRIT, fs_base=FS, oversampling=os)
-    st = Stage(FS, os=os)
+def run(T=0.5, os=OS, filt="fir"):
+    out = dict(criteria=CRIT, fs_base=FS, oversampling=os, filter=filt)
+    st = Stage(FS, os=os, filt=filt)
+    out["resampler"] = dict(latency_samples=st.latency_samples, latency_ms=st.rs.latency_ms,
+                            macs_up_down=st.rs.macs())
     dc = st.dc
     out["op"] = dict(va=dc["nodes"]["a"], vk=dc["nodes"]["k"], ia=dc["ia"], vgk=dc["vgk"], vg=dc["nodes"]["g"])
     R = {m: ref(m) for m in ("dz", "koren")}
@@ -73,13 +79,13 @@ def run(T=0.5, os=OS):
     out["ac_gain_1k_db"] = float(small_signal(st, [1000.0])[0][0])
 
     out["sine"], times, its = {}, {}, {}
-    n = int(T * FS); t = np.arange(n + int(GUARD_S * FS)) / FS
+    n = int(T * FS)
     for a in AMPS:
-        s = Stage(FS, os=os)
+        s = Stage(FS, os=os, filt=filt)
+        t = np.arange(n + s.latency_samples) / FS
         t0 = time.perf_counter()
-        y = s.process(float(a) * np.sin(2 * np.pi * 1000 * t))["out"]
+        y = aligned(s, float(a) * np.sin(2 * np.pi * 1000 * t))["out"]
         times[a] = (time.perf_counter() - t0) / (len(t) / FS)
-        y = y[:n]                       # analysis window ends GUARD_S before the filter tail
         h = harmonics(y, FS, 1000.0, 100)
         out["sine"][a] = dict(H_peak_V=h[:5].tolist(), H_dBc=db_rel(h)[:5].tolist(), thd_pct=100 * thd(h))
         its[a] = s.iteration_stats()
@@ -95,11 +101,13 @@ def run(T=0.5, os=OS):
             rows["thd_ref_pct"] = r["sine"][a]["thd_pct"]; rows["thd_dk_pct"] = out["sine"][a]["thd_pct"]
             o["harm"][a] = rows
 
-    s = Stage(FS, os=os)
-    nb = int(0.12 * FS); tb = np.arange(nb) / FS
+    s = Stage(FS, os=os, filt=filt)
+    nb = int(0.12 * FS); tb = np.arange(nb + s.latency_samples) / FS
     xb = 4 * np.sin(2 * np.pi * 1000 * tb) * ((tb > 10e-3) & (tb < 30e-3))
-    rb = s.process(xb, record=("out", "vgk"))
-    vg = rb["_internal"]["vgk"]; ti = np.arange(len(vg)) / s.fs
+    rb = aligned(s, xb, record=("out", "vgk"))
+    vg = rb["_internal"]["vgk"]
+    ti = (np.arange(len(vg)) - s.rs.up_delay_internal) / s.fs   # Vgk is seen after the interpolator only
+    keep = (ti >= 0) & (ti < nb / FS); vg, ti = vg[keep], ti[keep]
     out["burst"] = burst_metrics(ti, vg)
     its["burst"] = s.iteration_stats()
     for mname, r in R.items():
@@ -114,7 +122,7 @@ def run(T=0.5, os=OS):
                           ref=dict(rest=rb_["rest_vgk"], min=rb_["min_vgk"], tau=rb_["recovery_tau_s"]))
     out["iterations"] = its
     out["cpu"] = dict(method=f"time.perf_counter around Stage.process (pure Python, one core, 48 kHz base, {os}x OS, "
-                             "FIR resampling included); value = seconds of CPU per second of audio",
+                             f"{filt} half-band resampling included); value = seconds of CPU per second of audio",
                       seconds_per_second=times)
     o = out["vs"]["dz"]
     out["pass_vs_dz"] = dict(

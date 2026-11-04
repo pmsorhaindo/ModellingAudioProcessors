@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from dk.resample import Resampler, hiir_coefs
+from dk.stage import Stage
 
 FS = 48000.0
 PASS_DB, STOP_DB = 0.01, 85.0      # STOP_DB: ALIASING.md's half-band variants were measured at ~84-86 dB
@@ -82,3 +83,32 @@ def test_resampler_blocks_equal_whole(kind):
         out.append(rs.down(rs.up(b) ** 3))
     assert i == len(x)
     assert np.allclose(np.concatenate(out), ref, rtol=0, atol=1e-12)
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_stage_blocks_equal_whole(kind):
+    """Stage.process on random block sizes (including 1 and 7) == one call on the whole buffer: no clicks."""
+    t = np.arange(2400) / FS
+    x = 3.0 * np.sin(2 * np.pi * 997 * t) + 0.5 * np.random.default_rng(5).standard_normal(len(t))
+    ref = Stage(FS, filt=kind).process(x, record=("out", "vgk"))
+    st = Stage(FS, filt=kind)
+    sizes = np.r_[1, 7, 1, 7, np.random.default_rng(6).integers(1, 257, 200)]
+    out, vg, i = [], [], 0
+    for n in sizes:
+        if i >= len(x):
+            break
+        r = st.process(x[i:i + n], record=("out", "vgk")); i += min(n, len(x) - i)
+        out.append(r["out"]); vg.append(r["vgk"])
+    assert i == len(x)
+    scale = np.max(np.abs(ref["out"]))
+    assert np.max(np.abs(np.concatenate(out) - ref["out"])) < 1e-9 * scale
+    assert np.max(np.abs(np.concatenate(vg) - ref["vgk"])) < 1e-9
+
+
+def test_reset_restores_initial_state():
+    st = Stage(FS)
+    x = np.sin(2 * np.pi * 500 * np.arange(500) / FS)
+    a = st.process(x)["out"]
+    st.process(np.ones(100))
+    st.reset()
+    assert np.array_equal(st.process(x)["out"], a)

@@ -6,36 +6,27 @@ Parameters (all our choices, documented here):
             negative Vgk). Changing it rebuilds the matrices and re-solves the operating point, so it
             is a "set before processing" control in this prototype (no smoothing yet).
   output  : linear gain applied to the stage output.
-Oversampling: default 8x (parameter `os`), linear-phase FIR (see OVERSAMPLING_FILTER); the stage runs at
-os*fs. 8x chosen by Michael (4 Nov 2026) to bring the trapezoidal frequency-warping error at 20 kHz under
+Oversampling: default 8x (parameter `os`, a power of two), streaming half-band cascade from dk/resample.py:
+linear-phase FIR by default (`filt="fir"`), polyphase IIR allpass as the cheap option (`filt="iir"`); the
+stage runs at os*fs. process() keeps the filter state, so it can be called block by block; the output is
+delayed by `latency_samples` (base rate) instead of being trimmed (#14). 8x chosen by Michael (4 Nov 2026) to bring the trapezoidal frequency-warping error at 20 kHz under
 the 0.1 dB target (0.21 dB at 4x, ~0.05 dB at 8x; error ~1/os^2), at ~2x the CPU of 4x.
 """
 import numpy as np
-from scipy.signal import firwin, upfirdn
 from . import circuit
 from .solver import solve
 from .triode import currents, DZ_12AX7_RSD1
+from .resample import Resampler
 
 OS = 8
 
 
-def ntaps(os=OS):
-    """64*os - 1 taps (255 at 4x, 511 at 8x): keeps the transition band the same width in Hz at any factor."""
-    return 64 * os - 1
-
-
-OVERSAMPLING_FILTER = ("firwin, 64*os-1 taps (511 at 8x), Kaiser beta 8, cutoff 22 kHz at 48 kHz base (scaled to fs), "
-                       "used for both interpolation (gain os) and decimation; zero-latency by group-delay trim")
-
-
-def os_filter(fs_base, os=OS):
-    return firwin(ntaps(os), 22000.0 * fs_base / 48000.0, window=("kaiser", 8.0), fs=os * fs_base)
-
-
 class Stage:
-    def __init__(self, fs, bias=1.0, drive=1.0, output=1.0, triode=DZ_12AX7_RSD1, oversample=True, os=OS):
+    def __init__(self, fs, bias=1.0, drive=1.0, output=1.0, triode=DZ_12AX7_RSD1, oversample=True, os=OS,
+                 filt="fir"):
         self.fs_base = fs
         self.os = int(os) if oversample else 1
+        self.rs = Resampler(fs, self.os, filt) if self.os > 1 else None
         self.fs = fs * self.os
         self.drive, self.output, self.bias, self.par = drive, output, bias, triode
         self.m = circuit.build(self.fs, rk_scale=bias)
@@ -67,6 +58,13 @@ class Stage:
         self.v_prev = list(self.v)              # solution one sample before self.v, for the predictor
         self.iters = []
         self.nonconv = 0
+        if self.rs is not None:
+            self.rs.reset()
+
+    @property
+    def latency_samples(self):
+        """Base-rate delay of process() output vs input (resampler only; 0 without oversampling)."""
+        return self.rs.latency_samples if self.rs is not None else 0
 
     def process_internal(self, vin, record=("out",)):
         """Run the stage at the internal rate on an input already at self.fs. Returns dict of signals."""
@@ -102,20 +100,16 @@ class Stage:
         return rec
 
     def process(self, vin, record=("out",)):
-        """Base-rate in, base-rate out (with self.os-times oversampling around the stage)."""
+        """Base-rate in, base-rate out (with self.os-times oversampling around the stage). Stateful: call it
+        on consecutive blocks of any length; the output lags the input by self.latency_samples."""
         vin = self.drive * np.asarray(vin, dtype=float)
         if self.os == 1:
             rec = self.process_internal(vin, record)
             return {k: self.output * v if k == "out" else v for k, v in rec.items()}
-        h = os_filter(self.fs_base, self.os)
-        dly = (len(h) - 1) // 2
-        up = upfirdn(h * self.os, vin, up=self.os)[dly:dly + len(vin) * self.os]
-        rec = self.process_internal(up, record)
+        rec = self.process_internal(self.rs.up(vin), record)
         out = {}
         for k, v in rec.items():
-            # remove the DC before filtering so the FIR edge does not see a step, add it back after
-            dc = v[0]
-            y = upfirdn(h, v - dc, down=1)[dly:dly + len(v)][:: self.os] + dc
+            y = self.rs.down(v, channel=k)
             out[k] = self.output * y if k == "out" else y
         out["_internal"] = rec
         return out
