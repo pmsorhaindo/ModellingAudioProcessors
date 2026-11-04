@@ -1,7 +1,7 @@
 # DK stage — validation of the quality settings (4 Nov 2026)
 
-`python -m dk.validate` → `results.json` (one entry per setting); `python -m pytest -q dk/tests` → **91 passed,
-all criteria pass for every setting** (criteria tightened in #5, below).
+`python -m dk.validate` → `results.json` (one entry per setting, plus the aliasing sweep); `python -m pytest -q dk/tests`
+→ **105 passed, all criteria pass for every setting** (criteria tightened in #5, aliasing limits from #6, below).
 
 Setup: 48 kHz base rate, Drive = Bias = Output = 1, default setting **standard = 8× oversampling (stage at
 384 kHz)**. History: the first pass ran at 4× and failed only the small-signal criterion (0.21 dB at 20 kHz, see the
@@ -12,8 +12,8 @@ the small-signal tolerance is unchanged. #17 adds the warping correction back as
 `Stage(fs, quality="hq" | "standard" | "eco", filt="fir" | "iir")`. The resampler (`filt`) is independent of the
 setting; the settings are defined and validated with the FIR. Latency at the base rate, as `Stage.latency_samples`
 reports it; MACs = resampler multiplies per base-rate sample (`Stage.resampler_macs`), each way (up / down).
-Measured against (ii) (the #5 tight-tolerance reference) with the #5 criteria below; aliasing is 10 kHz at 8 V, the `ALIASING.md` metric
-(`dk/tests/test_aliasing.py`), against each setting's limit from #9 / #17.
+Measured against (ii) (the #5 tight-tolerance reference) with the #5 criteria below; aliasing is the worst tone of the
+offset-tone sweep against each setting's limit (#6, "Aliasing" below).
 
 | | hq | standard (default) | eco |
 |---|---|---|---|
@@ -24,7 +24,7 @@ Measured against (ii) (the #5 tight-tolerance reference) with the #5 criteria be
 | small signal, worst 20 Hz–20 kHz (target 0.1 dB) | 0.0136 dB at 20 kHz | 0.0517 dB at 20 kHz | **0.0536 dB** at 11 kHz; **−0.0527 dB at 20 kHz** (plain 4×: 0.212 dB, fail) |
 | H2–H5 worst tested dev (target 0.1 dB, ref > −90 dBc) | 0.00023 dB (H5, 2 V) | 0.00076 dB (H5, 2 V) | 0.0165 dB (H5, 2 V): 6× margin |
 | burst shift / τ / trajectory (0.5 % / 1 % / 0.5 %) | 0.031 % / 0.041 % / 0.0035 % | 0.031 % / 0.041 % / 0.0035 % | 0.009 % / 0.041 % / 0.0078 % |
-| aliasing 10 kHz / 8 V (limit) | −74.87 dBc (−74.8) | −59.72 dBc (−59.7) | −44.12 dBc (−44.1) |
+| aliasing, sweep worst, 8 V / 2 V (limit) | −66.03 (−63.0) / −121.22 dBc (−118.2) | −51.70 (−48.6) / −121.36 dBc (−118.3) | −32.65 (−29.6) / −75.74 dBc (−72.7) |
 | Newton iterations, 8 V sine: mean / max | 2.18 / 3 | 2.45 / 4 | 2.55 / 5 |
 | CPU, pure Python (informational) | 12.2–12.9 s/s | 6.4–6.6 s/s | 3.1–3.6 s/s |
 
@@ -32,8 +32,8 @@ Operating point identical in all three (2×10⁻⁹ relative). Standard is bit-i
 has the least margin on the #5 harmonic limit (0.0165 dB at H5, 2 V, vs 0.1 dB); its harmonics carry the 4× and
 pre-warp error that standard and hq do not. With `filt="iir"` every setting also passes every criterion above
 (small signal 0.0128 / 0.0515 / 0.0534 dB, H2–H5 worst 0.00013 / 0.00053 / 0.0167 dB, burst shift ≤ 0.031 %,
-τ ≤ 0.082 %, trajectory ≤ 0.011 %); its aliasing is −74.75 / −59.73 / −44.10 dBc, so only at standard does
-it meet the FIR-derived limit (tested there, as in #14); at hq and eco it is 0.05 / 0.02 dB above.
+τ ≤ 0.082 %, trajectory ≤ 0.011 %). Its aliasing at 8 V matches the FIR's within 0.02 dB from 5 kHz up, including
+the worst tone. Its resampler floor is higher (it shows at 2 V and at low tones), and since #6 it has its own limits.
 In the pure-Python prototype CPU scales with the internal rate (the per-sample loop dominates: hq 1.9×, eco 0.53× of
 standard), so it does not reproduce the ~0.99× / 0.55× / 0.31× of today's 8× quoted in #17; re-measure in C++.
 
@@ -59,6 +59,142 @@ around 11 kHz, where pre-warping makes the response slightly too high. The 17.5 
 still matters at 100 Hz, so eco is +0.0012 dB at 20 Hz and +0.0028 dB at 1 kHz (8×: < 10⁻⁴ dB). Its H2–H5
 deviations are within 0.02 dB of standard's. The optimum depends on the circuit values and the base rate, so
 re-derive it (one call) when either changes.
+
+## Aliasing (#6): offset-tone sweep against a 64× ground truth
+`dk/aliasing.py`. `python -m dk.validate` runs the full sweep for every setting and both resamplers, writes it to
+`results.json` (`"aliasing"`) and exits with status 1 if any setting exceeds its limit; `dk/tests/test_aliasing.py`
+enforces the same limits on a lean subset. `python -m dk.aliasing` regenerates the 64× ground truth
+(`dk/aliasing_64x.json`, 11 min on 8 cores). This replaces the single-point guard (10 kHz at 8 V, limits equal to the
+measured values: 0.02 dB headroom at standard).
+
+**Method.**
+- Tones 1037, 2037, … 19037 Hz (37 Hz above each kHz) at 2 V and 8 V peak, 48 kHz base rate, Drive = Bias = Output = 1.
+  Every point is a fresh `Stage` started at its operating point: 0.25 s settling, then a 1 s analysis window (1 Hz
+  bins, the tone exactly on a bin). The input runs `latency_samples` past the window and that many output samples are
+  dropped (#14), so the FIR tail never enters the window.
+- Metric: total non-harmonic energy 20 Hz–20 kHz relative to the fundamental (dBc). Periodic Hann window; the
+  fundamental and every harmonic below 24 kHz ±3 bins are masked; everything else in the band is summed.
+- Every alias on its own bin: harmonic k folds onto ±k·f mod 48 kHz, and lands in another harmonic's mask only if
+  (k ∓ j)·f is within 3 Hz of a multiple of 48 kHz. The smallest such k ∓ j ("collision order") is ≥ 919 for every
+  sweep tone except 13037 Hz (81). For 10 kHz it is 24 (H22 folds onto H2), which is why tones that divide 48 kHz hide
+  aliasing under the harmonic masks. In practice that cost little: the exact 10 kHz point reads −74.87 / −59.72 /
+  −44.12 dBc (hq / standard / eco, 8 V) against −74.88 / −59.84 / −44.02 at 10037 Hz. What the old guard missed is that
+  the worst tone is 19037 Hz, 8.8 / 8.0 / 11.5 dB worse.
+- Where each alias comes from: each line is credited to the lowest harmonic order that folds onto its bin. A harmonic
+  above the stage's internal Nyquist (os·24 kHz) folded **inside the stage** ("internal": what oversampling buys).
+  Otherwise it reached 0–20 kHz **through the resampler** ("resampler": decimator stopband leakage, or intermodulation
+  with the interpolator's residual images, which lands on the same bins). That share is about the same at every
+  oversampling factor.
+- Ground truth: the same sweep at 64× (no pre-warp), with each resampler.
+- Lean subset (pytest): each setting's worst tone per drive, plus 10037 Hz at 8 V, with 0.2 s settling and a 0.1 s
+  window. Tones move to the 10 Hz grid, e.g. 19037 → 19040 Hz (collision order ≥ 64 kept). At those tones it reads
+  within 0.05 dB of the full sweep. Shorter settling leaves a start-up transient at 2 V. Even with 0.2 s, the short
+  buffers read up to 1.4 dB high at other 2 V tones, and far more where the full sweep is near the settling floor
+  (47 dB at 1037 Hz, which reads −174 dBc). That is why the subset uses each setting's worst tones.
+
+**Measurement floor.** Measured, in parts:
+
+| part | how | level |
+|---|---|---|
+| analysis (window, FFT) | an exactly harmonic synthetic signal through the metric (`test_aliasing.py`) | −253 dBc (1 s window) |
+| — with the symmetric `np.hanning(n)` used before #6 | same | −113 dBc at 1 s, +6 dB per halving of the window |
+| settling and anything unattributed | "other" share, max over the sweep, all settings | −174 dBc at 2 V, −164 dBc at 8 V (1037 Hz) |
+| resampler, FIR | "resampler" share at 64×, max over the sweep | −121.2 dBc at 2 V (19037 Hz: H2 at 38 kHz through the ≥ 92.8 dB stopband), −105.6 dBc at 8 V |
+| resampler, IIR | same | −115.0 dBc at 2 V, −100.3 dBc at 8 V |
+| folding left at 64× | "internal" share at 64× | −175 dBc at 2 V, −102.8 dBc at 8 V (19037 Hz) |
+
+The "−110 to −113 dBc measurement floor" quoted before was the symmetric window, not the simulation. A coherent
+tone's skirt leaked past the ±3 bin mask. With the periodic window the floor is set by the resampler, and the 64×
+worst case (−101.0 dBc FIR, −99.5 dBc IIR, at 8 V) is resampler leakage and residual folding of similar size. So 64×
+is a ground truth for the stage's own folding down to about −100 dBc at 8 V and −115 to −121 dBc at 2 V.
+
+**Full sweep**, total non-harmonic dBc, every setting × filter vs 64× (`results.json`, `aliasing_64x.json`):
+
+**2 V** (bold: each column's worst tone)
+
+| tone (Hz) | hq FIR | hq IIR | standard FIR | standard IIR | eco FIR | eco IIR | 64× FIR | 64× IIR |
+|---|---|---|---|---|---|---|---|---|
+| 1037 | −173.9 | −173.7 | −173.9 | −173.8 | −173.9 | −173.8 | −173.9 | −173.7 |
+| 2037 | −167.7 | −155.5 | −167.8 | −156.2 | −168.0 | −155.6 | −167.7 | −154.8 |
+| 3037 | −166.7 | −140.3 | −166.9 | −140.5 | −166.8 | −141.5 | −166.6 | −140.3 |
+| 4037 | −155.2 | −136.8 | −155.3 | −136.2 | −140.5 | −136.7 | −155.2 | −137.7 |
+| 5037 | −145.2 | −132.1 | −145.3 | −133.2 | −123.0 | −122.6 | −145.1 | −131.9 |
+| 6037 | −147.0 | −144.2 | −147.0 | −146.7 | −104.7 | −104.7 | −146.9 | −143.3 |
+| 7037 | −147.0 | −127.7 | −144.0 | −126.5 | −98.3 | −98.3 | −146.9 | −129.0 |
+| 8037 | −140.1 | −122.9 | −134.6 | −122.7 | −90.0 | −90.0 | −140.1 | −122.4 |
+| 9037 | −142.1 | −121.5 | −133.7 | −120.8 | −90.7 | −90.7 | −142.1 | −122.0 |
+| 10037 | −134.4 | −117.1 | −130.8 | −116.1 | −94.0 | −94.0 | −134.3 | −117.8 |
+| 11037 | −128.4 | −129.7 | −126.9 | −126.3 | −83.5 | −83.5 | −128.4 | −131.2 |
+| 12037 | −136.7 | −119.0 | −132.6 | −120.5 | −81.7 | −81.7 | −136.6 | −118.5 |
+| 13037 | −130.8 | −115.8 | −129.2 | **−114.0** | −77.0 | −77.0 | −130.7 | −116.4 |
+| 14037 | −125.6 | **−115.2** | −125.2 | −115.6 | −78.3 | −78.3 | −125.6 | −115.1 |
+| 15037 | −139.3 | −128.1 | −136.3 | −130.0 | −76.1 | −76.1 | −139.2 | −128.0 |
+| 16037 | −124.9 | −115.3 | −125.0 | −116.7 | **−75.7** | **−75.7** | −124.8 | **−115.0** |
+| 17037 | −128.9 | −118.6 | −129.3 | −116.9 | −77.7 | −77.7 | −128.8 | −119.3 |
+| 18037 | −123.0 | −119.8 | −123.2 | −121.2 | −79.2 | −79.2 | −123.0 | −119.6 |
+| 19037 | **−121.2** | −126.4 | **−121.4** | −122.9 | −85.3 | −85.3 | **−121.2** | −126.8 |
+
+**8 V** (bold: each column's worst tone)
+
+| tone (Hz) | hq FIR | hq IIR | standard FIR | standard IIR | eco FIR | eco IIR | 64× FIR | 64× IIR |
+|---|---|---|---|---|---|---|---|---|
+| 1037 | −152.0 | −131.5 | −152.2 | −131.5 | −121.1 | −120.8 | −152.0 | −131.6 |
+| 2037 | −135.3 | −116.3 | −104.1 | −103.9 | −79.1 | −79.1 | −136.1 | −116.3 |
+| 3037 | −110.5 | −108.8 | −85.2 | −85.2 | −66.7 | −66.7 | −138.4 | −113.8 |
+| 4037 | −97.3 | −97.1 | −77.0 | −77.0 | −59.8 | −59.8 | −128.5 | −111.2 |
+| 5037 | −89.9 | −89.9 | −71.9 | −71.9 | −56.8 | −56.8 | −128.0 | −112.3 |
+| 6037 | −84.8 | −84.8 | −68.7 | −68.7 | −53.5 | −53.5 | −123.3 | −121.4 |
+| 7037 | −82.2 | −82.1 | −65.2 | −65.2 | −51.7 | −51.7 | −123.3 | −107.3 |
+| 8037 | −79.0 | −79.0 | −63.3 | −63.3 | −46.2 | −46.2 | −119.1 | −101.2 |
+| 9037 | −76.3 | −76.2 | −62.3 | −62.3 | −47.6 | −47.6 | −120.3 | −101.8 |
+| 10037 | −74.9 | −74.9 | −59.8 | −59.8 | −44.0 | −44.0 | −117.8 | −102.5 |
+| 11037 | −73.0 | −73.0 | −58.1 | −58.1 | −44.0 | −44.0 | −112.4 | −113.3 |
+| 12037 | −72.6 | −72.6 | −58.1 | −58.1 | −37.5 | −37.5 | −113.3 | −105.7 |
+| 13037 | −71.0 | −71.0 | −55.3 | −55.3 | −41.6 | −41.6 | −110.1 | −100.9 |
+| 14037 | −69.7 | −69.7 | −55.1 | −55.1 | −37.1 | −37.1 | −107.7 | −101.0 |
+| 15037 | −68.2 | −68.2 | −54.9 | −54.9 | −36.9 | −36.9 | −106.9 | −105.9 |
+| 16037 | −67.2 | −67.2 | −53.3 | −53.3 | −35.7 | −35.7 | −104.1 | −99.5 |
+| 17037 | −66.2 | −66.2 | −52.0 | −52.0 | −40.4 | −40.4 | −103.9 | **−99.5** |
+| 18037 | −66.7 | −66.8 | −52.2 | −52.2 | −34.8 | −34.8 | −102.8 | −102.3 |
+| 19037 | **−66.0** | **−66.0** | **−51.7** | **−51.7** | **−32.6** | **−32.6** | **−101.0** | −100.2 |
+
+- 8 V: every setting is real stage aliasing, 34–68 dB above 64× at its worst tone. FIR and IIR agree within 0.02 dB
+  from 5 kHz up; below that the IIR's resampler floor shows (1037 Hz: −131.5 vs −152.0 dBc at hq).
+  Each doubling of the rate is worth 14.3 dB (standard → hq) and 19.1 dB (eco → standard) at 19037 Hz.
+- 2 V: hq and standard sit on the resampler floor. Their worst tone reads within 0.2 dB of 64× (FIR) and within
+  2.3 dB with the IIR, whose floor differs a little between factors. Some real folding shows at standard (FIR) from
+  7 to 15 kHz: up to 8.4 dB above 64× (9037 Hz), internal share ≤ −131.8 dBc. Eco at 2 V is real aliasing:
+  −75.7 dBc at 16037 Hz against −124.8 at 64×.
+- These reproduce the 8 V worst cases quoted in #6 (4× −32.7, 8× −51.7, 16× −66.0 dBc): −32.65 / −51.70 / −66.03.
+
+**Limits** (`aliasing.LIMIT_DBC`): the worst total over the full sweep for each setting, filter and drive, plus a
+**3 dB margin**, rounded up to 0.1 dB. "CI subset" is the worst reading of the pytest subset with its short buffers.
+
+| setting | filter | drive | worst tone | worst | internal / resampler | 64× at that tone | limit | margin | CI subset |
+|---|---|---|---|---|---|---|---|---|---|
+| hq | FIR | 2 V | 19037 | −121.22 | −220.6 / −121.2 | −121.18 | **−118.2** | 3.02 dB | −121.27 at 19040 Hz |
+| hq | FIR | 8 V | 19037 | −66.03 | −66.0 / −105.7 | −100.96 | **−63.0** | 3.03 dB | −66.03 at 19040 Hz |
+| hq | IIR | 2 V | 14037 | −115.20 | −203.8 / −115.2 | −115.06 | **−112.2** | 3.00 dB | −115.23 at 14040 Hz |
+| hq | IIR | 8 V | 19037 | −66.03 | −66.0 / −102.4 | −100.16 | **−63.0** | 3.03 dB | −66.03 at 19040 Hz |
+| standard | FIR | 2 V | 19037 | −121.36 | −151.0 / −121.4 | −121.18 | **−118.3** | 3.06 dB | −121.40 at 19040 Hz |
+| standard | FIR | 8 V | 19037 | −51.70 | −51.7 / −105.7 | −100.96 | **−48.6** | 3.10 dB | −51.69 at 19040 Hz |
+| standard | IIR | 2 V | 13037 | −114.04 | −133.8 / −114.1 | −116.36 | **−111.0** | 3.04 dB | −114.00 at 13040 Hz |
+| standard | IIR | 8 V | 19037 | −51.70 | −51.7 / −102.8 | −100.16 | **−48.6** | 3.10 dB | −51.69 at 19040 Hz |
+| eco | FIR | 2 V | 16037 | −75.74 | −75.7 / −125.5 | −124.85 | **−72.7** | 3.04 dB | −75.71 at 16040 Hz |
+| eco | FIR | 8 V | 19037 | −32.65 | −32.6 / −105.5 | −100.96 | **−29.6** | 3.05 dB | −32.60 at 19040 Hz |
+| eco | IIR | 2 V | 16037 | −75.74 | −75.7 / −116.4 | −114.97 | **−72.7** | 3.04 dB | −75.70 at 16040 Hz |
+| eco | IIR | 8 V | 19037 | −32.65 | −32.6 / −108.4 | −100.16 | **−29.6** | 3.05 dB | −32.60 at 19040 Hz |
+
+Why 3 dB: the simulation is deterministic (re-runs are bit-identical), so the margin is not noise headroom. It covers
+the CI subset's short buffers (≤ 0.05 dB here), floating-point differences between platforms and library versions,
+and changes too small to matter. Doubling the rate is worth 14–19 dB at 19 kHz / 8 V, so any real loss of oversampling
+benefit fails. The limits are sweep-wide, so tones below the worst one have more room (e.g. hq at 10037 Hz / 8 V:
+−74.9 dBc under a −63.0 limit). The 2 V limits for hq and standard sit 3 dB above the resampler floor, so they guard
+the half-band filters, not the stage. `validate.py` also flags a setting whose worst tone is no longer in its CI tones.
+
+Cost: the full sweep is 228 points, 324 s on 8 cores (`python -m dk.validate` now takes 6.2 min in total, was ~50 s).
+The pytest subset is 18 points, ~50 s on one core, against 44 s for the old guard: the fullstage suite goes from
+109.4 s to 114.0 s (105 tests).
 
 Oversampling filters (#14, `dk/resample.py`): streaming cascade of 2× half-band stages that keep their state, so
 `Stage.process` can run block by block. Default `filt="fir"`: linear-phase half-band FIRs (Kaiser), 127 taps β 9 next
@@ -118,8 +254,8 @@ The warping correction is now the eco setting (#17, above): 4× with the small c
 
 ## Resampler change (#14): before / after, against (ii)
 `python -m dk.validate` before (main at 7c182b4, 511-tap Kaiser, whole-buffer, delay trimmed) and after, at 8×.
-IIR is `run(filt="iir")` in the same harness. Aliasing: 10 kHz at 8 V, the `ALIASING.md` metric
-(`dk/tests/test_aliasing.py`); 16× and 4× measured the same way for reference.
+IIR is `run(filt="iir")` in the same harness. Aliasing: 10 kHz at 8 V with the metric of that time (symmetric Hann,
+the guard that #6 replaced); 16× and 4× measured the same way for reference.
 
 | metric | Kaiser 511 (before) | half-band FIR (default) | half-band IIR |
 |---|---|---|---|
