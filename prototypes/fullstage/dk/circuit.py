@@ -1,9 +1,14 @@
 """The stage netlist and its nodal-DK state-space matrices.
 
-Same circuit and values as ../spice/stage_12ax7.cir. Values: HT, Ra, Rk, Rg from Blencowe ch.1
-(sourced); the rest are our example values (see the netlist header). The inter-electrode capacitances
-CCG/CGP/CCP are Koren's 12AX7 values (Tube.lib), included in BOTH the DK model and the
-Dempwolf-Zoelzer ngspice reference so the two describe the same circuit.
+VALUES is the single source of the component values: spice/run_refs.py generates every ngspice netlist from
+it (#4; spice/stage_12ax7.cir is the GENERATED copy) and spice/tests/test_netlists.py checks them against it.
+COMPONENT VALUES ARE CHOSEN EXAMPLE VALUES, NOT CULTURE VULTURE VALUES. From Merlin Blencowe, "Designing Valve
+Preamps for Guitar and Bass", ch.1 (https://www.valvewizard.co.uk/Common_Gain_Stage.pdf): HT = 300 V, Ra = 100k,
+Rk = 1.5k (sec 1.10 worked example), Rg (grid leak) = 1M (sec 1.9 "typically 1MΩ"). Chosen by us as conventional
+round values (NOT from that source): Cin = 22n, Ck = 22u (fully bypassed, f_lo = 1/(2 pi Rk Ck) ≈ 4.8 Hz),
+Cout = 22n, Rl (next-stage grid leak) = 1M, source resistance Rs = 1k, grid stopper Rgs = 68k.
+The inter-electrode capacitances CCG/CGP/CCP are Koren's 12AX7 values (Tube.lib), included in BOTH the DK model
+and the Dempwolf-Zoelzer ngspice reference (spice/models_dz/dz_12ax7.inc) so the two describe the same circuit.
 
 Derivation (nodal DK; Yeh 2009, Holters & Zoelzer DAFx-11 / EUSIPCO-15), trapezoidal capacitors:
   companion model of each capacitor: i_c[n] = Gc v_c[n] - x[n],  Gc = 2C/T,
