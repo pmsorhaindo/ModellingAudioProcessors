@@ -64,6 +64,7 @@ class Stage:
         vn = self.dc["w"][:len(circuit.NODES)]
         self.x = m["Gx"] @ m["Nx"] @ vn          # capacitor history so that every i_c = 0 at t=0
         self.v = [self.dc["vgk"], self.dc["vak"]]
+        self.v_prev = list(self.v)              # solution one sample before self.v, for the predictor
         self.iters = []
         self.nonconv = 0
 
@@ -75,12 +76,17 @@ class Stage:
         rec = {n: np.empty(len(vin)) for n in record}
         idx = {n: m["out_names"].index(n) for n in record if n in m["out_names"]}
         x, (v0, v1), K, par = self.x, self.v, self.K, self.par
+        q0, q1 = self.v_prev
         iters = np.empty(len(vin), dtype=np.int16)
         Gu, Hu = G, H
         for n, s in enumerate(vin):
             u = np.array([s, HT])
             p = Gu @ x + Hu @ u
-            v0, v1, ig, ia, it, ok = solve(p[0], p[1], K, v0, v1, par)
+            # warm start from the linear extrapolation of the last two solutions (#15): at 8x the
+            # signal is smooth per sample, so this lands within ~1e-6 V more often than v[n-1] does
+            e0, e1 = 2.0 * v0 - q0, 2.0 * v1 - q1
+            q0, q1 = v0, v1
+            v0, v1, ig, ia, it, ok = solve(p[0], p[1], K, e0, e1, par)
             iters[n] = it
             if not ok:
                 self.nonconv += 1
@@ -91,7 +97,7 @@ class Stage:
             if "vgk" in rec:
                 rec["vgk"][n] = v0
             x = A @ x + B @ u + C @ inl
-        self.x, self.v = x, [v0, v1]
+        self.x, self.v, self.v_prev = x, [v0, v1], [q0, q1]
         self.iters.append(iters)
         return rec
 

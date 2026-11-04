@@ -43,3 +43,12 @@ def currents(vgk, vak, p=DZ_12AX7_RSD1):
     J = ((dig, 0.0),
          (dik_dz - dig, dik_dz / mu))
     return ig, ia, J
+
+
+def currents_only(vgk, vak, p=DZ_12AX7_RSD1):
+    """(Ig, Ia) without the Jacobian: same expressions as currents(), for line-search trials."""
+    G, mu, gam, C = p["G"], p["mu"], p["gamma"], p["C"]
+    Gg, xi, Cg, Ig0 = p["Gg"], p["xi"], p["Cg"], p["Ig0"]
+    ik = G * (softplus(C * (vak / mu + vgk)) / C) ** gam
+    ig = Gg * (softplus(Cg * vgk) / Cg) ** xi + Ig0
+    return ig, ik - ig

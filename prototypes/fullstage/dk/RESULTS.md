@@ -53,28 +53,34 @@ A warping correction remains an option for the C++ core if the CPU cost of 8× m
 So most of any difference from the Koren reference is the valve model, which is why (ii) exists.
 
 ## Newton–Raphson iterations per sample (384 kHz, 8×)
-Count includes the final converged check (tol 1e-9 V on step and residual). No sample failed to converge.
-Smaller steps give a better previous-sample guess, so per-sample iterations drop slightly vs 4×
-(4× means/max in brackets), but there are twice as many samples.
+Count includes the final converged check (tol **1e-6 V** on step and residual, was 1e-9 V). Each sample starts
+from the linear extrapolation 2·v[n−1] − v[n−2] of the last two solutions (#15); pnjlim, the line search and
+the 50-iteration cap are unchanged. No sample failed to converge. 4× means/max in brackets.
 
-| run | mean | max | histogram | 4× |
-|---|---|---|---|---|
-| 0.05 V sine | 2.97 | 3 | 2: 6 761, 3: 192 919 | 2.99 / 3 |
-| 0.5 V | 3.00 | 3 | 2: 520, 3: 199 160 | 3.39 / 4 |
-| 2 V | 3.81 | 4 | 2: 17, 3: 38 369, 4: 161 294 | 3.94 / 4 |
-| 8 V | 3.06 | 6 | 2: 81 925, 3: 37 053, 4: 68 246, 5: 12 453, 6: 3 | 3.24 / 8 |
-| 4 V burst | 2.41 | 5 | 1: 3 593, 2: 24 430, 3: 13 636, 4: 4 242, 5: 179 | 2.53 / 6 |
+| run | mean | max | histogram | 4× | before #15 (tol 1e-9, v[n−1] start) |
+|---|---|---|---|---|---|
+| 0.05 V sine | 2.00 | 2 | 1: 1, 2: 199 679 | 2.00 / 2 | 2.97 / 3 (2: 6 761, 3: 192 919) |
+| 0.5 V | 2.00 | 2 | 2: 199 680 | 2.00 / 3 | 3.00 / 3 (2: 520, 3: 199 160) |
+| 2 V | 2.29 | 3 | 2: 142 493, 3: 57 187 | 2.93 / 3 | 3.81 / 4 (2: 17, 3: 38 369, 4: 161 294) |
+| 8 V | 2.45 | 4 | 2: 113 461, 3: 82 092, 4: 4 127 | 2.56 / 5 | 3.06 / 6 (2: 81 925, 3: 37 053, 4: 68 246, 5: 12 453, 6: 3) |
+| 4 V burst | 1.32 | 4 | 1: 34 779, 2: 7 784, 3: 3 516, 4: 1 | 1.59 / 4 | 2.41 / 5 (1: 3 593, 2: 24 430, 3: 13 636, 4: 4 242, 5: 179) |
+
+Every accuracy metric above is unchanged by #15 to better than 1e-12 relative (operating point, response,
+H2–H5, burst). The line search now evaluates the Jacobian once per accepted step rather than on every halving
+(audit finding 8); that change alone is bit-identical.
 
 ## CPU (informational)
 Pure Python 3.13.5 (NumPy/SciPy), one core of the lab box (Intel Xeon, shared VM), `time.perf_counter` around `Stage.process`
 on 0.5 s sines at 48 kHz in/out, FIR resampling included; 4× measured in the same `python -m dk.validate` run.
 
-| drive | 8× | 4× |
-|---|---|---|
-| 0.05 V | 7.60 s/s | 3.78 s/s |
-| 0.5 V | 7.70 | 4.50 |
-| 2 V | 8.33 | 4.28 |
-| 8 V | 7.35 | 3.88 |
+| drive | 8× | 4× | 8× before #15 |
+|---|---|---|---|
+| 0.05 V | 6.42 s/s | 3.16 s/s | 7.69 |
+| 0.5 V | 6.45 | 3.15 | 7.65 |
+| 2 V | 6.74 | 3.59 | 8.34 |
+| 8 V | 6.83 | 3.41 | 7.39 |
 
-So 8× costs ~2.0× the CPU of 4× (≈8 s of CPU per second of audio, ~8× slower than real time). This is
+#15 cut the Python time by 8–19 %. Iterations fell 20–45 %, but here the per-sample NumPy matrix work dominates;
+the solver share is far larger in C/C++ (~85–90 % in the C port timing), where the saving should be re-measured.
+So 8× costs ~2.0× the CPU of 4× (≈6.5 s of CPU per second of audio, ~8× slower than real time). This is
 interpreter overhead and says nothing about the C++ core, where the cost of 8× should be re-measured.
