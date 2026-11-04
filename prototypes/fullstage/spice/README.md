@@ -20,4 +20,10 @@ mkdir -p out
 `.spiceinit` sets `ngbehavior=psa` (PSpice compatibility, needed for the Koren B-source syntax).
 `out/` is git-ignored (the transient dumps are several MB each).
 
+Long, settled sine runs (v2, the test reference; needs the lab Python env):
+```bash
+../.ngenv/bin/ngspice -b stage_12ax7_sine_long.cir > out/log_long.txt   # ~10 s
+python analyse_sine_long.py                                             # -> reference_sine.json
+```
+
 Results: see `RESULTS.md`.
