@@ -2,7 +2,7 @@
 
 test_small_signal_within_0p1dB_20Hz_20kHz derives the response from the DK matrices and the FIR response,
 so a bug in the per-sample loop or in the resampling would not show there. This test pushes a real
-multitone through process() at the default oversampling and measures what comes out:
+multitone through process() at each quality setting (#17) and measures what comes out:
   * gain vs the committed ngspice AC reference (same DZ valve law), within CRIT["ac_db"] (0.1 dB);
   * phase vs the exact linearisation of the discretised stage (the ngspice JSON stores no phase), which
     catches a latency / group-delay error in the resampler that magnitude alone would miss.
@@ -16,7 +16,7 @@ import os, sys
 import numpy as np
 import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from dk.stage import Stage
+from dk.stage import Stage, QUALITY
 from dk import validate as V
 from dk.triode import currents
 
@@ -42,10 +42,10 @@ def linear_phase_deg(stage, f):
     return np.degrees(np.angle([(Cl @ np.linalg.solve(zz * np.eye(n) - Al, Bl) + Dl)[0, 0] for zz in z]))
 
 
-@pytest.fixture(scope="module")
-def measured():
+@pytest.fixture(scope="module", params=list(QUALITY))
+def measured(request):
     n0, N = int(SETTLE_S * FS), int(WIN_S * FS)
-    st = Stage(FS)
+    st = Stage(FS, quality=request.param)
     t = np.arange(n0 + N + st.latency_samples) / FS
     ph = np.random.default_rng(0).uniform(0, 2 * np.pi, len(TONES))   # random phases: low crest factor
     x = sum(AMP * np.sin(2 * np.pi * f * t + p) for f, p in zip(TONES, ph))
