@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.13"
+  MPLBACKEND: Agg
+
+jobs:
+  test:
+    name: test (${{ matrix.prototype }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        prototype: [valvelab, fullstage, fit6as6]
+    defaults:
+      run:
+        working-directory: prototypes/${{ matrix.prototype }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: prototypes/${{ matrix.prototype }}/requirements.txt
+      - name: Install requirements
+        run: python -m pip install -r requirements.txt
+      # fit.py writes figures into plots/, which is gitignored.
+      - name: Prepare output dirs
+        if: matrix.prototype == 'fit6as6'
+        run: mkdir -p plots
+      # The DK tests compare against committed ngspice reference JSONs
+      # (spice/reference_*.json), so ngspice itself is not needed here.
+      - name: Pytest
+        run: python -m pytest -q
+
+  lint:
+    name: ruff (non-blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: python -m pip install ruff==0.17.3
+      - name: Ruff (pyflakes + pycodestyle)
+        run: ruff check --isolated --select E,F --output-format github prototypes
