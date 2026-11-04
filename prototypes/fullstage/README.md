@@ -7,12 +7,13 @@ wave digital filters for comparison, before the 6AS6 stage and a C++ core.
 | folder | what | status |
 |---|---|---|
 | `RESEARCH-numerics.md` | pitfalls and published fixes (NR robustness, DC init, aliasing, WDF multiport) | done |
-| `spice/` | ngspice references: Koren 12AX7 (i) and Dempwolf–Zölzer (ii) on the same netlist | done; settled 500 ms sine data |
+| `spice/` | ngspice references: Koren 12AX7 (i) and Dempwolf–Zölzer (ii) on the same netlist, generated from `dk/circuit.VALUES` (#4) | done; settled 500 ms sine data, tight solver (#5) |
 | `analysis.py` | shared measurements (DFT harmonics, THD, bias shift, recovery τ) | done |
 | `dk/` | nodal DK prototype in Python/NumPy with streaming half-band resamplers, Drive/Bias/Output, quality settings hq 16× / standard 8× (default) / eco 4× + small-cap pre-warp | all tests pass in every setting (small-signal worst 0.014 / 0.052 / 0.054 dB; plain 4× fails with 0.21 dB from trapezoidal warping) — see `dk/RESULTS.md` |
 | WDF version | — | next |
 
-**Circuit values are example values, not Culture Vulture values** (see `spice/stage_12ax7.cir`).
+**Circuit values are example values, not Culture Vulture values** (`dk/circuit.VALUES`, the single source for every
+ngspice netlist, which `spice/run_refs.py` generates; see `spice/README.md`).
 
 ## Process so far
 1. Research the numerics → `RESEARCH-numerics.md`.
@@ -34,16 +35,20 @@ wave digital filters for comparison, before the 6AS6 stage and a C++ core.
     setting × resampler at 2 V and 8 V. It fails over the absolute limit, and also on any regression of more than
     1.5 dB against the committed baseline (`dk/aliasing_baseline.json`). Proven with deliberately degraded local changes,
     never committed (`dk/RESULTS.md`).
+11. Netlists generated from `dk/circuit.VALUES` (#4): `spice/run_refs.py` builds every ngspice netlist from VALUES and
+    the shared `SOLVER`; the hand-written `.cir` duplicates are gone, and `spice/tests/test_netlists.py` fails on any
+    divergence. The regenerated references are bit-identical to the committed ones.
 
 ## Run
 ```bash
 cd prototypes/fullstage
-spice/models/fetch_models.sh                       # Koren model (not redistributed)
+bash spice/models/fetch_models.sh                  # Koren model (not redistributed)
 ln -s /path/to/ngspice-env .ngenv                  # or set NGSPICE=/path/to/ngspice
 python spice/run_refs.py                           # regenerates spice/reference_{koren,dz}.json (~2 min)
+python spice/run_refs.py --write-netlist           # rewrites the GENERATED spice/stage_12ax7.cir (no ngspice)
 python -m dk.validate                              # -> dk/results.json (~6 min on 8 cores; all settings + aliasing sweep)
 python -m dk.aliasing                              # regenerates the 64x aliasing ground truth (~11 min on 8 cores)
-python -m pytest -q dk/tests
+python -m pytest -q                                # dk/tests + spice/tests (netlists vs VALUES, #4)
 python -m dk.aliasing_guard                        # CI aliasing guard: limits + baseline ratchet (~8 s on 8 cores)
 ```
 
