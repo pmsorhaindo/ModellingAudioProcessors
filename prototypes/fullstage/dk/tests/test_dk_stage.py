@@ -1,6 +1,5 @@
-"""DK stage tests. Pass criteria are the PROPOSED FIRST-PASS TARGETS (Michael approved them as defaults,
-to be tightened later), tested against reference (ii): ngspice running the same Dempwolf-Zoelzer
-equations, so a failure here is a METHOD error, not a valve-model difference.
+"""DK stage tests. Pass criteria are validate.CRIT (first-pass targets, tightened 10-100x in #5), tested
+against reference (ii): ngspice running the same Dempwolf-Zoelzer equations, so a failure here is a METHOD error, not a valve-model difference.
 Run from prototypes/fullstage:  python -m pytest -q dk/tests
 """
 import os, sys
@@ -31,7 +30,7 @@ def test_newton_always_converges(res):
 
 
 @pytest.mark.parametrize("q", ["va", "vk", "ia", "vgk"])
-def test_operating_point_within_1pct(res, q):
+def test_operating_point_within_0p1pct(res, q):
     assert res["vs"]["dz"]["op_rel"][q] < C["op_rel"]
 
 
@@ -41,7 +40,7 @@ def test_small_signal_within_0p1dB_20Hz_20kHz(res):
 
 
 @pytest.mark.parametrize("amp", AMPS)
-def test_harmonics_H2_H5_within_1dB(res, amp):
+def test_harmonics_H2_H5_within_0p1dB_above_m90dBc(res, amp):
     rows = res["vs"]["dz"]["harm"][amp]
     tested = {k: v for k, v in rows.items() if isinstance(v, dict) and v["tested"]}
     assert tested, "no harmonic above the reference's numerical floor"
