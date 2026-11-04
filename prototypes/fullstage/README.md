@@ -30,6 +30,10 @@ wave digital filters for comparison, before the 6AS6 stage and a C++ core.
    frequency that minimises the worst small-signal error (17.3 kHz); the resampler choice is separate.
 9. Aliasing pass criterion (#6, `dk/aliasing.py`): offset-tone sweep 1037…19037 Hz at 2 V and 8 V against a
    64× ground truth, with a limit for each setting and resampler (worst case + 3 dB).
+10. CI aliasing guard (#35, `dk/aliasing_guard.py`): a blocking `aliasing` CI job runs the lean subset for every
+    setting × resampler at 2 V and 8 V. It fails over the absolute limit, and also on any regression of more than
+    1.5 dB against the committed baseline (`dk/aliasing_baseline.json`). Proven with deliberately degraded local changes,
+    never committed (`dk/RESULTS.md`).
 
 ## Run
 ```bash
@@ -40,7 +44,24 @@ python spice/run_refs.py                           # regenerates spice/reference
 python -m dk.validate                              # -> dk/results.json (~6 min on 8 cores; all settings + aliasing sweep)
 python -m dk.aliasing                              # regenerates the 64x aliasing ground truth (~11 min on 8 cores)
 python -m pytest -q dk/tests
+python -m dk.aliasing_guard                        # CI aliasing guard: limits + baseline ratchet (~8 s on 8 cores)
 ```
+
+### Aliasing guard and its baseline (#35)
+The `aliasing` CI job runs `python -m dk.aliasing_guard`. For each setting / resampler / drive it fails if the
+worst total is over `aliasing.LIMIT_DBC`, or if it is more than **1.5 dB** worse than `dk/aliasing_baseline.json`
+(`aliasing_guard.TOLERANCE_DB`), even under the limit. More than 1.5 dB better passes, with a note to update the
+baseline. The job writes a per-setting table to the run's step summary and uploads `aliasing_guard_results.json` as
+the `aliasing-guard-results` artifact.
+
+To change the baseline on purpose (an intended trade-off, or locking in an improvement):
+```bash
+python -m dk.aliasing_guard --update-baseline --reason "first FIR half-band 127 -> 159 taps: 2 V floor 4 dB lower"
+git commit -m "Aliasing baseline: <the same reason>" dk/aliasing_baseline.json
+```
+The reason is stored in the baseline JSON. **Put the same reason in the commit message**, so `git log
+dk/aliasing_baseline.json` tells you why each change was made. The update is refused while any setting is over its
+absolute limit: change `LIMIT_DBC` (and RESULTS.md) for that, deliberately.
 Python needs numpy and scipy (see `../valvelab/requirements.txt`). Plots are not committed (the
 connector used for commits only accepts text); `results.json` carries the numbers.
 
