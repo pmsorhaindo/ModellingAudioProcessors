@@ -1,0 +1,40 @@
+{
+  "ref": "peak",
+  "ceiling_dbtp": -1.0,
+  "levels": {"clean": 0.5, "edge": 2.0, "driven": 8.0},
+  "renders": [
+    {"name": "standard-clean", "quality": "standard", "filt": "fir", "level": "clean"},
+    {"name": "standard-edge", "quality": "standard", "filt": "fir", "level": "edge"},
+    {"name": "standard-driven", "quality": "standard", "filt": "fir", "level": "driven"},
+    {"name": "eco-driven", "quality": "eco", "filt": "fir", "level": "driven"},
+    {"name": "hq-driven", "quality": "hq", "filt": "fir", "level": "driven"}
+  ],
+  "excerpts": [
+    {
+      "name": "drums", "file": "Casio_MT-40_Drumpattern.mp3", "start": 2.5, "dur": 12.0,
+      "title": "Casio MT-40 Drumpattern", "author": "Maximilian Schönherr", "licence": "Public domain",
+      "url": "https://commons.wikimedia.org/wiki/File:Casio_MT-40_Drumpattern.mp3"
+    },
+    {
+      "name": "bass", "file": "Guitar_Walking_Bass_Blues_in_F.wav", "start": 8.0, "dur": 12.0,
+      "title": "Guitar Walking Bass Blues in F", "author": "ESMUC (Escola Superior de Música de Catalunya)",
+      "licence": "CC0", "url": "https://commons.wikimedia.org/wiki/File:Guitar_Walking_Bass_Blues_in_F.wav"
+    },
+    {
+      "name": "guitar", "file": "turtles_fixed.wav", "start": 24.5, "dur": 12.0,
+      "title": "Turtles Blues (from Full Album - Blues)", "author": "Daniel William Lawrence", "licence": "CC0",
+      "url": "https://commons.wikimedia.org/wiki/File:Turtles_Blues_-_Daniel_William_Lawrence_-_Full_Album_-_Blues.wav"
+    },
+    {
+      "name": "vocal", "file": "Female-vibrato-1.wav", "start": 0.0, "dur": 9.4, "note": [0.5, 2.5],
+      "title": "Female-vibrato-1", "author": "Beetricks", "licence": "CC0",
+      "url": "https://commons.wikimedia.org/wiki/File:Female-vibrato-1.wav"
+    },
+    {
+      "name": "mix", "file": "Change_My_Mind_-_Max_Impact_-_United_States_Air_Force_Band.mp3",
+      "start": 60.0, "dur": 12.0, "title": "Change My Mind", "author": "Matthew G. Ascione (composition); Max Impact / United States Air Force Band (performance)",
+      "licence": "Public domain (United States Air Force Band work)",
+      "url": "https://commons.wikimedia.org/wiki/File:Change_My_Mind_-_Max_Impact_-_United_States_Air_Force_Band.mp3"
+    }
+  ]
+}
