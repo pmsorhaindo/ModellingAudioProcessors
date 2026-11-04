@@ -4,9 +4,13 @@
                  The pass criteria (tightened in #5, see dk/RESULTS.md) are tested against this.
   (i)  'koren' : Koren 12AX7 -> adds MODEL mismatch; reported for information only.
 Each quality setting (stage.QUALITY, #17) is validated against the same criteria.
-Run: python -m dk.validate   (from prototypes/fullstage). Writes dk/results.json, one entry per setting.
+Aliasing (#6): the full offset-tone sweep (dk/aliasing.py) for every setting and both filters, against
+aliasing.LIMIT_DBC, reported alongside the 64x ground truth (dk/aliasing_64x.json). Exits with status 1 if a
+setting exceeds its aliasing limit.
+Run: python -m dk.validate [--workers N]   (from prototypes/fullstage). Writes dk/results.json, one entry per
+setting plus "aliasing".
 """
-import json, os, sys, time
+import argparse, json, os, sys, time
 import numpy as np
 from scipy.optimize import minimize_scalar
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -16,6 +20,7 @@ from analysis import harmonics, thd, db_rel
 from spice.run_refs import burst_metrics, AMPS
 from dk.stage import Stage, QUALITY
 from dk.triode import currents
+from dk import aliasing as AL
 
 FS = 48000.0
 # #5 tightened op 1% -> 0.1%, harmonics 1 dB above -100 dBc -> 0.1 dB above -90 dBc, burst 5/10/5% -> 0.5/1/0.5%,
@@ -152,6 +157,24 @@ def run(T=0.5, quality="standard", filt="fir"):
     return out
 
 
+def aliasing(workers=None):
+    """Full sweep (aliasing.SWEEP_HZ x DRIVES, 1 s windows) for every quality setting and filter, checked against
+    aliasing.LIMIT_DBC. Per setting / filter / drive: the worst tone, its total, the limit and the margin, and the
+    64x ground truth at the same tone and drive, and whether the worst tone is in the lean CI subset."""
+    t0 = time.perf_counter()
+    recs = AL.sweep([(q, flt) for q in QUALITY for flt in AL.FILTERS], workers=workers)
+    gt = AL.load_ground_truth()["records"]
+    worst = {}
+    for (q, flt, d), (w, f, lim, ok) in AL.check_limits(recs).items():
+        g = next(r for r in gt if r["filt"] == flt and r["drive"] == d and r["tone"] == f)
+        worst[f"{q}/{flt}/{d:g}V"] = dict(worst_dbc=w, tone=f, limit_dbc=lim, margin_db=lim - w, passed=ok,
+                                          ground_truth_dbc=g["total_dbc"], tone_in_ci=f in AL.CI_TONES[(q, flt)][d])
+    return dict(method=dict(tones=AL.SWEEP_HZ, drives=AL.DRIVES, settle_s=AL.SETTLE_S, window_s=AL.WINDOW_S,
+                            band_hz=AL.BAND_HZ, mask_bins=AL.MASK_BINS, margin_db=AL.MARGIN_DB),
+                wall_s=time.perf_counter() - t0, worst=worst, passed=all(v["passed"] for v in worst.values()),
+                records=recs)
+
+
 def summary(res):
     lines = [json.dumps(dict(op=res["op"], pass_vs_dz=res["pass_vs_dz"]), default=float)]
     for m in ("dz", "koren"):
@@ -169,10 +192,23 @@ def summary(res):
 
 
 if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--workers", type=int, default=os.cpu_count(), help="processes for the aliasing sweep")
+    args = ap.parse_args()
     res = {q: run(quality=q) for q in QUALITY}
     res["prewarp_minimax"] = prewarp_minimax()
+    res["aliasing"] = aliasing(args.workers)
     json.dump(res, open(os.path.join(HERE, "results.json"), "w"), indent=1, default=float)
     for q in QUALITY:
         print(f"== {q}: {res[q]['oversampling']}x, prewarp {res[q]['prewarp_hz']}, resampler {res[q]['resampler']}")
         print(summary(res[q]))
     print("prewarp_minimax", res["prewarp_minimax"])
+    al = res["aliasing"]
+    print(f"== aliasing: full sweep, {al['wall_s']:.0f} s wall")
+    print(AL.table(al["records"] + AL.load_ground_truth()["records"]))
+    for k, v in al["worst"].items():
+        print(f"{k}: worst {v['worst_dbc']:.2f} dBc at {v['tone']} Hz (64x {v['ground_truth_dbc']:.2f}), "
+              f"limit {v['limit_dbc']:.1f}, margin {v['margin_db']:.2f} dB, {'pass' if v['passed'] else 'FAIL'}"
+              + ("" if v["tone_in_ci"] else "  (worst tone not in aliasing.CI_TONES: update the CI subset)"))
+    if not al["passed"]:
+        sys.exit("aliasing limit exceeded: " + ", ".join(k for k, v in al["worst"].items() if not v["passed"]))

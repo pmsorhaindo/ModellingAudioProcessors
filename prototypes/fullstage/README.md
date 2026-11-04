@@ -28,6 +28,8 @@ wave digital filters for comparison, before the 6AS6 stage and a C++ core.
    default, polyphase IIR allpass as the cheap option; `Stage.process` now works block by block.
 8. Quality settings (#17): hq 16×, standard 8×, eco 4× with the valve capacitances pre-warped at the
    frequency that minimises the worst small-signal error (17.3 kHz); the resampler choice is separate.
+9. Aliasing pass criterion (#6, `dk/aliasing.py`): offset-tone sweep 1037…19037 Hz at 2 V and 8 V against a
+   64× ground truth, with a limit for each setting and resampler (worst case + 3 dB).
 
 ## Run
 ```bash
@@ -35,7 +37,8 @@ cd prototypes/fullstage
 spice/models/fetch_models.sh                       # Koren model (not redistributed)
 ln -s /path/to/ngspice-env .ngenv                  # or set NGSPICE=/path/to/ngspice
 python spice/run_refs.py                           # regenerates spice/reference_{koren,dz}.json (~2 min)
-python -m dk.validate                              # -> dk/results.json (~50 s; all three quality settings)
+python -m dk.validate                              # -> dk/results.json (~6 min on 8 cores; all settings + aliasing sweep)
+python -m dk.aliasing                              # regenerates the 64x aliasing ground truth (~11 min on 8 cores)
 python -m pytest -q dk/tests
 ```
 Python needs numpy and scipy (see `../valvelab/requirements.txt`). Plots are not committed (the
