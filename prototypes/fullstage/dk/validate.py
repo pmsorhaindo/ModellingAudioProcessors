@@ -19,6 +19,11 @@ from dk.triode import currents
 FS = 48000.0
 CRIT = dict(op_rel=0.01, ac_db=0.1, ac_band=(20.0, 20000.0), harm_db=1.0, harm_floor_dbc=-100.0,
             burst_min_rel=0.05, burst_tau_rel=0.10, burst_traj_rel=0.05)
+# Stage.process resamples a whole buffer offline, so the last ~1.3 ms (FIR group delay at 8x) of its output is
+# the interpolation/decimation filters ringing against the zero padding past the end of the input. harmonics()
+# analyses the LAST cycles of what it is given, so the sine runs are simulated GUARD_S longer and the analysis
+# window ends before that tail (issue #2). Streaming resampling with fixed latency is #14.
+GUARD_S = 0.02
 
 
 def ref(model):
@@ -68,12 +73,13 @@ def run(T=0.5, os=OS):
     out["ac_gain_1k_db"] = float(small_signal(st, [1000.0])[0][0])
 
     out["sine"], times, its = {}, {}, {}
-    n = int(T * FS); t = np.arange(n) / FS
+    n = int(T * FS); t = np.arange(n + int(GUARD_S * FS)) / FS
     for a in AMPS:
         s = Stage(FS, os=os)
         t0 = time.perf_counter()
         y = s.process(float(a) * np.sin(2 * np.pi * 1000 * t))["out"]
-        times[a] = (time.perf_counter() - t0) / T
+        times[a] = (time.perf_counter() - t0) / (len(t) / FS)
+        y = y[:n]                       # analysis window ends GUARD_S before the filter tail
         h = harmonics(y, FS, 1000.0, 100)
         out["sine"][a] = dict(H_peak_V=h[:5].tolist(), H_dBc=db_rel(h)[:5].tolist(), thd_pct=100 * thd(h))
         its[a] = s.iteration_stats()
