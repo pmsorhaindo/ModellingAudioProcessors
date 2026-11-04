@@ -34,8 +34,8 @@ the first latency_samples of output are dropped, so the window never depends on 
 the bias shift settle (time constants ~20-30 ms).
 
 Use: measure() one point, sweep() a set of points (optionally in parallel processes). validate.py runs the full
-sweep (1 s windows) for every setting and enforces LIMIT_DBC; dk/tests/test_aliasing.py runs CI_TONES with short
-buffers. `python -m dk.aliasing` regenerates the 64x ground truth (GROUND_TRUTH_JSON; 11 min on 8 cores).
+sweep (1 s windows) for every setting and enforces LIMIT_DBC; dk/aliasing_guard.py (the CI `aliasing` job) runs
+CI_TONES with short buffers. `python -m dk.aliasing` regenerates the 64x ground truth (GROUND_TRUTH_JSON; 11 min on 8 cores).
 """
 import argparse, json, os, sys, time
 from concurrent.futures import ProcessPoolExecutor
@@ -73,7 +73,7 @@ LIMIT_DBC = {                                   # worst measured: tone, dBc (2 V
     ("eco", "fir"): {2.0: -72.7, 8.0: -29.6},          # 16037 -75.74; 19037 -32.65
     ("eco", "iir"): {2.0: -72.7, 8.0: -29.6},          # 16037 -75.74; 19037 -32.65
 }
-# The lean CI subset (dk/tests/test_aliasing.py, CI_SETTLE_S / CI_WINDOW_S buffers): each setting's worst tone at
+# The lean CI subset (dk/aliasing_guard.py, CI_SETTLE_S / CI_WINDOW_S buffers): each setting's worst tone at
 # each drive from the full sweep, plus 10037 Hz at 8 V as a mid-band point. validate.py flags a setting whose
 # full-sweep worst tone is no longer in its CI tones.
 CI_TONES = {

@@ -62,8 +62,8 @@ re-derive it (one call) when either changes.
 
 ## Aliasing (#6): offset-tone sweep against a 64× ground truth
 `dk/aliasing.py`. `python -m dk.validate` runs the full sweep for every setting and both resamplers, writes it to
-`results.json` (`"aliasing"`) and exits with status 1 if any setting exceeds its limit; `dk/tests/test_aliasing.py`
-enforces the same limits on a lean subset. `python -m dk.aliasing` regenerates the 64× ground truth
+`results.json` (`"aliasing"`) and exits with status 1 if any setting exceeds its limit; `dk/aliasing_guard.py` (the
+blocking `aliasing` CI job, below) enforces the same limits on a lean subset. `python -m dk.aliasing` regenerates the 64× ground truth
 (`dk/aliasing_64x.json`, 11 min on 8 cores). This replaces the single-point guard (10 kHz at 8 V, limits equal to the
 measured values: 0.02 dB headroom at standard).
 
@@ -193,13 +193,14 @@ benefit fails. The limits are sweep-wide, so tones below the worst one have more
 the half-band filters, not the stage. `validate.py` also flags a setting whose worst tone is no longer in its CI tones.
 
 Cost: the full sweep is 228 points, 324 s on 8 cores (`python -m dk.validate` now takes 6.2 min in total, was ~50 s).
-The pytest subset is 18 points, ~50 s on one core, against 44 s for the old guard: the fullstage suite goes from
-109.4 s to 114.0 s (105 tests).
+The lean subset was a pytest test at first: 18 points, ~50 s on one core, against 44 s for the old guard (the
+fullstage suite went from 109.4 s to 114.0 s, 105 tests). It now runs only in `dk.aliasing_guard` (#35, #37), so
+pytest keeps just the metric, limit-coverage and ground-truth unit tests.
 
 ### CI guard and baseline ratchet (#35)
-`dk/aliasing_guard.py`, run by the blocking `aliasing` CI job (separate from `test`). It runs the same lean subset as
-`test_aliasing.py` (`CI_TONES`, `CI_SETTLE_S` / `CI_WINDOW_S`: 18 points, 12 setting / filter / drive combinations)
-in parallel processes, and fails if any combination
+`dk/aliasing_guard.py`, run by the blocking `aliasing` CI job (separate from `test`). It runs the lean subset
+(`CI_TONES`, `CI_SETTLE_S` / `CI_WINDOW_S`: 18 points, 12 setting / filter / drive combinations) in parallel
+processes, and fails if any combination
 - reads above its absolute limit (`LIMIT_DBC`, above), or
 - reads more than **1.5 dB** worse than the committed baseline `dk/aliasing_baseline.json`
   (`aliasing_guard.TOLERANCE_DB`), even under the limit.
