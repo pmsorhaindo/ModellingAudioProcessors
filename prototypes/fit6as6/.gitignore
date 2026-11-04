@@ -1,0 +1,4 @@
+datasheets/*.pdf
+datasheets/*.png
+plots/
+__pycache__/
