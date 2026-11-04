@@ -1,4 +1,4 @@
-"""One 12AX7 common-cathode stage, nodal DK method, with Drive / Bias / Output and 8x oversampling (default).
+"""One 12AX7 common-cathode stage, nodal DK method, with Drive / Bias / Output and a quality setting.
 
 Parameters (all our choices, documented here):
   drive   : linear gain applied to the input voltage before the stage (1.0 = signal as given, in volts).
@@ -6,11 +6,19 @@ Parameters (all our choices, documented here):
             negative Vgk). Changing it rebuilds the matrices and re-solves the operating point, so it
             is a "set before processing" control in this prototype (no smoothing yet).
   output  : linear gain applied to the stage output.
-Oversampling: default 8x (parameter `os`, a power of two), streaming half-band cascade from dk/resample.py:
-linear-phase FIR by default (`filt="fir"`), polyphase IIR allpass as the cheap option (`filt="iir"`); the
-stage runs at os*fs. process() keeps the filter state, so it can be called block by block; the output is
-delayed by `latency_samples` (base rate) instead of being trimmed (#14). 8x chosen by Michael (4 Nov 2026) to bring the trapezoidal frequency-warping error at 20 kHz under
-the 0.1 dB target (0.21 dB at 4x, ~0.05 dB at 8x; error ~1/os^2), at ~2x the CPU of 4x.
+  quality : QUALITY key (#17), or an (os, prewarp_hz) pair for experiments:
+              "hq"       16x                         ~15 dB less aliasing than standard
+              "standard" 8x (default)                trapezoidal warping 0.05 dB at 20 kHz
+              "eco"      4x + small-cap pre-warp     plain 4x misses the 0.1 dB small-signal target at 20 kHz
+                                                     (0.21 dB, bilinear warping); pre-warping the valve
+                                                     capacitances (circuit.py) fixes that at no runtime cost
+            PREWARP_HZ is the frequency that minimises the worst small-signal deviation 20 Hz-20 kHz at 4x
+            (validate.prewarp_minimax; see RESULTS.md).
+  filt    : resampler, orthogonal to quality: "fir" (default) linear-phase half-band FIR, "iir" polyphase
+            allpass (HIIR design), ~5 samples latency and ~1/5 of the multiplies, non-linear phase near 20 kHz.
+The stage runs at os*fs between a streaming half-band cascade (dk/resample.py). process() keeps the filter
+state, so it can be called block by block; the output is delayed by `latency_samples` (base rate) instead of
+being trimmed (#14). `resampler_macs` is the resampler's multiplies per base-rate sample (up, down).
 """
 import numpy as np
 from . import circuit
@@ -18,18 +26,18 @@ from .solver import solve
 from .triode import currents, DZ_12AX7_RSD1
 from .resample import Resampler
 
-OS = 8
+PREWARP_HZ = 17300.0
+QUALITY = {"hq": (16, None), "standard": (8, None), "eco": (4, PREWARP_HZ)}   # (os, prewarp_hz)
 
 
 class Stage:
-    def __init__(self, fs, bias=1.0, drive=1.0, output=1.0, triode=DZ_12AX7_RSD1, oversample=True, os=OS,
-                 filt="fir"):
+    def __init__(self, fs, bias=1.0, drive=1.0, output=1.0, triode=DZ_12AX7_RSD1, quality="standard", filt="fir"):
         self.fs_base = fs
-        self.os = int(os) if oversample else 1
-        self.rs = Resampler(fs, self.os, filt) if self.os > 1 else None
+        self.os, self.prewarp_hz = QUALITY[quality] if isinstance(quality, str) else quality
+        self.rs = Resampler(fs, self.os, filt)
         self.fs = fs * self.os
         self.drive, self.output, self.bias, self.par = drive, output, bias, triode
-        self.m = circuit.build(self.fs, rk_scale=bias)
+        self.m = circuit.build(self.fs, rk_scale=bias, prewarp_hz=self.prewarp_hz)
         self.K = self.m["K"].tolist()
         self.dc = self.operating_point()
         self.reset()
@@ -58,13 +66,17 @@ class Stage:
         self.v_prev = list(self.v)              # solution one sample before self.v, for the predictor
         self.iters = []
         self.nonconv = 0
-        if self.rs is not None:
-            self.rs.reset()
+        self.rs.reset()
 
     @property
     def latency_samples(self):
-        """Base-rate delay of process() output vs input (resampler only; 0 without oversampling)."""
-        return self.rs.latency_samples if self.rs is not None else 0
+        """Base-rate delay of process() output vs input (the resampler's; fir exact, iir nominal)."""
+        return self.rs.latency_samples
+
+    @property
+    def resampler_macs(self):
+        """Resampler multiplies per base-rate sample, (up, down)."""
+        return self.rs.macs()
 
     def process_internal(self, vin, record=("out",)):
         """Run the stage at the internal rate on an input already at self.fs. Returns dict of signals."""
@@ -103,9 +115,6 @@ class Stage:
         """Base-rate in, base-rate out (with self.os-times oversampling around the stage). Stateful: call it
         on consecutive blocks of any length; the output lags the input by self.latency_samples."""
         vin = self.drive * np.asarray(vin, dtype=float)
-        if self.os == 1:
-            rec = self.process_internal(vin, record)
-            return {k: self.output * v if k == "out" else v for k, v in rec.items()}
         rec = self.process_internal(self.rs.up(vin), record)
         out = {}
         for k, v in rec.items():
