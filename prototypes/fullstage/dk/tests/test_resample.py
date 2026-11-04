@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from dk.resample import Resampler, hiir_coefs
-from dk.stage import Stage
+from dk.stage import Stage, QUALITY
 
 FS = 48000.0
 PASS_DB, STOP_DB = 0.01, 85.0      # STOP_DB: ALIASING.md's half-band variants were measured at ~84-86 dB
@@ -72,6 +72,24 @@ def test_fir_latency_is_exact(os_):
 
 
 @pytest.mark.parametrize("kind", KINDS)
+@pytest.mark.parametrize("quality", QUALITY)
+def test_stage_reports_its_impulse_delay(quality, kind):
+    """Each setting's latency_samples is the delay of an impulse through its streaming resampler: the 1 kHz group
+    delay of the measured response (fir: exactly, and the pulse peaks there; iir: rounded, as it is defined)."""
+    st = Stage(FS, quality=quality, filt=kind)
+    x = np.zeros(4800); x[100] = 1.0
+    y = st.rs.down(st.rs.up(x))
+    ph = np.unwrap(np.angle(np.fft.rfft(y)))
+    k = 100                                              # 1 kHz bin of a 0.1 s window
+    gd = -(ph[k + 1] - ph[k - 1]) / (2 * 2 * np.pi / len(y)) - 100
+    L = st.latency_samples
+    if kind == "fir":
+        assert gd == pytest.approx(L, abs=1e-6) and np.argmax(np.abs(y)) == 100 + L
+    else:
+        assert round(gd) == L
+
+
+@pytest.mark.parametrize("kind", KINDS)
 def test_resampler_blocks_equal_whole(kind):
     x = np.random.default_rng(3).standard_normal(3000)
     whole = Resampler(FS, 8, kind)
@@ -86,12 +104,13 @@ def test_resampler_blocks_equal_whole(kind):
 
 
 @pytest.mark.parametrize("kind", KINDS)
-def test_stage_blocks_equal_whole(kind):
+@pytest.mark.parametrize("quality", QUALITY)
+def test_stage_blocks_equal_whole(quality, kind):
     """Stage.process on random block sizes (including 1 and 7) == one call on the whole buffer: no clicks."""
     t = np.arange(2400) / FS
     x = 3.0 * np.sin(2 * np.pi * 997 * t) + 0.5 * np.random.default_rng(5).standard_normal(len(t))
-    ref = Stage(FS, filt=kind).process(x, record=("out", "vgk"))
-    st = Stage(FS, filt=kind)
+    ref = Stage(FS, quality=quality, filt=kind).process(x, record=("out", "vgk"))
+    st = Stage(FS, quality=quality, filt=kind)
     sizes = np.r_[1, 7, 1, 7, np.random.default_rng(6).integers(1, 257, 200)]
     out, vg, i = [], [], 0
     for n in sizes:

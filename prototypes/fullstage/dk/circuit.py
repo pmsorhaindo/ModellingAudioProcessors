@@ -16,12 +16,19 @@ Derivation (nodal DK; Yeh 2009, Holters & Zoelzer DAFx-11 / EUSIPCO-15), trapezo
   where A = 2 Gx Nx' Si Nx'^T - I, B = 2 Gx Nx' Si Nu'^T, C = -2 Gx Nx' Si Nn'^T,
         G = Nn' Si Nx'^T, H = Nn' Si Nu'^T, K = Nn' Si Nn'^T, (D, E, F likewise with No'), ' = padded.
   (Sign convention: i_nl are device currents flowing g->k and a->k; K enters with a minus sign.)
+Pre-warp (optional, #17): the trapezoidal rule is the bilinear map s -> (2/T)(1 - z^-1)/(1 + z^-1), which
+compresses frequency (the 0.21 dB at 20 kHz at 4x, see RESULTS.md). Using Gc = C w0 / tan(w0 T/2) instead of
+2C/T makes a capacitor's admittance exact at w0 (same companion model and history update, only Gc changes).
+It is applied to the small capacitances only (< SMALL_C: the pF valve capacitances that, with the Miller
+effect, set the HF roll-off): the coupling and bypass caps set poles below ~10 Hz, where pre-warping them to
+a high w0 would detune them by up to 3 % at 4x. No runtime cost: it only changes the matrices.
 """
 import numpy as np
 
 NODES = ["src", "in1", "gl", "g", "k", "a", "out", "ht"]
 VALUES = dict(HT=300.0, Rs=1e3, Cin=22e-9, Rg=1e6, Rgs=68e3, Ra=100e3, Rk=1.5e3, Ck=22e-6,
               Cout=22e-9, Rl=1e6, CCG=2.3e-12, CGP=2.4e-12, CCP=0.9e-12)
+SMALL_C = 1e-9         # F: capacitors below this are pre-warped when build(prewarp_hz=...) is given
 
 
 def netlist(rk_scale=1.0, v=VALUES):
@@ -44,15 +51,24 @@ def _inc(pairs):
     return M
 
 
-def build(fs, rk_scale=1.0, dc=False):
-    """State-space matrices at sample rate fs. dc=True: capacitors open (for the operating point)."""
+def companion_g(c, fs, prewarp_hz=None):
+    """Companion conductance of capacitor c at rate fs: 2C/T, or pre-warped to prewarp_hz if c < SMALL_C."""
+    if prewarp_hz is None or c >= SMALL_C:
+        return 2.0 * fs * c
+    w0 = 2.0 * np.pi * prewarp_hz
+    return c * w0 / np.tan(w0 / (2.0 * fs))
+
+
+def build(fs, rk_scale=1.0, dc=False, prewarp_hz=None):
+    """State-space matrices at sample rate fs. dc=True: capacitors open (for the operating point).
+    prewarp_hz: pre-warp the small capacitances to this frequency (None = plain trapezoidal)."""
     R, Cs, U, NL, OUT = netlist(rk_scale)
     Nr, Nx, Nn, No = _inc([(p, q) for p, q, _ in R]), _inc([(p, q) for p, q, _ in Cs]), _inc(NL), _inc(OUT)
     Nu = np.zeros((len(U), len(NODES)))
     for r, n in enumerate(U):
         Nu[r, NODES.index(n)] = 1.0
     Gr = np.diag([1.0 / r for _, _, r in R])
-    Gx = np.diag([0.0 if dc else 2.0 * fs * c for _, _, c in Cs])
+    Gx = np.diag([0.0 if dc else companion_g(c, fs, prewarp_hz) for _, _, c in Cs])
     nn, nu = len(NODES), len(U)
     S = np.block([[Nr.T @ Gr @ Nr + Nx.T @ Gx @ Nx, Nu.T], [Nu, np.zeros((nu, nu))]])
     Si = np.linalg.inv(S)

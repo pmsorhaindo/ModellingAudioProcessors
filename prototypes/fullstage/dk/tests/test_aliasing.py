@@ -1,5 +1,8 @@
-"""Aliasing guard for the resampler change (#14): 10 kHz at 8 V, default 8x, must stay at or below the
--59.7 dBc measured for the old 511-tap Kaiser filter (experiments/aliasing/ALIASING.md, variant A).
+"""Aliasing limit per quality setting (#17): 10 kHz at 8 V. Limits are the figures measured in
+experiments/aliasing/ALIASING.md and quoted in #9 / #17: 16x -74.8 dBc (variant F), 8x -59.7 dBc (the old 511-tap
+Kaiser, variant A; the #14 guard), 4x with the small-cap pre-warp -44.1 dBc. The settings use the FIR resampler;
+the IIR option is held to the standard limit as in #14 (at 16x / 4x it measures 0.05 / 0.02 dB above the FIR-based
+limits, see dk/RESULTS.md).
 Metric as in ALIASING.md: total non-harmonic energy 20 Hz-20 kHz relative to the fundamental, 1 s Hann window,
 harmonic bins +-3 masked. The window starts after 0.25 s of settling, aligned by the reported latency.
 """
@@ -10,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from dk.stage import Stage
 
 FS = 48000
-LIMIT_DBC = -59.7
+LIMIT_DBC = {"hq": -74.8, "standard": -59.7, "eco": -44.1}
 
 
 def alias_dbc(y, f, n=FS):
@@ -24,10 +27,12 @@ def alias_dbc(y, f, n=FS):
     return 10 * np.log10(P[mask].sum() / P[f - 3:f + 4].sum())
 
 
-@pytest.mark.parametrize("kind", ["fir", "iir"])
-def test_alias_10kHz_8V_no_worse_than_before(kind):
-    st = Stage(FS, filt=kind)
+@pytest.mark.parametrize("quality,kind", [(q, "fir") for q in LIMIT_DBC] + [("standard", "iir")])
+def test_alias_10kHz_8V_within_setting_limit(quality, kind):
+    st = Stage(FS, quality=quality, filt=kind)
     settle, L = FS // 4, st.latency_samples
     x = 8.0 * np.sin(2 * np.pi * 10000 * np.arange(settle + FS + L) / FS)
     y = st.process(x)["out"][settle + L:settle + L + FS]
-    assert alias_dbc(y, 10000) <= LIMIT_DBC
+    a = alias_dbc(y, 10000)
+    print(f"{quality}/{kind}: {a:.2f} dBc")
+    assert a <= LIMIT_DBC[quality]

@@ -3,16 +3,18 @@
   (ii) 'dz'    : same Dempwolf-Zoelzer equations and params as the DK model -> isolates METHOD error.
                  The pass criteria (tightened in #5, see dk/RESULTS.md) are tested against this.
   (i)  'koren' : Koren 12AX7 -> adds MODEL mismatch; reported for information only.
-Run: python -m dk.validate   (from prototypes/fullstage). Writes dk/results.json.
+Each quality setting (stage.QUALITY, #17) is validated against the same criteria.
+Run: python -m dk.validate   (from prototypes/fullstage). Writes dk/results.json, one entry per setting.
 """
 import json, os, sys, time
 import numpy as np
+from scipy.optimize import minimize_scalar
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 from analysis import harmonics, thd, db_rel
 from spice.run_refs import burst_metrics, AMPS
-from dk.stage import Stage, OS
+from dk.stage import Stage, QUALITY
 from dk.triode import currents
 
 FS = 48000.0
@@ -52,15 +54,27 @@ def small_signal(stage, f):
     z = np.exp(2j * np.pi * np.asarray(f) / stage.fs)
     n = Al.shape[0]
     Hs = np.array([(Cl @ np.linalg.solve(zz * np.eye(n) - Al, Bl) + Dl)[0, 0] for zz in z])
-    Hh = np.abs(stage.rs.chain_response(np.asarray(f, float))) if stage.rs is not None else 1.0
+    Hh = np.abs(stage.rs.chain_response(np.asarray(f, float)))
     return 20 * np.log10(np.abs(Hs)), 20 * np.log10(np.abs(Hs) * Hh ** 2)
 
 
-def run(T=0.5, os=OS, filt="fir"):
-    out = dict(criteria=CRIT, fs_base=FS, oversampling=os, filter=filt)
-    st = Stage(FS, os=os, filt=filt)
+def prewarp_minimax(factor=4, lo=10e3, hi=20e3):
+    """The pre-warp frequency that minimises the worst small-signal deviation (whole chain) from (ii) over
+    CRIT["ac_band"] at `factor`x oversampling: how stage.PREWARP_HZ was chosen."""
+    r = ref("dz")
+    f = np.array(r["ac"]["f"]); sel = (f >= CRIT["ac_band"][0]) & (f <= CRIT["ac_band"][1])
+    worst = lambda f0: float(np.max(np.abs(small_signal(Stage(FS, quality=(factor, f0)), f[sel])[1]
+                                           - np.array(r["ac"]["db"])[sel])))
+    m = minimize_scalar(worst, bounds=(lo, hi), method="bounded", options=dict(xatol=1.0))
+    return dict(oversampling=factor, prewarp_hz=float(m.x), ac_maxdev_db_chain=float(m.fun),
+                without_prewarp_db=worst(None))
+
+
+def run(T=0.5, quality="standard", filt="fir"):
+    st = Stage(FS, quality=quality, filt=filt)
+    out = dict(criteria=CRIT, fs_base=FS, quality=quality, oversampling=st.os, prewarp_hz=st.prewarp_hz, filter=filt)
     out["resampler"] = dict(latency_samples=st.latency_samples, latency_ms=st.rs.latency_ms,
-                            macs_up_down=st.rs.macs())
+                            macs_up_down=st.resampler_macs)
     dc = st.dc
     out["op"] = dict(va=dc["nodes"]["a"], vk=dc["nodes"]["k"], ia=dc["ia"], vgk=dc["vgk"], vg=dc["nodes"]["g"])
     R = {m: ref(m) for m in ("dz", "koren")}
@@ -83,7 +97,7 @@ def run(T=0.5, os=OS, filt="fir"):
     out["sine"], times, its = {}, {}, {}
     n = int(T * FS)
     for a in AMPS:
-        s = Stage(FS, os=os, filt=filt)
+        s = Stage(FS, quality=quality, filt=filt)
         t = np.arange(n + s.latency_samples) / FS
         t0 = time.perf_counter()
         y = aligned(s, float(a) * np.sin(2 * np.pi * 1000 * t))["out"]
@@ -103,7 +117,7 @@ def run(T=0.5, os=OS, filt="fir"):
             rows["thd_ref_pct"] = r["sine"][a]["thd_pct"]; rows["thd_dk_pct"] = out["sine"][a]["thd_pct"]
             o["harm"][a] = rows
 
-    s = Stage(FS, os=os, filt=filt)
+    s = Stage(FS, quality=quality, filt=filt)
     nb = int(0.12 * FS); tb = np.arange(nb + s.latency_samples) / FS
     xb = 4 * np.sin(2 * np.pi * 1000 * tb) * ((tb > 10e-3) & (tb < 30e-3))
     rb = aligned(s, xb, record=("out", "vgk"))
@@ -123,7 +137,7 @@ def run(T=0.5, os=OS, filt="fir"):
                           t_min_diff_ms=1e3 * (out["burst"]["t_min"] - rb_["t_min"]),
                           ref=dict(rest=rb_["rest_vgk"], min=rb_["min_vgk"], tau=rb_["recovery_tau_s"]))
     out["iterations"] = its
-    out["cpu"] = dict(method=f"time.perf_counter around Stage.process (pure Python, one core, 48 kHz base, {os}x OS, "
+    out["cpu"] = dict(method=f"time.perf_counter around Stage.process (pure Python, one core, 48 kHz base, {st.os}x OS, "
                              f"{filt} half-band resampling included); value = seconds of CPU per second of audio",
                       seconds_per_second=times)
     o = out["vs"]["dz"]
@@ -155,11 +169,10 @@ def summary(res):
 
 
 if __name__ == "__main__":
-    res = run()
-    # informational: CPU at 4x on the same machine/run for comparison (criteria not evaluated)
-    r4 = run(os=4)
-    res["cpu"]["seconds_per_second_at_4x"] = r4["cpu"]["seconds_per_second"]
-    res["at_4x_for_comparison"] = dict(ac_maxdev_db_chain=r4["vs"]["dz"]["ac_maxdev_db_chain"],
-                                       iterations={k: (v["mean"], v["max"]) for k, v in r4["iterations"].items()})
+    res = {q: run(quality=q) for q in QUALITY}
+    res["prewarp_minimax"] = prewarp_minimax()
     json.dump(res, open(os.path.join(HERE, "results.json"), "w"), indent=1, default=float)
-    print(summary(res))
+    for q in QUALITY:
+        print(f"== {q}: {res[q]['oversampling']}x, prewarp {res[q]['prewarp_hz']}, resampler {res[q]['resampler']}")
+        print(summary(res[q]))
+    print("prewarp_minimax", res["prewarp_minimax"])
