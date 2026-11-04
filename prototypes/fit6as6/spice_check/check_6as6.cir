@@ -1,0 +1,33 @@
+* ngspice check of the fitted 6AS6_FIT subcircuit against the Python model.
+* DC sweeps at the GE datasheet conditions: p.3 (Ec2=120 V, Ec3=0, Eb 0..240 V, Ec1 0..-4 V)
+* and p.4 (Eb=Ec2=120 V, Ec1 -1..-3 V, Ec3 -10..+10 V). Cathode grounded.
+.include ../results/6AS6_fit.inc
+VB  p  0 DC 120
+VG2 g2 0 DC 120
+VG3 g3 0 DC 0
+VG1 g1 0 DC -2
+X1 p g2 g3 g1 0 6AS6_FIT
+.options reltol=1e-6 abstol=1e-15
+.control
+set wr_singlescale
+set wr_vecnames
+foreach E 0 -1 -2 -3 -4
+  alter VG1 dc = $E
+  alter VG3 dc = 0
+  dc VB 0 240 2.5
+  let ib = -i(VB)
+  let ic2 = -i(VG2)
+  set fn = out/p3_ec1_{$E}.txt
+  wrdata $fn ib ic2
+end
+alter VB dc = 120
+foreach E -1 -2 -3
+  alter VG1 dc = $E
+  dc VG3 -10 10 0.25
+  let ib = -i(VB)
+  let ic2 = -i(VG2)
+  set fn = out/p4_ec1_{$E}.txt
+  wrdata $fn ib ic2
+end
+.endc
+.end

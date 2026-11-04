@@ -72,7 +72,12 @@ p.4: 35 points for each of Ec1 = −1, −2 and −3.
 - **Datasheet cross-check** (not used in the fit), Ec3 −3 / 0 V: Ib 3.48 / 5.22 mA (sheet 3.6 / 5.2), Ic2 5.27 / 3.53 (4.8 / 3.5), gm 1768 / 3068 µmho (1850 / 3200), gm(g3) 762 / 397 (810 / 470), rp 0.14 MΩ at Ec3 = 0 (0.11).
 
 ## SPICE
-`results/6AS6_fit.inc` defines `.SUBCKT 6AS6_FIT P G2 G3 G1 K` using B-sources (ln, exp, atan, pwr, max) and the datasheet capacitances. A test checks it against the Python model by evaluating the same expression strings. **ngspice is not installed on the box, so it has not been run in a simulator yet.**
+`results/6AS6_fit.inc` defines `.SUBCKT 6AS6_FIT P G2 G3 G1 K` using B-sources (ln, exp, atan, pwr, max) and the datasheet capacitances. A test checks it against the Python model by evaluating the same expression strings. **Checked in ngspice 41 (4 Nov 2026):** `spice_check/check_6as6.cir` DC-sweeps the subcircuit at the
+datasheet conditions (p.3: Ec2 120 V, Ec3 0, Eb 0–240 V, Ec1 0…−4 V; p.4: Eb = Ec2 = 120 V, Ec1 −1…−3 V,
+Ec3 −10…+10 V) and `spice_check/compare.py` compares Ib and Ic2 with the Python model. Worst deviation
+over all 16 curves: 0.094 µA absolute, 1.1×10⁻⁵ relative (from the 6-significant-figure parameters in the
+`.inc`). No changes to the `.inc` were needed. Run: `cd spice_check && mkdir -p out &&
+ngspice -b check_6as6.cir && python compare.py` → `spice_check.json`.
 
 ## Limitations
 - **Screen voltage:** all data is at Ec2 = 120 V, so MU and KP are poorly constrained. Any other screen voltage is extrapolation.
