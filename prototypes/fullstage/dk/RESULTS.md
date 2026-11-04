@@ -1,7 +1,7 @@
 # DK stage — validation of the quality settings (4 Nov 2026)
 
 `python -m dk.validate` → `results.json` (one entry per setting, plus the aliasing sweep); `python -m pytest -q dk/tests`
-→ **105 passed, all criteria pass for every setting** (criteria tightened in #5, aliasing limits from #6, below).
+→ **118 passed, all criteria pass for every setting** (criteria tightened in #5, aliasing limits from #6, CI guard #35, below).
 
 Setup: 48 kHz base rate, Drive = Bias = Output = 1, default setting **standard = 8× oversampling (stage at
 384 kHz)**. History: the first pass ran at 4× and failed only the small-signal criterion (0.21 dB at 20 kHz, see the
@@ -195,6 +195,65 @@ the half-band filters, not the stage. `validate.py` also flags a setting whose w
 Cost: the full sweep is 228 points, 324 s on 8 cores (`python -m dk.validate` now takes 6.2 min in total, was ~50 s).
 The pytest subset is 18 points, ~50 s on one core, against 44 s for the old guard: the fullstage suite goes from
 109.4 s to 114.0 s (105 tests).
+
+### CI guard and baseline ratchet (#35)
+`dk/aliasing_guard.py`, run by the blocking `aliasing` CI job (separate from `test`). It runs the same lean subset as
+`test_aliasing.py` (`CI_TONES`, `CI_SETTLE_S` / `CI_WINDOW_S`: 18 points, 12 setting / filter / drive combinations)
+in parallel processes, and fails if any combination
+- reads above its absolute limit (`LIMIT_DBC`, above), or
+- reads more than **1.5 dB** worse than the committed baseline `dk/aliasing_baseline.json`
+  (`aliasing_guard.TOLERANCE_DB`), even under the limit.
+
+Reading more than 1.5 dB better passes, with a note suggesting a baseline update. A combination with no baseline
+entry, or whose CI tones have changed since the baseline, also fails. The job writes the table below to the step
+summary (measured, baseline, delta = measured − baseline, limit, margin = limit − measured, status) and uploads the
+full results (every record, the baseline used, the rows) as the `aliasing-guard-results` artifact.
+
+Why 1.5 dB: the run is deterministic and the baseline is that same subset, so on a given platform delta is
+exactly 0.00 dB. The tolerance covers platform and library floating-point differences and changes too small to
+matter. It sits halfway into the ~3 dB margin of every limit, so the ratchet trips before the limit does. Losing an
+octave of oversampling costs 14–19 dB at 8 V. A slightly weaker half-band shows directly in the 2 V resampler floor
+(the demo below: +2.2 dB for Kaiser β 9.0 → 8.8 in the first FIR stage).
+
+Baseline (`--update-baseline --reason "Initial baseline (#35): CI subset at 330ee9a"`, delta 0.00 dB everywhere):
+
+| setting / filter / drive | worst CI tone | baseline dBc | limit dBc | margin dB |
+|---|---|---|---|---|
+| hq / FIR / 2 V | 19040 Hz | −121.27 | −118.2 | 3.07 |
+| hq / FIR / 8 V | 19040 Hz | −66.03 | −63.0 | 3.03 |
+| hq / IIR / 2 V | 14040 Hz | −115.23 | −112.2 | 3.03 |
+| hq / IIR / 8 V | 19040 Hz | −66.03 | −63.0 | 3.03 |
+| standard / FIR / 2 V | 19040 Hz | −121.40 | −118.3 | 3.10 |
+| standard / FIR / 8 V | 19040 Hz | −51.69 | −48.6 | 3.09 |
+| standard / IIR / 2 V | 13040 Hz | −114.00 | −111.0 | 3.00 |
+| standard / IIR / 8 V | 19040 Hz | −51.69 | −48.6 | 3.09 |
+| eco / FIR / 2 V | 16040 Hz | −75.71 | −72.7 | 3.01 |
+| eco / FIR / 8 V | 19040 Hz | −32.60 | −29.6 | 3.00 |
+| eco / IIR / 2 V | 16040 Hz | −75.70 | −72.7 | 3.00 |
+| eco / IIR / 8 V | 19040 Hz | −32.60 | −29.6 | 3.00 |
+
+**Proof by deliberate degradation** (local only, reverted, never committed; `git diff` of `dk/stage.py` and
+`dk/resample.py` empty afterwards):
+
+| change | result | exit |
+|---|---|---|
+| none | all 12 ok, delta 0.00 dB | 0 |
+| standard forced to 2× (`QUALITY["standard"] = (2, None)`) | standard FIR / IIR at 2 V and 8 V **FAIL limit**: 8 V −15.70 dBc (+35.98 dB, limit −48.6); 2 V −49.28 (FIR) / −44.83 (IIR) dBc. Other settings ok | 1 |
+| first FIR half-band Kaiser β 9.0 → 8.8 | hq and standard FIR 2 V **FAIL regression**: −119.07 / −119.21 dBc, +2.20 / +2.19 dB, still 0.87 / 0.91 dB **under** the limit. Only the ratchet catches it | 1 |
+| (β 8.6, for scale) | same two over the limit: −117.02 / −117.15 dBc, +4.25 dB | 1 |
+| baseline (temporary copy) 3 dB worse at standard / FIR / 8 V | that row "improved" (−3.00 dB) with the update note; passes | 0 |
+
+Lowering the IIR's design attenuation (96 → 87–90 dB per stage) changes nothing: the coefficient count is quantised (6
+coefficients either way), so the output is bit-identical and the guard correctly reads 0.00 dB.
+
+**Updating the baseline** (an intended trade-off, or locking in an improvement):
+`python -m dk.aliasing_guard --update-baseline --reason "..."` reruns the subset and rewrites the baseline with the
+reason, date and git revision. Put the same reason in the commit message. It refuses while any combination is over
+its absolute limit; that needs a deliberate `LIMIT_DBC` change, documented here.
+
+Cost: 7.8 s wall on 8 cores (54 s CPU). CI runs it with `--workers $(nproc)` (4 on `ubuntu-latest`, so expect
+~15–20 s plus install). The unit tests of the comparison logic (`dk/tests/test_aliasing_guard.py`, synthetic
+numbers, no DSP) take 0.6 s.
 
 Oversampling filters (#14, `dk/resample.py`): streaming cascade of 2× half-band stages that keep their state, so
 `Stage.process` can run block by block. Default `filt="fir"`: linear-phase half-band FIRs (Kaiser), 127 taps β 9 next
