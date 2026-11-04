@@ -1,7 +1,7 @@
 """Per-sample Newton-Raphson for the 2-port nonlinear equation of the DK model, and the DC solve.
 
 Solve  F(v) = p - K i(v) - v = 0,  p = G x + H u,  v = (Vgk, Vak)   (see circuit.py)
-  * warm start: previous sample's solution;
+  * warm start: supplied by the caller (Stage uses the linear extrapolation 2 v[n-1] - v[n-2], #15);
   * step limiting on Vgk (the exponential grid-current port), SPICE pnjlim style (Nagel 1975):
     above VCRIT a step larger than 2*VT is compressed logarithmically, VT = 1/Cg;
   * backtracking line search: halve the step (up to LS_MAX times) until ||F||inf decreases; the full step
