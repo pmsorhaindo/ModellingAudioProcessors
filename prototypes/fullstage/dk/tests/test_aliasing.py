@@ -1,38 +1,78 @@
-"""Aliasing limit per quality setting (#17): 10 kHz at 8 V. Limits are the figures measured in
-experiments/aliasing/ALIASING.md and quoted in #9 / #17: 16x -74.8 dBc (variant F), 8x -59.7 dBc (the old 511-tap
-Kaiser, variant A; the #14 guard), 4x with the small-cap pre-warp -44.1 dBc. The settings use the FIR resampler;
-the IIR option is held to the standard limit as in #14 (at 16x / 4x it measures 0.05 / 0.02 dB above the FIR-based
-limits, see dk/RESULTS.md).
-Metric as in ALIASING.md: total non-harmonic energy 20 Hz-20 kHz relative to the fundamental, 1 s Hann window,
-harmonic bins +-3 masked. The window starts after 0.25 s of settling, aligned by the reported latency.
+"""Aliasing limit per quality setting and resampler (#6). Each limit in dk.aliasing.LIMIT_DBC is the worst total
+non-harmonic energy over the full offset-tone sweep (1037 ... 19037 Hz at 2 V and 8 V, 1 s windows; validate.py
+runs it) plus aliasing.MARGIN_DB. Here a lean subset: aliasing.CI_TONES (each setting's worst tone per drive, and
+10037 Hz at 8 V) with short buffers (CI_SETTLE_S settling, CI_WINDOW_S window), which reproduce the full-sweep totals
+within 0.05 dB at those tones (dk/RESULTS.md). The metric itself (periodic Hann, coherent bins, masks) is checked on
+synthetic signals.
 """
 import os, sys
 import numpy as np
 import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from dk.stage import Stage
+from dk import aliasing as A
+from dk.stage import QUALITY
 
-FS = 48000
-LIMIT_DBC = {"hq": -74.8, "standard": -59.7, "eco": -44.1}
-
-
-def alias_dbc(y, f, n=FS):
-    P = np.abs(np.fft.rfft((y - y.mean()) * np.hanning(n))) ** 2
-    fb = np.arange(len(P))
-    harm = np.zeros(len(P), bool)
-    for k in range(1, 40):
-        if k * f < FS / 2:
-            harm[max(k * f - 3, 0):k * f + 4] = True
-    mask = (fb >= 20) & (fb <= 20000) & ~harm
-    return 10 * np.log10(P[mask].sum() / P[f - 3:f + 4].sum())
+FS = A.FS
 
 
-@pytest.mark.parametrize("quality,kind", [(q, "fir") for q in LIMIT_DBC] + [("standard", "iir")])
-def test_alias_10kHz_8V_within_setting_limit(quality, kind):
-    st = Stage(FS, quality=quality, filt=kind)
-    settle, L = FS // 4, st.latency_samples
-    x = 8.0 * np.sin(2 * np.pi * 10000 * np.arange(settle + FS + L) / FS)
-    y = st.process(x)["out"][settle + L:settle + L + FS]
-    a = alias_dbc(y, 10000)
-    print(f"{quality}/{kind}: {a:.2f} dBc")
-    assert a <= LIMIT_DBC[quality]
+def harmonic_signal(m, n, levels_db):
+    t = np.arange(n)
+    return sum(10 ** (l / 20) * np.sin(2 * np.pi * (k + 1) * m * t / n + k) for k, l in enumerate(levels_db))
+
+
+def test_limits_cover_every_setting_filter_and_drive():
+    assert set(A.LIMIT_DBC) == set(A.CI_TONES) == {(q, f) for q in QUALITY for f in A.FILTERS}
+    for k, lim in A.LIMIT_DBC.items():
+        assert set(lim) == set(A.CI_TONES[k]) == set(A.DRIVES) and all(isinstance(v, float) for v in lim.values())
+        assert all(set(t) <= set(A.SWEEP_HZ) for t in A.CI_TONES[k].values())
+
+
+@pytest.mark.parametrize("n", [FS, int(A.CI_WINDOW_S * FS)])
+def test_exactly_harmonic_signal_reads_below_the_analysis_floor(n):
+    m = A.tone_bin(1037, n)
+    y = harmonic_signal(m, n, [-20.0 * k for k in range(n // (2 * m))])
+    assert A.alias_dbc(y, m)["total_dbc"] < A.ANALYSIS_FLOOR_DBC
+    # the symmetric Hann (np.hanning(n)) is what read ~-113 dBc here at 1 s: its skirt leaks past the +-3 bin mask
+    P = np.abs(np.fft.rfft(y * np.hanning(n))) ** 2
+    assert 10 * np.log10(P[m + A.MASK_BINS + 1] / P[m]) > -140
+
+
+def test_injected_alias_lines_are_counted_exactly():
+    n = FS
+    m = A.tone_bin(7037, n)
+    y = harmonic_signal(m, n, [0.0, -30.0, -40.0])           # H1..H3, all below fs/2
+    t = np.arange(n)
+    y = y + 1e-3 * np.sin(2 * np.pi * 3260 * t / n) + 1e-4 * np.sin(2 * np.pi * 9926 * t / n + 1)
+    r = A.alias_dbc(y, m)
+    assert r["total_dbc"] == pytest.approx(10 * np.log10(1e-6 + 1e-8), abs=1e-6)
+    assert r["worst_dbc"] == pytest.approx(-60.0 - 10 * np.log10(1.5), abs=0.01)   # Hann: the line's peak bin
+    assert r["worst_hz"] == 3260
+
+
+def test_offset_tones_put_every_alias_on_its_own_bin():
+    # 10 kHz divides 48 kHz: H22 folds onto H2 (k + j = 24), so its aliases hide under the harmonic masks
+    assert A.collision_order(10000, FS) == 24
+    assert min(A.collision_order(A.tone_bin(f, FS), FS) for f in A.SWEEP_HZ) == 81      # 13037 Hz; others >= 919
+    assert all(A.tone_bin(f, FS) == f for f in A.SWEEP_HZ)                                # exact at 1 s
+    n = int(A.CI_WINDOW_S * FS)
+    assert all(A.collision_order(A.tone_bin(f, n), n) >= A.MIN_ORDER for f in A.SWEEP_HZ)
+
+
+def test_ground_truth_covers_the_sweep_and_sits_below_every_limit():
+    gt = A.load_ground_truth()["records"]
+    for flt in A.FILTERS:
+        for d in A.DRIVES:
+            sel = A.select(gt, f"{A.GROUND_TRUTH_OS}x", flt, d)
+            assert sorted(r["tone"] for r in sel) == list(A.SWEEP_HZ)
+            assert all(max(r["total_dbc"] for r in sel) < A.LIMIT_DBC[(q, flt)][d] for q in QUALITY)
+
+
+@pytest.mark.parametrize("drive", A.DRIVES)
+@pytest.mark.parametrize("quality,filt", list(A.LIMIT_DBC))
+def test_alias_within_setting_limit(quality, filt, drive):
+    recs = A.sweep([(quality, filt)], drives=(drive,), tones=A.CI_TONES[(quality, filt)][drive],
+                   window=A.CI_WINDOW_S, settle=A.CI_SETTLE_S)
+    lim = A.LIMIT_DBC[(quality, filt)][drive]
+    print(f"{quality}/{filt}/{drive:g} V: " + ", ".join(f"{r['f_hz']:.0f} Hz {r['total_dbc']:.2f}" for r in recs)
+          + f" dBc (limit {lim})")
+    assert max(r["total_dbc"] for r in recs) <= lim

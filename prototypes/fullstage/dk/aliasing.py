@@ -33,9 +33,9 @@ the first latency_samples of output are dropped, so the window never depends on 
 (the #2 FIR-tail artefact). The stage starts at its DC operating point; SETTLE_S lets the coupling/bypass caps and
 the bias shift settle (time constants ~20-30 ms).
 
-Use: measure() one point, sweep() a set of points (optionally in parallel processes); window, settle and tones are
-parameters, so a lean subset with short buffers (CI_SETTLE_S, CI_WINDOW_S) uses the same code as the full sweep.
-`python -m dk.aliasing` regenerates the 64x ground truth (GROUND_TRUTH_JSON; 11 min on 8 cores).
+Use: measure() one point, sweep() a set of points (optionally in parallel processes). validate.py runs the full
+sweep (1 s windows) for every setting and enforces LIMIT_DBC; dk/tests/test_aliasing.py runs CI_TONES with short
+buffers. `python -m dk.aliasing` regenerates the 64x ground truth (GROUND_TRUTH_JSON; 11 min on 8 cores).
 """
 import argparse, json, os, sys, time
 from concurrent.futures import ProcessPoolExecutor
@@ -49,7 +49,7 @@ SWEEP_HZ = tuple(range(1037, 20000, 1000))      # 1037, 2037, ... 19037 Hz
 DRIVES = (2.0, 8.0)                              # V peak
 FILTERS = ("fir", "iir")
 SETTLE_S, WINDOW_S = 0.25, 1.0                   # full sweep
-CI_SETTLE_S, CI_WINDOW_S = 0.2, 0.1             # lean subset: within 0.05 dB of the full sweep at the worst tones
+CI_SETTLE_S, CI_WINDOW_S = 0.2, 0.1             # CI subset (CI_TONES below)
 BAND_HZ = (20.0, 20000.0)
 MASK_BINS = 3
 MIN_ORDER = 64
@@ -57,6 +57,34 @@ DB_FLOOR = -300.0
 ANALYSIS_FLOOR_DBC = -200.0                      # an exactly harmonic signal reads below this (measured ~-250)
 GROUND_TRUTH_OS = 64
 GROUND_TRUTH_JSON = os.path.join(HERE, "aliasing_64x.json")
+
+# Pass limits, dBc: the worst total over the full sweep (SWEEP_HZ, 1 s windows; validate.py) for each setting,
+# filter and drive, plus MARGIN_DB, rounded up to 0.1 dB (so every margin is 3.0-3.1 dB). The computation is
+# deterministic, so the margin is not noise headroom: it covers the CI subset's short buffers (within 0.05 dB of
+# the full sweep at CI_TONES), floating-point differences between platforms, and changes too small to matter, while
+# still failing on any real loss of oversampling benefit (one octave is worth 14-19 dB at 8 V). Numbers behind
+# each limit, with the 64x ground truth: dk/RESULTS.md, "Aliasing (#6)".
+MARGIN_DB = 3.0
+LIMIT_DBC = {                                   # worst measured: tone, dBc (2 V; 8 V)
+    ("hq", "fir"): {2.0: -118.2, 8.0: -63.0},          # 19037 -121.22 (resampler floor); 19037 -66.03
+    ("hq", "iir"): {2.0: -112.2, 8.0: -63.0},          # 14037 -115.20 (resampler floor); 19037 -66.03
+    ("standard", "fir"): {2.0: -118.3, 8.0: -48.6},    # 19037 -121.36 (resampler floor); 19037 -51.70
+    ("standard", "iir"): {2.0: -111.0, 8.0: -48.6},    # 13037 -114.04 (resampler floor); 19037 -51.70
+    ("eco", "fir"): {2.0: -72.7, 8.0: -29.6},          # 16037 -75.74; 19037 -32.65
+    ("eco", "iir"): {2.0: -72.7, 8.0: -29.6},          # 16037 -75.74; 19037 -32.65
+}
+# The lean CI subset (dk/tests/test_aliasing.py, CI_SETTLE_S / CI_WINDOW_S buffers): each setting's worst tone at
+# each drive from the full sweep, plus 10037 Hz at 8 V as a mid-band point. validate.py flags a setting whose
+# full-sweep worst tone is no longer in its CI tones.
+CI_TONES = {
+    ("hq", "fir"): {2.0: (19037,), 8.0: (10037, 19037)},
+    ("hq", "iir"): {2.0: (14037,), 8.0: (10037, 19037)},
+    ("standard", "fir"): {2.0: (19037,), 8.0: (10037, 19037)},
+    ("standard", "iir"): {2.0: (13037,), 8.0: (10037, 19037)},
+    ("eco", "fir"): {2.0: (16037,), 8.0: (10037, 19037)},
+    ("eco", "iir"): {2.0: (16037,), 8.0: (10037, 19037)},
+}
+
 
 def collision_order(m, n, mask=MASK_BINS):
     """Smallest d >= 1 with d*m within `mask` bins of a multiple of n: harmonics k, j with k -+ j < d never fold
@@ -155,6 +183,17 @@ def select(records, setting, filt, drive):
 def worst(records, setting, filt, drive):
     """The record with the largest total for one setting / filter / drive."""
     return max(select(records, setting, filt, drive), key=lambda r: r["total_dbc"])
+
+
+def check_limits(records):
+    """{(setting, filt, drive): (worst total, its tone, limit, pass)} for every limited combination in records."""
+    out = {}
+    for (q, flt), lim in LIMIT_DBC.items():
+        for d, L in lim.items():
+            if select(records, q, flt, d):
+                w = worst(records, q, flt, d)
+                out[(q, flt, d)] = (w["total_dbc"], w["tone"], L, w["total_dbc"] <= L)
+    return out
 
 
 def load_ground_truth():
