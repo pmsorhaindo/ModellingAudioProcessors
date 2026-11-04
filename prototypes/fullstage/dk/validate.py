@@ -1,7 +1,7 @@
 """Validate the DK stage against both ngspice references (spice/reference_{dz,koren}.json).
 
   (ii) 'dz'    : same Dempwolf-Zoelzer equations and params as the DK model -> isolates METHOD error.
-                 The pass criteria (proposed first-pass targets, to be tightened) are tested against this.
+                 The pass criteria (tightened in #5, see dk/RESULTS.md) are tested against this.
   (i)  'koren' : Koren 12AX7 -> adds MODEL mismatch; reported for information only.
 Run: python -m dk.validate   (from prototypes/fullstage). Writes dk/results.json.
 """
@@ -16,8 +16,10 @@ from dk.stage import Stage, OS
 from dk.triode import currents
 
 FS = 48000.0
-CRIT = dict(op_rel=0.01, ac_db=0.1, ac_band=(20.0, 20000.0), harm_db=1.0, harm_floor_dbc=-100.0,
-            burst_min_rel=0.05, burst_tau_rel=0.10, burst_traj_rel=0.05)
+# #5 tightened op 1% -> 0.1%, harmonics 1 dB above -100 dBc -> 0.1 dB above -90 dBc, burst 5/10/5% -> 0.5/1/0.5%,
+# each with >= 16x margin on the measured error against the tight-tolerance reference (dk/RESULTS.md).
+CRIT = dict(op_rel=0.001, ac_db=0.1, ac_band=(20.0, 20000.0), harm_db=0.1, harm_floor_dbc=-90.0,
+            burst_min_rel=0.005, burst_tau_rel=0.01, burst_traj_rel=0.005)
 # Stage.process streams through stateful resamplers (#14): its output lags the input by stage.latency_samples
 # (base rate). Each run below generates its input latency_samples longer than the window it analyses and drops
 # the first latency_samples of output, so out[n] lines up with x[n] and the analysed samples never depend on
