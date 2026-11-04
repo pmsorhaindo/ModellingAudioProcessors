@@ -1,0 +1,9 @@
+# Rendered audio and figures belong in the external demo/out directory.
+*.wav
+*.mp3
+*.flac
+*.aiff
+*.png
+metrics.csv
+metrics.json
+__pycache__/
