@@ -1,0 +1,31 @@
+* One-stage 12AX7 common-cathode reference netlist (ngspice)
+* Valve model: Norman Koren "12AX7 NEW MODEL" from Koren Tube.lib (see models/README.md)
+*   (not redistributed; fetch with models/fetch_models.sh)
+*
+* COMPONENT VALUES ARE CHOSEN EXAMPLE VALUES, NOT CULTURE VULTURE VALUES.
+* From Merlin Blencowe, "Designing Valve Preamps for Guitar and Bass", ch.1
+*   (https://www.valvewizard.co.uk/Common_Gain_Stage.pdf):
+*   HT = 300 V, Ra = 100k, Rk = 1.5k (sec 1.10 worked example), Rg (grid leak) = 1M (sec 1.9 "typically 1MΩ").
+* Chosen by Ohm as conventional round values (NOT from that source):
+*   Cin = 22n, Ck = 22u (fully bypassed, f_lo=1/(2*pi*Rk*Ck)≈4.8 Hz), Cout = 22n,
+*   Rl (next-stage grid leak) = 1M, source resistance Rs = 1k, grid stopper Rgs = 68k.
+.include models/12ax7_koren.lib   ; Koren "12AX7 NEW MODEL", fetched by models/fetch_models.sh (not redistributed)
+.param amp=0.1
+VHT ht 0 DC 300
+Bin src 0 V = 4*sin(2*3.14159265*1k*time)*((time>10m)&(time<30m))
+Rs  src in1 1k
+Cin in1 gl 22n
+Rg  gl 0 1Meg
+Rgs gl g 68k
+XV1 a g k 12AX7
+Ra  ht a 100k
+Rk  k 0 1.5k
+Ck  k 0 22u
+Cout a out 22n
+Rl  out 0 1Meg
+.options reltol=1e-4 abstol=1e-12 vntol=1e-7
+.control
+tran 2u 120m 0 2u
+wrdata out/tran_burst.txt v(src) v(g) v(k) v(a) v(out)
+.endc
+.end
