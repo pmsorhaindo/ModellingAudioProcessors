@@ -13,7 +13,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 from analysis import harmonics, thd, db_rel
 from spice.run_refs import burst_metrics, AMPS
-from dk.stage import Stage, os_filter
+from dk.stage import Stage, os_filter, OS
 from dk.triode import currents
 
 FS = 48000.0
@@ -27,7 +27,7 @@ def ref(model):
 
 def small_signal(stage, f):
     """Exact small-signal response of the discretised DK stage at its op point (stage only),
-    and with the 4x interpolation + decimation filters (whole chain)."""
+    and with the interpolation + decimation filters (whole chain)."""
     m, dc = stage.m, stage.dc
     _, _, J = currents(dc["vgk"], dc["vak"], stage.par)
     Ji = np.array(J)
@@ -40,14 +40,14 @@ def small_signal(stage, f):
     z = np.exp(2j * np.pi * np.asarray(f) / stage.fs)
     n = Al.shape[0]
     Hs = np.array([(Cl @ np.linalg.solve(zz * np.eye(n) - Al, Bl) + Dl)[0, 0] for zz in z])
-    _, Hh = freqz(os_filter(stage.fs_base), worN=np.asarray(f), fs=stage.fs)
+    _, Hh = freqz(os_filter(stage.fs_base, stage.os), worN=np.asarray(f), fs=stage.fs)
     Hh = np.abs(Hh)            # linear phase; delay is trimmed in Stage.process
     return 20 * np.log10(np.abs(Hs)), 20 * np.log10(np.abs(Hs) * Hh ** 2)
 
 
-def run(T=0.5):
-    out = dict(criteria=CRIT, fs_base=FS, oversampling=4)
-    st = Stage(FS)
+def run(T=0.5, os=OS):
+    out = dict(criteria=CRIT, fs_base=FS, oversampling=os)
+    st = Stage(FS, os=os)
     dc = st.dc
     out["op"] = dict(va=dc["nodes"]["a"], vk=dc["nodes"]["k"], ia=dc["ia"], vgk=dc["vgk"], vg=dc["nodes"]["g"])
     R = {m: ref(m) for m in ("dz", "koren")}
@@ -70,7 +70,7 @@ def run(T=0.5):
     out["sine"], times, its = {}, {}, {}
     n = int(T * FS); t = np.arange(n) / FS
     for a in AMPS:
-        s = Stage(FS)
+        s = Stage(FS, os=os)
         t0 = time.perf_counter()
         y = s.process(float(a) * np.sin(2 * np.pi * 1000 * t))["out"]
         times[a] = (time.perf_counter() - t0) / T
@@ -89,7 +89,7 @@ def run(T=0.5):
             rows["thd_ref_pct"] = r["sine"][a]["thd_pct"]; rows["thd_dk_pct"] = out["sine"][a]["thd_pct"]
             o["harm"][a] = rows
 
-    s = Stage(FS)
+    s = Stage(FS, os=os)
     nb = int(0.12 * FS); tb = np.arange(nb) / FS
     xb = 4 * np.sin(2 * np.pi * 1000 * tb) * ((tb > 10e-3) & (tb < 30e-3))
     rb = s.process(xb, record=("out", "vgk"))
@@ -107,7 +107,7 @@ def run(T=0.5):
                           t_min_diff_ms=1e3 * (out["burst"]["t_min"] - rb_["t_min"]),
                           ref=dict(rest=rb_["rest_vgk"], min=rb_["min_vgk"], tau=rb_["recovery_tau_s"]))
     out["iterations"] = its
-    out["cpu"] = dict(method="time.perf_counter around Stage.process (pure Python, one core, 48 kHz base, 4x OS, "
+    out["cpu"] = dict(method=f"time.perf_counter around Stage.process (pure Python, one core, 48 kHz base, {os}x OS, "
                              "FIR resampling included); value = seconds of CPU per second of audio",
                       seconds_per_second=times)
     o = out["vs"]["dz"]
@@ -140,5 +140,10 @@ def summary(res):
 
 if __name__ == "__main__":
     res = run()
+    # informational: CPU at 4x on the same machine/run for comparison (criteria not evaluated)
+    r4 = run(os=4)
+    res["cpu"]["seconds_per_second_at_4x"] = r4["cpu"]["seconds_per_second"]
+    res["at_4x_for_comparison"] = dict(ac_maxdev_db_chain=r4["vs"]["dz"]["ac_maxdev_db_chain"],
+                                       iterations={k: (v["mean"], v["max"]) for k, v in r4["iterations"].items()})
     json.dump(res, open(os.path.join(HERE, "results.json"), "w"), indent=1, default=float)
     print(summary(res))

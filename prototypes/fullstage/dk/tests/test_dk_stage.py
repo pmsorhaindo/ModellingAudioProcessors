@@ -36,7 +36,7 @@ def test_operating_point_within_1pct(res, q):
 
 
 def test_small_signal_within_0p1dB_20Hz_20kHz(res):
-    # KNOWN FAILURE at 4x (0.21 dB at 20 kHz): trapezoidal frequency warping, see dk/RESULTS.md.
+    # Failed at 4x (0.21 dB at 20 kHz, trapezoidal warping); default is 8x since 4 Nov 2026, see dk/RESULTS.md.
     assert res["vs"]["dz"]["ac_maxdev_db_chain"] < C["ac_db"]
 
 

@@ -1,4 +1,4 @@
-"""One 12AX7 common-cathode stage, nodal DK method, with Drive / Bias / Output and 4x oversampling.
+"""One 12AX7 common-cathode stage, nodal DK method, with Drive / Bias / Output and 8x oversampling (default).
 
 Parameters (all our choices, documented here):
   drive   : linear gain applied to the input voltage before the stage (1.0 = signal as given, in volts).
@@ -6,7 +6,9 @@ Parameters (all our choices, documented here):
             negative Vgk). Changing it rebuilds the matrices and re-solves the operating point, so it
             is a "set before processing" control in this prototype (no smoothing yet).
   output  : linear gain applied to the stage output.
-Oversampling: 4x, linear-phase FIR (see OVERSAMPLING_FILTER); the stage runs at 4*fs.
+Oversampling: default 8x (parameter `os`), linear-phase FIR (see OVERSAMPLING_FILTER); the stage runs at
+os*fs. 8x chosen by Michael (4 Nov 2026) to bring the trapezoidal frequency-warping error at 20 kHz under
+the 0.1 dB target (0.21 dB at 4x, ~0.05 dB at 8x; error ~1/os^2), at ~2x the CPU of 4x.
 """
 import numpy as np
 from scipy.signal import firwin, upfirdn
@@ -14,20 +16,26 @@ from . import circuit
 from .solver import solve
 from .triode import currents, DZ_12AX7_RSD1
 
-OS = 4
-NTAPS = 255
-OVERSAMPLING_FILTER = ("firwin, 255 taps, Kaiser beta 8, cutoff 22 kHz at 4x48 kHz (scaled to fs), "
-                       "used for both interpolation (gain 4) and decimation; zero-latency by group-delay trim")
+OS = 8
 
 
-def os_filter(fs_base):
-    return firwin(NTAPS, 22000.0 * fs_base / 48000.0, window=("kaiser", 8.0), fs=OS * fs_base)
+def ntaps(os=OS):
+    """64*os - 1 taps (255 at 4x, 511 at 8x): keeps the transition band the same width in Hz at any factor."""
+    return 64 * os - 1
+
+
+OVERSAMPLING_FILTER = ("firwin, 64*os-1 taps (511 at 8x), Kaiser beta 8, cutoff 22 kHz at 48 kHz base (scaled to fs), "
+                       "used for both interpolation (gain os) and decimation; zero-latency by group-delay trim")
+
+
+def os_filter(fs_base, os=OS):
+    return firwin(ntaps(os), 22000.0 * fs_base / 48000.0, window=("kaiser", 8.0), fs=os * fs_base)
 
 
 class Stage:
-    def __init__(self, fs, bias=1.0, drive=1.0, output=1.0, triode=DZ_12AX7_RSD1, oversample=True):
+    def __init__(self, fs, bias=1.0, drive=1.0, output=1.0, triode=DZ_12AX7_RSD1, oversample=True, os=OS):
         self.fs_base = fs
-        self.os = OS if oversample else 1
+        self.os = int(os) if oversample else 1
         self.fs = fs * self.os
         self.drive, self.output, self.bias, self.par = drive, output, bias, triode
         self.m = circuit.build(self.fs, rk_scale=bias)
@@ -88,13 +96,13 @@ class Stage:
         return rec
 
     def process(self, vin, record=("out",)):
-        """Base-rate in, base-rate out (with 4x oversampling around the stage)."""
+        """Base-rate in, base-rate out (with self.os-times oversampling around the stage)."""
         vin = self.drive * np.asarray(vin, dtype=float)
         if self.os == 1:
             rec = self.process_internal(vin, record)
             return {k: self.output * v if k == "out" else v for k, v in rec.items()}
-        h = os_filter(self.fs_base)
-        dly = (NTAPS - 1) // 2
+        h = os_filter(self.fs_base, self.os)
+        dly = (len(h) - 1) // 2
         up = upfirdn(h * self.os, vin, up=self.os)[dly:dly + len(vin) * self.os]
         rec = self.process_internal(up, record)
         out = {}
