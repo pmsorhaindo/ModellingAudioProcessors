@@ -22,8 +22,10 @@ The criteria are our proposed first-pass targets (approved as defaults, to be ti
 |---|---|---|---|
 | operating point (Va, Vk, Ia, Vgk) | within 1 % | all within 2×10⁻⁹ relative (Va 204.536 V, Vk 1.4321 V, Ia 0.9546 mA, Vgk −1.5178 V) | pass |
 | small signal, 20 Hz–20 kHz | within 0.1 dB | **0.050 dB** worst, at 19.95 kHz (with resampling filters; stage alone 0.052 dB). −0.0068 dB at 10 kHz, < 0.001 dB at 1 kHz and below. At 4× it was 0.211 dB (fail) | pass |
-| H2–H5 per drive level (where the reference is above −100 dBc) | within 1 dB | worst 0.65 dB (H5 at 0.5 V, −0.645 dB; was 0.58 dB at 4×, H5 at 0.5 V is ~−80 dBc so tiny absolute differences show); H3 at 0.05 V 0.22 dB; every other tested harmonic ≤ 0.03 dB; THD 0.169/1.776/16.70/60.69 % vs ref 0.169/1.776/16.70/60.69 % | pass |
+| H2–H5 per drive level (where the reference is above −100 dBc) | within 1 dB | worst 0.138 dB (H5 at 0.5 V: -97.870 vs ref -97.733 dBc, i.e. reference precision at ~−98 dBc, see note below); H3 at 0.05 V -0.0033 dB; every other tested harmonic ≤ 0.0152 dB; THD 0.169/1.776/16.700/60.691 % vs ref 0.169/1.776/16.699/60.686 % | pass |
 | 4 V burst: cycle-averaged Vgk shift, recovery τ, trajectory | 5 % / 10 % / 5 % RMS of shift | shift −2.841 V vs −2.842 V (0.03 %); τ 12.755 ms vs 12.75 ms (0.04 %); trajectory RMS 0.004 % of shift; minimum at 30.0 ms in both | pass |
+
+**Measurement fix (issue #2).** Earlier figures (H5 at 0.5 V −0.645 dB, H3 at 0.05 V 0.22 dB) were an artefact: `Stage.process` resamples offline, so its last ~1.3 ms is FIR ringing against zero padding, and `harmonics()` analyses the last cycles of the buffer. `validate.py` now simulates 20 ms extra and ends the analysis window before that tail. The remaining -0.138 dB on H5 at 0.5 V is reference precision: an ngspice run with reltol 1e-6 and a 0.5 µs step gave −97.866 dBc (audit, 4 Nov 2026), within 0.004 dB of DK; the committed reference uses default tolerances. Streaming resampling (no edge at all) is #14. Table rows below are generated from `results.json`; sine-run iteration counts now include the 20 ms guard.
 
 Excluded harmonics (reference below −100 dBc, the simulator's numerical floor; see `spice/RESULTS.md`):
 H4/H5 at 0.05 V. They are listed in `results.json` with `tested: false`.
@@ -57,10 +59,10 @@ Smaller steps give a better previous-sample guess, so per-sample iterations drop
 
 | run | mean | max | histogram | 4× |
 |---|---|---|---|---|
-| 0.05 V sine | 2.97 | 3 | 2: 6 501, 3: 185 499 | 2.99 / 3 |
-| 0.5 V | 3.00 | 3 | 2: 500, 3: 191 500 | 3.39 / 4 |
-| 2 V | 3.81 | 4 | 2: 17, 3: 36 889, 4: 155 094 | 3.94 / 4 |
-| 8 V | 3.06 | 6 | 2: 78 765, 3: 35 633, 4: 65 626, 5: 11 973, 6: 3 | 3.24 / 8 |
+| 0.05 V sine | 2.97 | 3 | 2: 6 761, 3: 192 919 | 2.99 / 3 |
+| 0.5 V | 3.00 | 3 | 2: 520, 3: 199 160 | 3.39 / 4 |
+| 2 V | 3.81 | 4 | 2: 17, 3: 38 369, 4: 161 294 | 3.94 / 4 |
+| 8 V | 3.06 | 6 | 2: 81 925, 3: 37 053, 4: 68 246, 5: 12 453, 6: 3 | 3.24 / 8 |
 | 4 V burst | 2.41 | 5 | 1: 3 593, 2: 24 430, 3: 13 636, 4: 4 242, 5: 179 | 2.53 / 6 |
 
 ## CPU (informational)
@@ -69,10 +71,10 @@ on 0.5 s sines at 48 kHz in/out, FIR resampling included; 4× measured in the sa
 
 | drive | 8× | 4× |
 |---|---|---|
-| 0.05 V | 8.16 s/s | 3.96 s/s |
-| 0.5 V | 8.04 | 4.18 |
-| 2 V | 8.88 | 4.39 |
-| 8 V | 7.65 | 3.94 |
+| 0.05 V | 7.60 s/s | 3.78 s/s |
+| 0.5 V | 7.70 | 4.50 |
+| 2 V | 8.33 | 4.28 |
+| 8 V | 7.35 | 3.88 |
 
 So 8× costs ~2.0× the CPU of 4× (≈8 s of CPU per second of audio, ~8× slower than real time). This is
 interpreter overhead and says nothing about the C++ core, where the cost of 8× should be re-measured.
