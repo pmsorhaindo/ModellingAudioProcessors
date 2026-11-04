@@ -9,7 +9,7 @@ wave digital filters for comparison, before the 6AS6 stage and a C++ core.
 | `RESEARCH-numerics.md` | pitfalls and published fixes (NR robustness, DC init, aliasing, WDF multiport) | done |
 | `spice/` | ngspice references: Koren 12AX7 (i) and Dempwolf–Zölzer (ii) on the same netlist | done; settled 500 ms sine data |
 | `analysis.py` | shared measurements (DFT harmonics, THD, bias shift, recovery τ) | done |
-| `dk/` | nodal DK prototype in Python/NumPy, 8× oversampled (parameter), Drive/Bias/Output | all 12 tests pass at 8× (small-signal 0.050 dB worst, at 20 kHz; failed at 4× with 0.21 dB from trapezoidal warping) — see `dk/RESULTS.md` |
+| `dk/` | nodal DK prototype in Python/NumPy, 8× oversampled (parameter) with streaming half-band resamplers, Drive/Bias/Output | all tests pass at 8× (small-signal 0.052 dB worst, at 20 kHz; failed at 4× with 0.21 dB from trapezoidal warping) — see `dk/RESULTS.md` |
 | WDF version | — | next |
 
 **Circuit values are example values, not Culture Vulture values** (see `spice/stage_12ax7.cir`).
@@ -24,6 +24,8 @@ wave digital filters for comparison, before the 6AS6 stage and a C++ core.
 5. Validation and tests against both (`dk/validate.py`, `dk/tests/`, `dk/RESULTS.md`).
 6. Default oversampling raised from 4× to 8× (Michael's choice) to clear the 20 kHz small-signal target
    without touching tolerances; ~2× CPU.
+7. Streaming half-band resamplers with reported latency (#14, `dk/resample.py`): linear-phase FIR by
+   default, polyphase IIR allpass as the cheap option; `Stage.process` now works block by block.
 
 ## Run
 ```bash

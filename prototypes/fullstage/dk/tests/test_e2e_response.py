@@ -7,8 +7,9 @@ multitone through process() at the default oversampling and measures what comes 
   * phase vs the exact linearisation of the discretised stage (the ngspice JSON stores no phase), which
     catches a latency / group-delay error in the resampler that magnitude alone would miss.
 Tones sit on exact FFT bins of a 0.1 s window (rectangular window, no leakage) at 1 mV each, so the stage is
-linear to well under 0.01 dB. The window starts after 0.3 s of settling (coupling caps, ~33 ms slowest) and
-ends GUARD_S before the end of the buffer, clear of the FIR tail (issue #2).
+linear to well under 0.01 dB. The window starts after 0.3 s of settling (coupling caps, ~33 ms slowest). The
+output is shifted back by the latency the resampler reports (#14), not by a hard-coded trim, so a wrong
+latency_samples shows up as a phase error that grows with frequency.
 Run from prototypes/fullstage:  python -m pytest -q dk/tests
 """
 import os, sys
@@ -26,7 +27,8 @@ PHASE_DEG = 0.5
 
 
 def linear_phase_deg(stage, f):
-    """Phase of the exact small-signal response of the discretised stage (FIR is zero-phase after trim)."""
+    """Phase of the exact small-signal response of the discretised stage (the linear-phase FIR resampler is a pure
+    delay, removed by shifting the output by latency_samples)."""
     m, dc = stage.m, stage.dc
     J = np.array(currents(dc["vgk"], dc["vak"], stage.par)[2])
     M = np.linalg.inv(np.eye(2) + m["K"] @ J)
@@ -43,11 +45,11 @@ def linear_phase_deg(stage, f):
 @pytest.fixture(scope="module")
 def measured():
     n0, N = int(SETTLE_S * FS), int(WIN_S * FS)
-    t = np.arange(n0 + N + int(V.GUARD_S * FS)) / FS
+    st = Stage(FS)
+    t = np.arange(n0 + N + st.latency_samples) / FS
     ph = np.random.default_rng(0).uniform(0, 2 * np.pi, len(TONES))   # random phases: low crest factor
     x = sum(AMP * np.sin(2 * np.pi * f * t + p) for f, p in zip(TONES, ph))
-    st = Stage(FS)
-    y = st.process(x)["out"]
+    y = V.aligned(st, x)["out"]
     k = np.rint(TONES * WIN_S).astype(int)
     Hm = np.fft.rfft(y[n0:n0 + N])[k] / np.fft.rfft(x[n0:n0 + N])[k]
     return st, Hm
