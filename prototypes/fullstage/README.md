@@ -32,7 +32,7 @@ wave digital filters for comparison, before the 6AS6 stage and a C++ core.
 cd prototypes/fullstage
 spice/models/fetch_models.sh                       # Koren model (not redistributed)
 ln -s /path/to/ngspice-env .ngenv                  # or set NGSPICE=/path/to/ngspice
-python spice/run_refs.py                           # regenerates spice/reference_{koren,dz}.json (~25 s)
+python spice/run_refs.py                           # regenerates spice/reference_{koren,dz}.json (~2 min)
 python -m dk.validate                              # -> dk/results.json (~45 s; also times 4× for comparison)
 python -m pytest -q dk/tests
 ```

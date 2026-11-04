@@ -26,4 +26,12 @@ Long, settled sine runs (v2, the test reference; needs the lab Python env):
 python analyse_sine_long.py                                             # -> reference_sine.json
 ```
 
+Test references (`reference_dz.json`, `reference_koren.json`; needs the lab Python env and the Koren model):
+```bash
+NGSPICE=../.ngenv/bin/ngspice python run_refs.py      # default NGSPICE is ../.ngenv/bin/ngspice; ~1 min/model
+```
+Solver settings are the `SOLVER` constant in `run_refs.py` (reltol 1e-6, abstol 1e-14, vntol 1e-9,
+chgtol 1e-16, 0.5 µs step, trapezoidal; #5). Each JSON records them and the ngspice version under `"generator"`.
+`stage_12ax7*.cir` above are the original hand-run netlists and still use the old, looser options.
+
 Results: see `RESULTS.md`.
