@@ -10,6 +10,15 @@ Solve  F(v) = p - K i(v) - v = 0,  p = G x + H u,  v = (Vgk, Vak)   (see circuit
   * converged when ||dv||inf < TOL_V and ||F||inf < TOL_F; hard cap MAX_IT iterations (all three can be
     overridden per call: max_it, tol_v, tol_f).
 No lookup tables. Iteration counts are returned so callers can histogram them.
+
+Non-convergence (#7). This is also the contract for the C++ core. When the cap is reached, solve() returns
+the BEST iterate it saw, i.e. the one with the smallest finite ||F||inf (the warm start counts), and not
+the last one. It returns converged=False with it. A NaN/inf iterate never wins, so a finite start always
+gives a finite result. The caller keeps that iterate as the sample's state; it does not reset it or NaN
+it, so the next sample warm-starts from a finite point. The caller must also count the failure and
+report it: Stage adds to nonconv, sets nonconv_block, warns NonConvergenceWarning and shows it in
+iteration_stats(). The DC solve is the exception: it has no previous state to fall back on, so it raises
+(stage.OperatingPointError).
 """
 import math
 from .triode import currents, currents_only, DZ_12AX7_RSD1
@@ -46,6 +55,7 @@ def _resid_only(p0, p1, K, v0, v1, par):
 def solve(p0, p1, K, v0, v1, par=DZ_12AX7_RSD1, max_it=MAX_IT, tol_v=TOL_V, tol_f=TOL_F):
     """Return (Vgk, Vak, Ig, Ia, iterations, converged)."""
     f0, f1, ig, ia, J = _resid(p0, p1, K, v0, v1, par)
+    fb, best = max(abs(f0), abs(f1)), (v0, v1, ig, ia)       # best iterate so far, returned on failure
     for it in range(1, max_it + 1):
         # Jacobian of F: -K J - I
         a = -(K[0][0] * J[0][0] + K[0][1] * J[1][0]) - 1.0
@@ -70,6 +80,10 @@ def solve(p0, p1, K, v0, v1, par=DZ_12AX7_RSD1, max_it=MAX_IT, tol_v=TOL_V, tol_
         dv = max(abs(lam * s0), abs(lam * s1))
         v0, v1 = v0 + lam * s0, v1 + lam * s1
         f0, f1, ig, ia, J = g0, g1, gig, gia, gJ
-        if dv < tol_v and max(abs(f0), abs(f1)) < tol_f:
+        fa = max(abs(f0), abs(f1))
+        if dv < tol_v and fa < tol_f:
             return v0, v1, ig, ia, it, True
-    return v0, v1, ig, ia, max_it, False
+        # NaN/inf never wins (sum, not max: max(1.0, nan) is 1.0); a non-finite start loses to any finite iterate
+        if (fa < fb or not fb < math.inf) and abs(f0) + abs(f1) < math.inf:
+            fb, best = fa, (v0, v1, ig, ia)
+    return best + (max_it, False)

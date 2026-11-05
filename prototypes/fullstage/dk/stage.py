@@ -20,6 +20,7 @@ The stage runs at os*fs between a streaming half-band cascade (dk/resample.py). 
 state, so it can be called block by block; the output is delayed by `latency_samples` (base rate) instead of
 being trimmed (#14). `resampler_macs` is the resampler's multiplies per base-rate sample (up, down).
 """
+import warnings
 import numpy as np
 from . import circuit
 from .solver import solve, MAX_IT, TOL_V, TOL_F
@@ -32,6 +33,11 @@ QUALITY = {"hq": (16, None), "standard": (8, None), "eco": (4, PREWARP_HZ)}   # 
 
 class OperatingPointError(RuntimeError):
     """The DC operating-point solve failed (#7). Raised, not asserted, so it also fires under python -O."""
+
+
+class NonConvergenceWarning(RuntimeWarning):
+    """Newton did not converge on some samples of a block (#7); those samples kept the solver's best finite
+    iterate (dk/solver.py). Counted in Stage.nonconv / nonconv_block and iteration_stats()."""
 
 
 class Stage:
@@ -67,7 +73,7 @@ class Stage:
                 raise OperatingPointError(
                     f"DC operating point did not converge at source step {k}/10 (HT x {s:.1f}): "
                     f"{it} Newton iterations (max_it, tol_v, tol_f = {self.newton}), "
-                    f"last iterate Vgk={v0:.6g} V, Vak={v1:.6g} V, bias={self.bias}")
+                    f"best iterate Vgk={v0:.6g} V, Vak={v1:.6g} V, bias={self.bias}")
         inl = np.array([ig, ia])
         w = m0["Si"] @ (m0["Nup"].T @ u - m0["Nnp"].T @ inl)
         nodes = dict(zip(circuit.NODES, w[:len(circuit.NODES)]))
@@ -80,7 +86,8 @@ class Stage:
         self.v = [self.dc["vgk"], self.dc["vak"]]
         self.v_prev = list(self.v)              # solution one sample before self.v, for the predictor
         self.iters = []
-        self.nonconv = 0
+        self.nonconv = 0                        # non-converged internal-rate samples since reset()
+        self.nonconv_block = 0                  # ... in the last process() / process_internal() call
         self.rs.reset()
 
     @property
@@ -94,7 +101,9 @@ class Stage:
         return self.rs.macs()
 
     def process_internal(self, vin, record=("out",)):
-        """Run the stage at the internal rate on an input already at self.fs. Returns dict of signals."""
+        """Run the stage at the internal rate on an input already at self.fs. Returns dict of signals.
+        A sample on which Newton hits the cap keeps the solver's best finite iterate and is counted: see
+        nonconv, nonconv_block and iteration_stats(). A NonConvergenceWarning is issued once per call."""
         m = self.m
         A, B, C, D, E, F, G, H = (m[k] for k in "ABCDEFGH")
         HT = circuit.VALUES["HT"]
@@ -103,6 +112,7 @@ class Stage:
         x, (v0, v1), K, par, nw = self.x, self.v, self.K, self.par, self.newton
         q0, q1 = self.v_prev
         iters = np.empty(len(vin), dtype=np.int16)
+        bad = 0
         Gu, Hu = G, H
         for n, s in enumerate(vin):
             u = np.array([s, HT])
@@ -114,7 +124,7 @@ class Stage:
             v0, v1, ig, ia, it, ok = solve(p[0], p[1], K, e0, e1, par, *nw)
             iters[n] = it
             if not ok:
-                self.nonconv += 1
+                bad += 1
             inl = np.array([ig, ia])
             y = D @ x + E @ u + F @ inl
             for nm, j in idx.items():
@@ -124,6 +134,12 @@ class Stage:
             x = A @ x + B @ u + C @ inl
         self.x, self.v, self.v_prev = x, [v0, v1], [q0, q1]
         self.iters.append(iters)
+        self.nonconv += bad
+        self.nonconv_block = bad
+        if bad:
+            warnings.warn(f"Newton did not converge on {bad} of {len(vin)} samples at {self.fs:g} Hz "
+                          f"(max_it, tol_v, tol_f = {self.newton}); kept the best finite iterate",
+                          NonConvergenceWarning, stacklevel=2)
         return rec
 
     def process(self, vin, record=("out",)):
@@ -143,4 +159,5 @@ class Stage:
         hist = np.bincount(it) if len(it) else np.zeros(0)
         return dict(samples=int(len(it)), mean=float(it.mean()) if len(it) else 0.0,
                     max=int(it.max()) if len(it) else 0, nonconverged=int(self.nonconv),
+                    converged=self.nonconv == 0,
                     histogram={int(i): int(c) for i, c in enumerate(hist) if c})
