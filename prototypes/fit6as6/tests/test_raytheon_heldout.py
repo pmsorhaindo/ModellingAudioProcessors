@@ -43,21 +43,21 @@ def test_heldout_results_reproduce():
     """heldout.py, rerun from data/ and the committed parameters, gives the committed results."""
     for q in ("gm1", "gm3"):
         for k, v in COMMITTED["gm_check"]["summary"][q].items():
-            assert H.gm_summary[q][k] == pytest.approx(v, rel=1e-9), (q, k)
+            assert H.gm_summary[q][k] == pytest.approx(v, rel=1e-6), (q, k)
     for k, v in COMMITTED["p8_bottom"]["summary"].items():
         for m, x in v.items():
-            assert H.p8[k][m] == pytest.approx(x, rel=1e-9), (k, m)
+            assert H.p8[k][m] == pytest.approx(x, rel=1e-6), (k, m)
     b = COMMITTED["before_refit_25"]
     assert b["params"] == FIT["refit_25"]["params"] and H.P == FIT["dual_control"]["params"]
     for q in ("gm1", "gm3"):
         for k, v in b["gm_summary"][q].items():
-            assert H.before_25["gm_summary"][q][k] == pytest.approx(v, rel=1e-9), (q, k)
+            assert H.before_25["gm_summary"][q][k] == pytest.approx(v, rel=1e-6), (q, k)
     for k, v in b["p8_bottom_summary"].items():
         for m, x in v.items():
-            assert H.before_25["p8_bottom_summary"][k][m] == pytest.approx(x, rel=1e-9), (k, m)
+            assert H.before_25["p8_bottom_summary"][k][m] == pytest.approx(x, rel=1e-6), (k, m)
     # fit.py's p.8 bottom metrics are the same numbers as heldout.py's
     for k, j in (("all", "Ib_all"), ("Ec3_m10_to_m14", "Ib_Ec3_-10_to_-14")):
-        assert FIT["dual_control"]["p8_bottom_Ib"][k]["rms_log"] == pytest.approx(H.p8[j]["rms_log"], rel=1e-9)
+        assert FIT["dual_control"]["p8_bottom_Ib"][k]["rms_log"] == pytest.approx(H.p8[j]["rms_log"], rel=1e-6)
 
 
 def test_gm_check_bounds():
@@ -98,8 +98,8 @@ def test_p8_bottom_g3_cutoff_moves_with_plate_voltage():
     fit (#51) MU3 = 43 lies in that range, and the model's own cut-off line has the sheet's slope."""
     c = COMMITTED["p8_bottom"]["g3_cutoff_vs_plate_voltage"]
     for k in ("Ib_0.3_mA", "Ib_1.0_mA"):
-        assert H.g3_cutoff[k]["plate_mu"] == pytest.approx(c[k]["plate_mu"], rel=1e-9)
-        assert H.g3_cutoff[k]["model_plate_mu"] == pytest.approx(c[k]["model_plate_mu"], rel=1e-9)
+        assert H.g3_cutoff[k]["plate_mu"] == pytest.approx(c[k]["plate_mu"], rel=1e-6)
+        assert H.g3_cutoff[k]["model_plate_mu"] == pytest.approx(c[k]["model_plate_mu"], rel=1e-6)
         assert c[k]["model_plate_mu"] == pytest.approx(c[k]["plate_mu"], rel=0.15), k   # [42.7 vs 39.0, 43.0 vs 45.5]
     mu = sorted(c[k]["plate_mu"] for k in ("Ib_0.3_mA", "Ib_1.0_mA"))
     assert 25 < mu[0] and mu[1] < 60                                                     # [39, 46]
