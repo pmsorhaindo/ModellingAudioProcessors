@@ -2,7 +2,7 @@
 
   model 'koren' : Koren 12AX7 'NEW MODEL' (models/12ax7_koren.lib, fetched)  -> reference (i)
   model 'dz'    : Dempwolf-Zoelzer subckt with the DK model's params (models_dz/dz_12ax7.inc) -> (ii)
-Analyses: 'main'  = .op; .ac 1 Hz-100 kHz; 1 kHz sines at 0.05/0.5/2/8 V peak for 500 ms (analysed 400-500 ms);
+Analyses: 'main'  = .op; .ac 1 Hz-100 kHz (AC_GRID, plus the band edges AC_EDGES_HZ); 1 kHz sines at 0.05/0.5/2/8 V peak for 500 ms (analysed 400-500 ms);
           'burst' = 4 V 1 kHz tone burst 10-30 ms, 120 ms.
 
 Single source of truth (#4): netlist() builds every netlist from dk/circuit.VALUES (component values), ELEMENTS
@@ -38,6 +38,10 @@ SOLVER = dict(reltol=1e-6, abstol=1e-14, vntol=1e-9, chgtol=1e-16, method="trap"
 NGBEHAVIOR = "psa"     # .spiceinit: PSpice compatibility, needed for Koren's PWRS() and B-source syntax
 SINE = dict(f0=1e3, t_stop=0.5, t_save=0.3, fs_resample=1e6, ncycles=100)   # analysed: last 100 cycles
 BURST = dict(amp=4.0, t_on=10e-3, t_off=30e-3, t_stop=0.12)
+AC_GRID = dict(points_per_decade=50, f_start=1.0, f_stop=100e3)
+# Exact edges of the 20 Hz-20 kHz small-signal criterion (#38): the 50/decade grid's in-band points run from
+# 20.9 Hz to 19.95 kHz, so the band edge, where the warping error peaks, was never evaluated. Merged into "ac".
+AC_EDGES_HZ = (20.0, 20000.0)
 NETLIST_FILE = os.path.join(HERE, "stage_12ax7.cir")      # committed copy of netlist("koren", "main")
 
 # Passive elements in netlist order: (SPICE name = circuit.VALUES key, node+, node-). Same topology as
@@ -74,12 +78,15 @@ def netlist(model, analysis, out="out", values=VALUES, solver=SOLVER):
     f0 = f"{SINE['f0']:g}"
     if analysis == "main":
         vin = f"Vin src 0 DC 0 AC 1 SIN(0 {AMPS[0]} {f0})"
+        g = AC_GRID
+        edges = "".join(f"ac lin 1 {spice_num(fe)} {spice_num(fe)}\n"
+                        f"wrdata {out}/{model}_ac_{fe:g}.txt db(v(out)) ph(v(out))\n" for fe in AC_EDGES_HZ)
         control = f"""op
 let ia = -i(VHT)
 wrdata {out}/{model}_op.txt v(a) v(k) v(g) v(gl) ia
-ac dec 50 1 100k
+ac dec {g['points_per_decade']} {spice_num(g['f_start'])} {spice_num(g['f_stop'])}
 wrdata {out}/{model}_ac.txt db(v(out)) ph(v(out))
-foreach A {' '.join(AMPS)}
+{edges}foreach A {' '.join(AMPS)}
   alter @Vin[sin] = [ 0 $A {f0} ]
   tran {ts} {SINE['t_stop']:g} {SINE['t_save']:g} {tm}
   set fn = {out}/{model}_sine_{{$A}}.txt
@@ -138,7 +145,7 @@ def run(model, solver=SOLVER, out="out", write=True):
         if r.returncode != 0:
             raise RuntimeError(f"ngspice failed on {name} ({model}), see {o}/{model}_{name}_log.txt")
     gen = dict(script="spice/run_refs.py", ngspice=ngspice_version(), solver=solver, sine=SINE, burst=BURST,
-               spiceinit=init)
+               ac=dict(AC_GRID, edges_hz=AC_EDGES_HZ), spiceinit=init)
     return analyse(model, out, gen, write)
 
 
@@ -146,7 +153,9 @@ def analyse(model, out="out", generator=None, write=True):
     o = os.path.join(HERE, out)
     op = np.loadtxt(os.path.join(o, f"{model}_op.txt"))   # (scale, value) pairs, no header
     va, vk, vg, vgl, ia = op[1], op[3], op[5], op[7], op[9]
-    ac = np.loadtxt(os.path.join(o, f"{model}_ac.txt"))
+    ac = np.vstack([np.loadtxt(os.path.join(o, fn), ndmin=2) for fn in
+                    [f"{model}_ac.txt"] + [f"{model}_ac_{fe:g}.txt" for fe in AC_EDGES_HZ]])
+    ac = ac[np.argsort(ac[:, 0], kind="stable")]
     res = dict(model=model, generator=generator, op=dict(va=va, vk=vk, vg=vg, vgl=vgl, ia=ia, vgk=vg - vk),
                ac=dict(f=ac[:, 0].tolist(), db=ac[:, 1].tolist()), sine={})
     for a in AMPS:

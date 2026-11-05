@@ -219,6 +219,7 @@ def test_spiceinit():
 def test_committed_references_were_made_with_these_settings(model):
     gen = json.load(open(os.path.join(SPICE, f"reference_{model}.json")))["generator"]
     assert gen["solver"] == R.SOLVER and gen["sine"] == R.SINE and gen["burst"] == R.BURST
+    assert gen["ac"] == dict(R.AC_GRID, edges_hz=list(R.AC_EDGES_HZ))
     assert gen["spiceinit"] == R.spiceinit()
 
 
