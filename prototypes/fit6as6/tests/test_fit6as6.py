@@ -1,39 +1,96 @@
-import json, math, os, re, sys
+import json, os, re, sys
 import numpy as np
 import pytest
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 import model6as6 as M
-from fit import load, arr, FLOOR  # noqa: E402  (re-runs the fit; deterministic)
+import fit as F  # noqa: E402  (re-runs every fit; deterministic)
 
 R = json.load(open(os.path.join(HERE, "results", "fit_results.json")))
 P = R["dual_control"]["params"]
-SETS = {"plate_p3": ([r for r in load("plate_characteristics_p3.csv") if r["quantity"] == "Ib"], M.dual_ip),
-        "screen_p3": ([r for r in load("plate_characteristics_p3.csv") if r["quantity"] == "Ic2"], M.dual_ig2),
-        "plate_vs_g3_p4": (load("suppressor_characteristics_p4.csv"), M.dual_ip)}
 
 
-@pytest.mark.parametrize("key", list(SETS))
-def test_reproduces_digitised_points_within_reported_error(key):
-    rows, fn = SETS[key]
-    for curve, rep in R["dual_control"][key].items():
-        rr = [r for r in rows if r["curve"] == curve]
-        g1, g2, g3, va, i = arr(rr)
-        e = np.abs(fn(g1, g2, g3, va, P) - i) * 1e3
-        assert len(rr) == rep["n"] and len(rr) >= 25
-        assert np.sqrt(np.mean(e**2)) <= rep["rms_mA"] * 1.001 + 1e-9
-        assert e.max() <= rep["max_abs_mA"] * 1.001 + 1e-9
-        assert rep["rms_rel"] < 0.07          # every curve under 7 % RMS relative error
+@pytest.mark.parametrize("key", ["dual_control", "before", "ablation_raytheon_relative_residual"])
+def test_fit_is_reproducible(key):
+    """Re-running fit.py gives the committed parameters (BEFORE = the GE fit, AFTER = the #25 refit)."""
+    p = dict(dual_control=F.dual, before=F.before, ablation_raytheon_relative_residual=F.ray_rel)[key]
+    for k, v in R[key]["params"].items():
+        assert p[k] == pytest.approx(v, rel=1e-4), k
+
+
+def test_data_sets():
+    """Raytheon points: fit set and held-out split set are disjoint and cover the low-current region."""
+    assert len(F.R_FIT) >= 2500 and len(F.R_SPLIT) >= 500
+    assert all(r["quantity"] == "Ic2" and r["graph"] in F.SPLIT_GRAPHS for r in F.R_SPLIT)
+    assert not any(r["quantity"] == "Ic2" and r["graph"] in F.SPLIT_GRAPHS for r in F.R_FIT)
+    assert len(F.low(F.R_FIT)) >= 300 and len(F.low(F.R_SPLIT)) >= 100
+    assert {r["Ec2_V"] for r in F.R_FIT} >= {60, 80, 100, 120, 140}
+
+
+@pytest.mark.parametrize("key", ["per_curve", "per_curve_split"])
+def test_reported_per_curve_errors_reproduce(key):
+    rows = F.R_FIT if key == "per_curve" else F.R_SPLIT
+    for graph, curves in R["dual_control"][key].items():
+        for curve, rep in curves.items():
+            rr = [r for r in rows if r["graph"] == graph and r["curve"] == curve]
+            got = F.summary(rr, P)
+            assert got["n"] == rep["n"] >= 25
+            for m in ("rms_log", "rms_rel", "max_abs_mA"):
+                assert got[m] == pytest.approx(rep[m], rel=1e-6, abs=1e-12)
+            assert F.summary(F.low(rr), P)["n"] == rep["low_current"]["n"]
+
+
+def test_refit_error_bounds():
+    """Sane bounds on the #25 refit (values at the time of writing in brackets, see README)."""
+    d = R["dual_control"]
+    assert d["raytheon_fit_set"]["all"]["rms_log"] < 0.12                 # [0.090]
+    assert d["raytheon_fit_set"]["low_current"]["rms_log"] < 0.25         # [0.179]
+    assert d["raytheon_fit_set"]["low_current"]["median_abs_rel"] < 0.15  # [0.100]
+    for curves in d["per_curve"].values():
+        for c, e in curves.items():
+            assert e["rms_log"] < 0.25, c                                   # worst [0.192]
+
+
+def test_refit_beats_before_in_low_current_region():
+    a, b = R["dual_control"]["raytheon_fit_set"], R["before"]["raytheon_fit_set"]
+    assert a["low_current"]["n"] == b["low_current"]["n"]
+    assert a["low_current"]["rms_log"] < 0.6 * b["low_current"]["rms_log"]          # [0.179 vs 0.342]
+    assert a["low_current"]["median_abs_rel"] < 0.5 * b["low_current"]["median_abs_rel"]
+    assert a["all"]["rms_log"] < 0.6 * b["all"]["rms_log"]                          # [0.090 vs 0.182]
+
+
+def test_split_check_heldout():
+    """Screen current vs Ec3 (never fitted) is predicted from the plate/screen split."""
+    s = R["dual_control"]["split_check_heldout"]
+    assert s["all"]["n"] >= 500 and s["all"]["rms_log"] < 0.2                     # [0.134]
+    assert s["low_current"]["rms_log"] < 0.25                                     # [0.179]
+
+
+def test_cathode_current_falls_at_deep_g3_cutoff():
+    """Measured (Raytheon p.11): Ib + Ic2 stays within 10 % for Ec3 = -4..+10 V but is 16-25 % lower at
+    Ec3 = -10 V. The model keeps cathode current independent of g3; README documents the Ic2 error."""
+    for ec1 in ("Ec1_0", "Ec1_-1", "Ec1_-2"):
+        ik = R["raytheon_p11_cathode_current_mA"][ec1]
+        for e3 in ("Ec3_-4", "Ec3_4", "Ec3_10"):
+            assert ik[e3] == pytest.approx(ik["Ec3_0"], rel=0.1)
+        assert 0.7 < ik["Ec3_-10_Ic2_only"] / ik["Ec3_0"] < 0.9
+
+
+def test_raytheon_graphs_agree_with_each_other():
+    """The same operating point read off different Raytheon graphs (digitising + drafting scatter)."""
+    for c in R["raytheon_internal_consistency"]:
+        assert c["spread"] < (0.05 if "-2 V" in c["point"] else 0.3), c
 
 
 def test_datasheet_typical_operation_crosscheck():
-    """GE sheet p.1, class A1 columns (Eb=Ec2=120 V, Ec1=-2 V). NOT used in the fit."""
+    """GE sheet p.1, class A1 columns (Eb=Ec2=120 V, Ec1=-2 V). NOT used in the fit. 15 %: the refit
+    follows Raytheon, which reads Ib 3.3-3.45 mA at Ec3=-3 V where GE states 3.6 (refit: 3.13)."""
     for g3, ib, ic2, gm in ((-3, 3.6e-3, 4.8e-3, 1850e-6), (0, 5.2e-3, 3.5e-3, 3200e-6)):
-        assert M.dual_ip(-2, 120, g3, 120, P) == pytest.approx(ib, rel=0.12)
-        assert M.dual_ig2(-2, 120, g3, 120, P) == pytest.approx(ic2, rel=0.12)
+        assert M.dual_ip(-2, 120, g3, 120, P) == pytest.approx(ib, rel=0.15)
+        assert M.dual_ig2(-2, 120, g3, 120, P) == pytest.approx(ic2, rel=0.15)
         d = (M.dual_ip(-1.99, 120, g3, 120, P) - M.dual_ip(-2.01, 120, g3, 120, P)) / 0.02
-        assert d == pytest.approx(gm, rel=0.12)
+        assert d == pytest.approx(gm, rel=0.15)
 
 
 def _spice_eval(expr, v):
@@ -47,7 +104,7 @@ def test_spice_subcircuit_matches_python_model():
     from emit_spice import EXPR
     rng = np.random.default_rng(0)
     for _ in range(200):
-        v = dict(G1=rng.uniform(-4, 0), G2=120.0, G3=rng.uniform(-8, 10), P=rng.uniform(20, 240))
+        v = dict(G1=rng.uniform(-5, 0), G2=rng.uniform(60, 140), G3=rng.uniform(-8, 12), P=rng.uniform(20, 400))
         v["ik"] = _spice_eval(EXPR["ik"], v)
         ip = v["ik"] * _spice_eval(EXPR["share"], v)
-        assert ip == pytest.approx(M.dual_ip(v["G1"], 120, v["G3"], v["P"], P), rel=1e-4)
+        assert ip == pytest.approx(M.dual_ip(v["G1"], v["G2"], v["G3"], v["P"], P), rel=1e-4)

@@ -1,6 +1,7 @@
 * ngspice check of the fitted 6AS6_FIT subcircuit against the Python model.
 * DC sweeps at the GE datasheet conditions: p.3 (Ec2=120 V, Ec3=0, Eb 0..240 V, Ec1 0..-4 V)
-* and p.4 (Eb=Ec2=120 V, Ec1 -1..-3 V, Ec3 -10..+10 V). Cathode grounded.
+* and p.4 (Eb=Ec2=120 V, Ec1 -1..-3 V, Ec3 -10..+10 V), plus the Raytheon p.9 transfer condition
+* (Eb=120 V, Ec3=0, Ec2=60 and 140 V, Ec1 -5..0 V) for the low-current region. Cathode grounded.
 .include ../results/6AS6_fit.inc
 VB  p  0 DC 120
 VG2 g2 0 DC 120
@@ -21,6 +22,16 @@ foreach E 0 -1 -2 -3 -4
   wrdata $fn ib ic2
 end
 alter VB dc = 120
+alter VG3 dc = 0
+foreach S 60 140
+  alter VG2 dc = $S
+  dc VG1 -5 0 0.05
+  let ib = -i(VB)
+  let ic2 = -i(VG2)
+  set fn = out/p9b_ec2_{$S}.txt
+  wrdata $fn ib ic2
+end
+alter VG2 dc = 120
 foreach E -1 -2 -3
   alter VG1 dc = $E
   dc VG3 -10 10 0.25
