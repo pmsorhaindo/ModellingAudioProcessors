@@ -87,6 +87,74 @@
    "lines_from_raw_scan": [
     "u=0"
    ]
+  },
+  "p8_plate_vs_Eb_Ec3": {
+   "page": 8,
+   "conditions": "Ib, Ic2, Ic3 vs Eb; Ec2 = 120 V, Ec1 = -2 V; Ec3 = -14..+10 V (p.8 bottom)",
+   "points": 930,
+   "px_per_u": 2.4728116275221006,
+   "px_per_v": -97.4513783451438,
+   "affine_rms_residual_px": 1.6551468142104575,
+   "affine_max_residual_px": 4.1601269500159725,
+   "lines_from_raw_scan": []
+  },
+  "p11_gm1_vs_Ec3_Ec2": {
+   "page": 11,
+   "conditions": "gm(g1) vs Ec3; Eb = 120 V, Ec1 = -2 V; Ec2 = 60..140 V (p.11 bottom)",
+   "points": 363,
+   "px_per_u": 49.78766838442384,
+   "px_per_v": -0.1955313187457565,
+   "affine_rms_residual_px": 1.241417827518494,
+   "affine_max_residual_px": 2.8540123766011227,
+   "lines_from_raw_scan": [
+    "u=0"
+   ]
+  },
+  "p12_gm1_vs_Ec1_Ec2": {
+   "page": 12,
+   "conditions": "gm(g1) vs Ec1; Eb = 120 V, Ec3 = 0; Ec2 = 60..140 V (p.12 top)",
+   "points": 504,
+   "px_per_u": 193.8939754040035,
+   "px_per_v": -0.24403703179414538,
+   "affine_rms_residual_px": 2.022859391468173,
+   "affine_max_residual_px": 5.739276971252423,
+   "lines_from_raw_scan": []
+  },
+  "p12_gm1_vs_Ec3_Ec1": {
+   "page": 12,
+   "conditions": "gm(g1) vs Ec3; Eb = Ec2 = 120 V; Ec1 = 0..-5 V (p.12 bottom)",
+   "points": 313,
+   "px_per_u": 48.34568432743492,
+   "px_per_v": -0.19515080277584262,
+   "affine_rms_residual_px": 1.4588696103668946,
+   "affine_max_residual_px": 4.952198539411537,
+   "lines_from_raw_scan": [
+    "u=0"
+   ]
+  },
+  "p13_gm3_vs_Ec3_Ec2": {
+   "page": 13,
+   "conditions": "gm(g3) vs Ec3; Eb = 120 V, Ec1 = -2 V; Ec2 = 60..140 V (p.13 top)",
+   "points": 300,
+   "px_per_u": 48.65186641372198,
+   "px_per_v": -0.4848735879950868,
+   "affine_rms_residual_px": 1.2137902275088213,
+   "affine_max_residual_px": 3.662110500792145,
+   "lines_from_raw_scan": [
+    "u=0"
+   ]
+  },
+  "p13_gm3_vs_Ec3_Ec1": {
+   "page": 13,
+   "conditions": "gm(g3) vs Ec3; Eb = Ec2 = 120 V; Ec1 = 0..-4 V (p.13 bottom)",
+   "points": 287,
+   "px_per_u": 48.526032292843325,
+   "px_per_v": -0.4858387717460182,
+   "affine_rms_residual_px": 1.1682305701081208,
+   "affine_max_residual_px": 3.554316607278675,
+   "lines_from_raw_scan": [
+    "u=0"
+   ]
   }
  }
 }
