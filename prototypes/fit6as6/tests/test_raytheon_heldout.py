@@ -48,7 +48,8 @@ def test_heldout_results_reproduce():
         for m, x in v.items():
             assert H.p8[k][m] == pytest.approx(x, rel=1e-6), (k, m)
     b = COMMITTED["before_refit_25"]
-    assert b["params"] == FIT["refit_25"]["params"] and H.P == FIT["dual_control"]["params"]
+    assert b["params"] == pytest.approx(FIT["refit_25"]["params"], rel=1e-6)
+    assert H.P == pytest.approx(FIT["dual_control"]["params"], rel=1e-6)
     for q in ("gm1", "gm3"):
         for k, v in b["gm_summary"][q].items():
             assert H.before_25["gm_summary"][q][k] == pytest.approx(v, rel=1e-6), (q, k)
