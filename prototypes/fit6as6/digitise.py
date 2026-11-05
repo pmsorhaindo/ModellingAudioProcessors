@@ -204,8 +204,9 @@ def page4():
 # opening. Every graph has an overlay in plots/overlay_raytheon_*.png. The scan is slightly sheared (vertical lines drift ~5 px over the
 # graph height) and the printed grid is not perfectly uniform, so calibration interpolates
 # between the individually located major grid lines (see lattice()).
-# Issue #48 added p.8 bottom (plate family at Ec3 = -14..+10 V, g3 current), written to its own CSV (held
-# out of every fit) and drawn on a 2-3 px grid, which a 4 px disc opening removes.
+# Issue #48 added p.8 bottom (plate family at Ec3 = -14..+10 V, g3 current) and the five gm graphs of
+# pp. 11-13. These are written to their own CSVs (held out of every fit) and drawn on a 2-3 px grid, which a
+# 4 px disc opening removes.
 RAY_PDF = os.path.join(DS, "138_5_5725.pdf")
 RAY_URL = "https://frank.pocnet.net/sheets/138/5/5725.pdf"
 RAY_SHA256 = "6f226c6b7b6fb04fdb8830044afc2b13478c9d0fc8bf26316bacb9793d7649c8"
@@ -436,6 +437,48 @@ RAY_GRAPHS = {
                 # Ic3 (right-hand axis, seeds in left-axis units): +10 and +4 run 6-9 px apart (Eb 200-300 V)
                 # and as one stroke below 120 V, so only +2, +1 and +0.5 are traced
                 ("Ic3", 2, (250, 8.706), None), ("Ic3", 1, (250, 8.426), None), ("Ic3", 0.5, (250, 8.128), None)]),
+    # Transconductance graphs (pp. 11-13), all at Eb = 120 V: solid curves only, values in micromho. Thin pen on
+    # a 2-3 px grid, so the same 4 px disc opening as p.8 bottom. The heavy Ec3 = 0 line merges with every curve
+    # it crosses (runs taller than tmax), so there is no point at Ec3 = 0 itself.
+    "p11_gm1_vs_Ec3_Ec2": dict(
+        page=11, sweep="Ec3_V", fixed=dict(Eb_V=120, Ec1_V=-2), label="Ec2_V", value="gm_umho",
+        title="gm(g1) vs Ec3; Eb = 120 V, Ec1 = -2 V; Ec2 = 60..140 V (p.11 bottom)",
+        x=(547.5, 1941.5, -14, 14, 28), y=(2881.5, 1903.5, 0, 5000, 20), max_gap=15, step=0.25,
+        crop=(500, 1870, 2000, 2920), csv="raytheon_5725_gm_p11-13.csv", open=DISC4, clear_axis=True,
+        curves=[("gm1", 140, (10.5, 4287), None), ("gm1", 120, (10.5, 4101), None), ("gm1", 100, (10.5, 3454), None),
+                ("gm1", 80, (10.5, 2403), None), ("gm1", 60, [(10.5, 897), (-3.5, 294)], None)]),
+    "p12_gm1_vs_Ec1_Ec2": dict(
+        page=12, sweep="Ec1_V", fixed=dict(Eb_V=120, Ec3_V=0), label="Ec2_V", value="gm_umho",
+        title="gm(g1) vs Ec1; Eb = 120 V, Ec3 = 0; Ec2 = 60..140 V (p.12 top)",
+        x=(566.5, 1924, -7, 0, 28), y=(1633, 657.5, 0, 4000, 20), max_gap=15, step=0.05,
+        crop=(520, 620, 1960, 1680), csv="raytheon_5725_gm_p11-13.csv", open=DISC4, clear_axis=True,
+        curves=[("gm1", 140, (-0.4, 3314), None), ("gm1", 120, (-0.4, 3211), None), ("gm1", 100, (-0.4, 3110), None),
+                ("gm1", 80, (-0.4, 2986), None), ("gm1", 60, (-0.4, 2860), None)]),
+    "p12_gm1_vs_Ec3_Ec1": dict(
+        page=12, sweep="Ec3_V", fixed=dict(Eb_V=120, Ec2_V=120), label="Ec1_V", value="gm_umho",
+        title="gm(g1) vs Ec3; Eb = Ec2 = 120 V; Ec1 = 0..-5 V (p.12 bottom)",
+        x=(566, 1919.5, -14, 14, 28), y=(2904, 1925, 0, 5000, 20), max_gap=15, step=0.25,
+        crop=(520, 1890, 1960, 2940), csv="raytheon_5725_gm_p11-13.csv", open=DISC4, clear_axis=True,
+        # Ec1 = 0, -1 and -2 cross each other repeatedly between Ec3 = -7 and +5.5 V (strokes within a few px), and
+        # every curve runs into the common toe at Ec3 = -8..-6 V; each range starts where its stroke is on its own.
+        curves=[("gm1", 0, (8.5, 4435), (6.5, 14)), ("gm1", -1, (8.5, 4302), (6.5, 14)), ("gm1", -2, (8.5, 3994), (4, 14)),
+                ("gm1", -3, (8.5, 2856), (-2.5, 14)), ("gm1", -3.5, (8.5, 2010), (-4, 14)),
+                ("gm1", -4, (8.5, 1284), (-5.5, 14)), ("gm1", -4.5, (8.5, 669), (-6, 14)), ("gm1", -5, (8.5, 293), (-6.5, 14))]),
+    "p13_gm3_vs_Ec3_Ec2": dict(
+        page=13, sweep="Ec3_V", fixed=dict(Eb_V=120, Ec1_V=-2), label="Ec2_V", value="gm_umho",
+        title="gm(g3) vs Ec3; Eb = 120 V, Ec1 = -2 V; Ec2 = 60..140 V (p.13 top)",
+        x=(570.5, 1932.5, -14, 14, 28), y=(1632, 661, 0, 2000, 20), max_gap=15, step=0.25,
+        crop=(520, 620, 1980, 1680), csv="raytheon_5725_gm_p11-13.csv", open=DISC4, clear_axis=True,
+        curves=[("gm3", 140, (-4.5, 1029), None), ("gm3", 120, (-4.5, 810), None), ("gm3", 100, (-4.5, 577), None),
+                ("gm3", 80, (-4.5, 280), None), ("gm3", 60, (-4.5, 54), None)]),
+    "p13_gm3_vs_Ec3_Ec1": dict(
+        page=13, sweep="Ec3_V", fixed=dict(Eb_V=120, Ec2_V=120), label="Ec1_V", value="gm_umho",
+        title="gm(g3) vs Ec3; Eb = Ec2 = 120 V; Ec1 = 0..-4 V (p.13 bottom)",
+        x=(587, 1945.5, -14, 14, 28), y=(2908.5, 1938.5, 0, 2000, 20), max_gap=15, step=0.25,
+        crop=(540, 1900, 1990, 2950), csv="raytheon_5725_gm_p11-13.csv", open=DISC4, clear_axis=True,
+        # -4 V stops at Ec3 = 0.5 V: beyond that its tail runs into the -3 V tail (one stroke, 10-30 umho)
+        curves=[("gm3", 0, (-4.5, 1661), None), ("gm3", -1, (-4.5, 1259), None), ("gm3", -2, (-4.5, 805), None),
+                ("gm3", -3, (-4.5, 346), None), ("gm3", -4, (-4.5, 102), (-14, 0.5))]),
 }
 
 
@@ -474,6 +517,9 @@ def ray_graph(key):
         long_ = np.isin(lab_im, 1 + np.where(ext >= DASH_PX)[0])
         return mm & long_, mm & ~long_
     solid = split(m)[0]
+    if G.get("clear_axis"):        # toes would otherwise be traced along the heavy zero line (and shared there)
+        for x in range(solid.shape[1]):
+            solid[int(to_px(to_data(x, 0)[0], vmin)[1]) - AXIS_PX:, x] = False
     m5 = m if G.get("open") is None else ndi.binary_opening(g, structure=G.get("dash_open", DISC5))
     dashed_q = G.get("dashed") or ()
     dashed_q = (dashed_q,) if isinstance(dashed_q, str) else tuple(dashed_q)
@@ -565,11 +611,13 @@ if __name__ == "__main__":
         cr[k] = dict(page=RAY_GRAPHS[k]["page"], conditions=RAY_GRAPHS[k]["title"], points=len(rows),
                      **{a: info[a] for a in ("px_per_u", "px_per_v", "affine_rms_residual_px",
                                              "affine_max_residual_px", "lines_from_raw_scan")})
-    # p.8-11 is the #25 fit data. p.8 bottom (Ib/Ic2/Ic3 vs Eb at fixed Ec3) is kept in its own file: it is
-    # held out of every fit.
+    # p.8-11 is the #25 fit data. p.8 bottom (Ib/Ic2/Ic3 vs Eb at fixed Ec3) and the gm graphs are kept in
+    # their own files: they are held out of every fit and the gm files hold micromho, not mA.
     RAY_CSV = {"raytheon_5725_p8-11.csv": ("I_mA", "pages 8-11", "current in mA"),
                "raytheon_5725_p8bottom.csv": ("I_mA", "page 8 bottom",
-                                              "current in mA (Ic3 read on the right-hand axis)")}
+                                              "current in mA (Ic3 read on the right-hand axis)"),
+               "raytheon_5725_gm_p11-13.csv": ("gm_umho", "pages 11 bottom, 12 and 13",
+                                               "transconductance in micromho")}
     for fn, (val, pages, unit) in RAY_CSV.items():
         keys = ["page", "graph", "curve", "quantity", "Ec1_V", "Ec2_V", "Ec3_V", "Eb_V", val, "x_px", "y_px",
                 "stroke_px"]
