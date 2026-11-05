@@ -1,5 +1,6 @@
-"""Issue #48: Raytheon p.8 bottom and the pp. 11-13 gm graphs, and the held-out checks of the #25 refit.
-Values at the time of writing in brackets (see README)."""
+"""Issue #48: Raytheon p.8 bottom and the pp. 11-13 gm graphs, and the checks of the refit against them.
+Since #51 the p.8 bottom Ib curves are in the fit; the gm graphs and p.8 bottom Ic2 are still held out.
+Values at the time of writing in brackets, #51 refit / #25 refit (see README)."""
 import json, os, sys
 from collections import Counter
 import pytest
@@ -9,6 +10,7 @@ sys.path.insert(0, HERE)
 COMMITTED = json.load(open(os.path.join(HERE, "results", "heldout_checks.json")))
 import heldout as H  # noqa: E402  (recomputes the checks from data/ and the committed parameters; < 1 s)
 
+FIT = json.load(open(os.path.join(HERE, "results", "fit_results.json")))
 CAL = json.load(open(os.path.join(HERE, "data", "calibration.json")))["raytheon_5725"]
 P8_CURVES = {**{f"Ib_Ec3_{e}": n for e, n in zip(range(-1, -15, -1),
                                                    (71, 68, 74, 73, 69, 66, 61, 61, 54, 46, 41, 33, 26, 20))},
@@ -45,17 +47,29 @@ def test_heldout_results_reproduce():
     for k, v in COMMITTED["p8_bottom"]["summary"].items():
         for m, x in v.items():
             assert H.p8[k][m] == pytest.approx(x, rel=1e-9), (k, m)
+    b = COMMITTED["before_refit_25"]
+    assert b["params"] == FIT["refit_25"]["params"] and H.P == FIT["dual_control"]["params"]
+    for q in ("gm1", "gm3"):
+        for k, v in b["gm_summary"][q].items():
+            assert H.before_25["gm_summary"][q][k] == pytest.approx(v, rel=1e-9), (q, k)
+    for k, v in b["p8_bottom_summary"].items():
+        for m, x in v.items():
+            assert H.before_25["p8_bottom_summary"][k][m] == pytest.approx(x, rel=1e-9), (k, m)
+    # fit.py's p.8 bottom metrics are the same numbers as heldout.py's
+    for k, j in (("all", "Ib_all"), ("Ec3_m10_to_m14", "Ib_Ec3_-10_to_-14")):
+        assert FIT["dual_control"]["p8_bottom_Ib"][k]["rms_log"] == pytest.approx(H.p8[j]["rms_log"], rel=1e-9)
 
 
 def test_gm_check_bounds():
-    """Model gm (central differences on the #25 parameters) vs the sheet's gm curves, never fitted."""
+    """Model gm (central differences on the #51 parameters) vs the sheet's gm curves, never fitted."""
     s = COMMITTED["gm_check"]["summary"]
     assert s["gm1"]["n"] >= 1100 and s["gm3"]["n"] >= 550
-    assert s["gm1"]["rms_log"] < 0.3 and s["gm1"]["median_abs_rel"] < 0.15     # [0.241, 0.094]
-    assert abs(s["gm1"]["mean_rel"]) < 0.1                                     # [+0.032]
-    assert s["gm3"]["rms_log"] < 0.5 and s["gm3"]["median_abs_rel"] < 0.3      # [0.419, 0.231]
-    assert abs(s["gm3"]["mean_rel"]) < 0.1                                     # [+0.004]
-    # at the GE/Raytheon operating point family (Ec2 = 120 V on p.11 bottom) gm1 is close [0.099, 4 %]
+    assert s["gm1"]["rms_log"] < 0.3 and s["gm1"]["median_abs_rel"] < 0.15     # [0.242, 0.130 / 0.241, 0.094]
+    assert abs(s["gm1"]["mean_rel"]) < 0.1                                     # [-0.007 / +0.032]
+    # gm(g3) got worse with #51 (README): mostly for Ec3 > 0, where the model's gm(g3) is now too low
+    assert s["gm3"]["rms_log"] < 0.7 and s["gm3"]["median_abs_rel"] < 0.35     # [0.625, 0.303 / 0.419, 0.231]
+    assert -0.25 < s["gm3"]["mean_rel"] < 0                                    # [-0.161 / +0.004]
+    # at the GE/Raytheon operating point family (Ec2 = 120 V on p.11 bottom) gm1 is close [0.094, 3 % / 0.099, 4 %]
     c = COMMITTED["gm_check"]["per_graph"]["p11_gm1_vs_Ec3_Ec2"]["per_curve"]["gm1_Ec2_120"]
     assert c["rms_log"] < 0.15 and c["median_abs_rel"] < 0.08
 
@@ -74,18 +88,36 @@ def test_ge_typical_gm_against_raytheon_curves():
         assert c["raytheon_gm1_p11"] == pytest.approx(c["ge_gm1"], rel=0.1)       # [+6 %, -1 %]
         for k in ("raytheon_gm3_p13_top", "raytheon_gm3_p13_bottom"):
             assert c[k] == pytest.approx(c["ge_gm3"], rel=0.2)                    # [-14 %, -18 %]
-            assert c["model_gm3"] == pytest.approx(c[k], rel=0.15)                 # [+7..+12 %]
+            assert c["model_gm3"] == pytest.approx(c[k], rel=0.2)       # [+17 % at -3 V, -6 / -1 % at 0 V]
         assert c["model_gm1"] == pytest.approx(c["raytheon_gm1_p11"], rel=0.1)
 
 
 def test_p8_bottom_g3_cutoff_moves_with_plate_voltage():
-    """Known limitation (README): on the sheet the g3 cut-off moves with Eb (Ib reaches 0.3 mA at Eb = 66 V for
-    Ec3 = -5 V and at 413 V for -14 V; plate mu about 40); the #25 model (MU3 = 225) barely moves it, so it predicts almost no plate
-    current at Ec3 <= -10 V. If a future model fixes this, update this test and the README."""
+    """On the sheet the g3 cut-off moves with Eb (Ib reaches 0.3 mA at Eb = 66 V for Ec3 = -5 V and at 413 V for
+    -14 V; plate mu 39 at 0.3 mA, 46 at 1 mA). The #25 model (MU3 = 225) barely moved it; with p.8 bottom in the
+    fit (#51) MU3 = 43 lies in that range, and the model's own cut-off line has the sheet's slope."""
     c = COMMITTED["p8_bottom"]["g3_cutoff_vs_plate_voltage"]
     for k in ("Ib_0.3_mA", "Ib_1.0_mA"):
         assert H.g3_cutoff[k]["plate_mu"] == pytest.approx(c[k]["plate_mu"], rel=1e-9)
-    assert 25 < c["Ib_0.3_mA"]["plate_mu"] < 60 and 25 < c["Ib_1.0_mA"]["plate_mu"] < 60   # [39, 46]
-    assert c["model_MU3"] > 3 * c["Ib_1.0_mA"]["plate_mu"]                                # [225]
-    assert COMMITTED["p8_bottom"]["summary"]["Ib_Ec3_-10_to_-14"]["mean_rel"] < -0.8   # [-0.94]
-    assert COMMITTED["p8_bottom"]["summary"]["Ib_Ec3_-1_to_-9"]["median_abs_rel"] > 0.2  # [0.33]
+        assert H.g3_cutoff[k]["model_plate_mu"] == pytest.approx(c[k]["model_plate_mu"], rel=1e-9)
+        assert c[k]["model_plate_mu"] == pytest.approx(c[k]["plate_mu"], rel=0.15), k   # [42.7 vs 39.0, 43.0 vs 45.5]
+    mu = sorted(c[k]["plate_mu"] for k in ("Ib_0.3_mA", "Ib_1.0_mA"))
+    assert 25 < mu[0] and mu[1] < 60                                                     # [39, 46]
+    assert mu[0] <= c["model_MU3"] <= mu[1]                                              # [43.2]
+    old = COMMITTED["before_refit_25"]["g3_cutoff_vs_plate_voltage"]
+    assert old["model_MU3"] > 3 * mu[1]                                                  # [225]
+
+
+def test_p8_bottom_deep_cut_error_improved_and_bounded():
+    """Issue #51: p.8 bottom Ib at Ec3 = -10..-14 V (166 points), where the #25 model gave almost no plate current
+    (RMS log 2.50, bias -94 %). With p.8 bottom in the fit it is close to the rest of the fit set [0.167, +4 %]."""
+    new, old = (COMMITTED["p8_bottom"]["summary"]["Ib_Ec3_-10_to_-14"],
+                COMMITTED["before_refit_25"]["p8_bottom_summary"]["Ib_Ec3_-10_to_-14"])
+    assert new["n"] == old["n"] == 166
+    assert old["rms_log"] > 2 and old["mean_rel"] < -0.8                                 # [2.502, -0.94]
+    assert new["rms_log"] < 0.25 and new["rms_log"] < 0.1 * old["rms_log"]               # [0.167]
+    assert new["median_abs_rel"] < 0.2 and abs(new["mean_rel"]) < 0.1                    # [0.145, +0.036]
+    s, b = COMMITTED["p8_bottom"]["summary"], COMMITTED["before_refit_25"]["p8_bottom_summary"]
+    for k in ("Ib_all", "Ib_Ec3_-1_to_-9", "Ib_0.1-0.6_mA"):
+        assert s[k]["rms_log"] < 0.5 * b[k]["rms_log"], k                               # [0.233 vs 1.391, ...]
+    assert s["Ib_all"]["rms_log"] < 0.3 and s["Ib_0.1-0.6_mA"]["rms_log"] < 0.45        # [0.233, 0.395]

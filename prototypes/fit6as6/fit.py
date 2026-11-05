@@ -3,12 +3,17 @@
 BEFORE (kept for comparison, issue #8 fit): dual-control model fitted to the GE sheet (Ec2 = 120 V
 only) with a relative residual (model - data) / max(data, 0.3 mA), which gives the 0.1-0.6 mA
 region almost no weight.
-AFTER (issue #25 refit): the same dual-control model fitted to the Raytheon 1960 families
+Issue #25 refit (`refit_25`): the same dual-control model fitted to the Raytheon 1960 families
 (Ec2 = 60..140 V, Ec1 down to -5 V, Ec3 -12..+12 V) with a log residual
 ln((I_model + I0) / (I_data + I0)), I0 = 0.02 mA (about 1-2 px of digitising resolution), so a
 10 % miss at 0.2 mA costs as much as a 10 % miss at 10 mA.
+Issue #51 refit (current, `dual_control`): the #25 data plus the Raytheon p.8 bottom plate family (Ib vs Eb
+at Ec3 = -1..-14 V, digitised in #48), the only curves that vary the plate voltage at fixed negative Ec3 and so
+pin MU3. Same model, residual and bounds; each p.8 bottom point has weight W_P8 = 1, like every other Raytheon
+point (one point per 5 V Eb step, as on the p.8 top and p.9 top plate families). The #25 refit (no p.8
+bottom) is kept as `refit_25`, and a refit with weight 0.25 on p.8 bottom as a sensitivity check.
 Held out of every fit: the Raytheon screen-current-vs-Ec3 curves (p.10 bottom, p.11 top), which
-check the model's plate/screen split under suppressor control.
+check the model's plate/screen split under suppressor control, and the p.8 bottom Ic2 curves (heldout.py).
 """
 import csv, json, os
 import numpy as np
@@ -48,6 +53,11 @@ SPLIT_GRAPHS = ("p10_vs_Ec3_Ec2", "p11_vs_Ec3_Ec1")
 R_SPLIT = [r for r in RAY if r["graph"] in SPLIT_GRAPHS and r["quantity"] == "Ic2"]   # held out
 R_FIT = [r for r in RAY if r not in R_SPLIT]
 GE = p3 + [dict(r, quantity="Ib") for r in p4]
+# issue #51: p.8 bottom Ib curves join the fit. Its two Ic2 curves stay held out (screen current under g3 control,
+# like R_SPLIT; checked in heldout.py) and Ic3 is not modelled.
+R_P8 = [r for r in load("raytheon_5725_p8bottom.csv") if r["quantity"] == "Ib"]
+R_P8_DEEP = [r for r in R_P8 if r["Ec3_V"] <= -10]
+W_P8 = 1.0              # per-point weight of p.8 bottom in the #51 fit (sensitivity check: 0.25)
 
 
 def predict(rows, p):
@@ -94,13 +104,18 @@ def r_before(x):      # issue #8: GE p.3 + p.4, relative residual with a 0.3 mA 
     return np.concatenate(out)
 
 
-I_FIT = arr(R_FIT)[4]
+I_FIT, I_P8 = arr(R_FIT)[4], arr(R_P8)[4]
+r_log = lambda rows, i, x: np.log((np.maximum(predict(rows, P(x)), 0) + I0) / (i + I0))
 r_ray_rel = lambda x: (predict(R_FIT, P(x)) - I_FIT) * w(I_FIT)                    # ablation
-r_ray_log = lambda x: np.log((np.maximum(predict(R_FIT, P(x)), 0) + I0) / (I_FIT + I0))   # issue #25
+r_ray_log = lambda x: r_log(R_FIT, I_FIT, x)                                       # issue #25
+r_p8_log = lambda x, wt=W_P8: np.concatenate([r_ray_log(x), np.sqrt(wt) * r_log(R_P8, I_P8, x)])   # issue #51
 
 before = fit_dual(r_before, STARTS)
 ray_rel = fit_dual(r_ray_rel, STARTS + [list(before.values())])
-dual = fit_dual(r_ray_log, STARTS + [list(before.values()), list(ray_rel.values())])
+refit_25 = fit_dual(r_ray_log, STARTS + [list(before.values()), list(ray_rel.values())])
+SEEDS = STARTS + [list(before.values()), list(ray_rel.values()), list(refit_25.values())]
+dual = fit_dual(r_p8_log, SEEDS)
+p8_w025 = fit_dual(lambda x: r_p8_log(x, 0.25), SEEDS)
 
 
 # ---- metrics
@@ -138,7 +153,9 @@ def evaluate(p):
     return dict(params={k: float(v) for k, v in p.items()},
                 raytheon_fit_set=dict(all=summary(R_FIT, p), low_current=summary(low(R_FIT), p)),
                 split_check_heldout=dict(all=summary(R_SPLIT, p), low_current=summary(low(R_SPLIT), p)),
-                ge_crosscheck=dict(all=summary(GE, p), low_current=summary(low(GE), p)))
+                ge_crosscheck=dict(all=summary(GE, p), low_current=summary(low(GE), p)),
+                p8_bottom_Ib=dict(all=summary(R_P8, p), Ec3_m1_to_m9=summary([r for r in R_P8 if r not in R_P8_DEEP], p),
+                                  Ec3_m10_to_m14=summary(R_P8_DEEP, p), low_current=summary(low(R_P8), p)))
 
 
 # Internal consistency of the Raytheon sheet: the same operating point read off different graphs.
@@ -171,14 +188,21 @@ for ec1 in (0, -1, -2, -3):
     IK3[f"Ec1_{ec1}"]["Ec3_-10_Ic2_only"] = _at("p11_vs_Ec3_Ec1", f"Ic2_Ec1_{ec1}", "Ec3_V", -10)
 
 res = dict(
-    sources=dict(raytheon=f"{RAY_URL} (Raytheon 5725/6AS6W, 15 Dec 1960), pages 8-11; data/raytheon_5725_p8-11.csv",
+    sources=dict(raytheon=f"{RAY_URL} (Raytheon 5725/6AS6W, 15 Dec 1960), pages 8-11; data/raytheon_5725_p8-11.csv "
+                          "and (p.8 bottom Ib, issue #51) data/raytheon_5725_p8bottom.csv",
                  ge=f"{GE_URL} (GE ET-T706 12-49), pages 3 and 4"),
     low_current_region_mA=[LOW[0] * 1e3, LOW[1] * 1e3],
     split_check="held out: Raytheon Ic2 vs Ec3 (p.10 bottom, p.11 top dashed curves) are in no fit",
     dual_control=dict(
-        fit="Raytheon p.8-11 except the held-out Ic2-vs-Ec3 curves; residual ln((I_model + I0)/(I_data + I0)), "
-            f"I0 = {I0 * 1e3} mA",
-        **evaluate(dual), per_curve=per_curve(R_FIT, dual), per_curve_split=per_curve(R_SPLIT, dual)),
+        fit="issue #51: Raytheon p.8-11 except the held-out Ic2-vs-Ec3 curves, plus the p.8 bottom Ib curves "
+            f"(weight {W_P8} per point); residual ln((I_model + I0)/(I_data + I0)), I0 = {I0 * 1e3} mA",
+        **evaluate(dual), per_curve=per_curve(R_FIT, dual), per_curve_split=per_curve(R_SPLIT, dual),
+        per_curve_p8_bottom=per_curve(R_P8, dual)),
+    refit_25=dict(
+        fit="issue #25: Raytheon p.8-11 except the held-out Ic2-vs-Ec3 curves (no p.8 bottom); same residual",
+        **evaluate(refit_25), per_curve=per_curve(R_FIT, refit_25), per_curve_split=per_curve(R_SPLIT, refit_25),
+        per_curve_p8_bottom=per_curve(R_P8, refit_25)),
+    sensitivity_p8_weight_0_25=dict(fit="as dual_control, but weight 0.25 per p.8 bottom point", **evaluate(p8_w025)),
     before=dict(fit=f"GE p.3 + p.4 (Ec2 = 120 V); residual (model - data)/max(data, {FLOOR * 1e3} mA)",
                 **evaluate(before), per_curve=per_curve(R_FIT, before)),
     ablation_raytheon_relative_residual=dict(
@@ -207,16 +231,17 @@ for ax, g in zip(axs.flat, dict.fromkeys(r["graph"] for r in RAY)):
                 ms=3, color=col, label=c + (" (held out)" if held else ""))
         v = {k: np.full_like(SW[sw], r0[k]) for k in ("Ec1_V", "Ec2_V", "Ec3_V", "Eb_V")}; v[sw] = SW[sw]
         f = M.dual_ip if r0["quantity"] == "Ib" else M.dual_ig2
-        for p, ls in ((dual, "-"), (before, ":")):
+        for p, ls in ((dual, "-"), (refit_25, ":")):
             ax.plot(SW[sw], f(v["Ec1_V"], v["Ec2_V"], v["Ec3_V"], v["Eb_V"], p) * 1e3, ls, color=col, lw=1)
     ax.set_yscale("log"); ax.set_ylim(0.05, 25); ax.set_xlabel(sw); ax.set_ylabel("mA (log)")
-    ax.set_title(g + "\nsolid: refit (#25), dotted: before (GE fit); shaded: 0.1-0.6 mA", fontsize=9)
+    ax.set_title(g + "\nsolid: refit (#51), dotted: #25 refit; shaded: 0.1-0.6 mA", fontsize=9)
     ax.grid(alpha=.3, which="both"); ax.axhspan(LOW[0] * 1e3, LOW[1] * 1e3, color="0.92", zorder=0)
     ax.legend(fontsize=6, ncol=2)
 plt.tight_layout(); plt.savefig(os.path.join(HERE, "plots", "fit_comparison.png"), dpi=100)
 
 if __name__ == "__main__":
-    for k in ("dual_control", "before", "ablation_raytheon_relative_residual"):
-        print(k, json.dumps({a: res[k][a] for a in ("params", "raytheon_fit_set", "split_check_heldout", "ge_crosscheck")},
+    for k in ("dual_control", "refit_25", "before", "ablation_raytheon_relative_residual", "sensitivity_p8_weight_0_25"):
+        print(k, json.dumps({a: res[k][a] for a in ("params", "raytheon_fit_set", "split_check_heldout", "ge_crosscheck",
+                                                     "p8_bottom_Ib")},
                             indent=1))
     print(json.dumps(CONSIST, indent=1)); print(json.dumps(IK3, indent=1))
