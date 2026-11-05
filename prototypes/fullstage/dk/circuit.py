@@ -64,6 +64,28 @@ def companion_g(c, fs, prewarp_hz=None):
     return c * w0 / np.tan(w0 / (2.0 * fs))
 
 
+def analog_response(f, J, rk_scale=1.0):
+    """Exact (continuous-time) small-signal response v(out)/v(src) of the netlist at frequencies f, with the
+    valve linearised to the 2x2 Jacobian J = d(Ig, Ia)/d(Vgk, Vak) of its operating point. This is what
+    ngspice's .ac computes (matches spice/reference_dz.json to its 7-decimal rounding, 7e-8 dB); no
+    discretisation, so dk/linear.py uses it to isolate the discretisation error (#38)."""
+    R, Cs, U, NL, OUT = netlist(rk_scale)
+    Nr, Nx, Nn = _inc([(p, q) for p, q, _ in R]), _inc([(p, q) for p, q, _ in Cs]), _inc(NL)
+    Nu = np.zeros((len(U), len(NODES)))
+    for r, n in enumerate(U):
+        Nu[r, NODES.index(n)] = 1.0
+    Y0 = Nr.T @ np.diag([1.0 / r for _, _, r in R]) @ Nr + Nn.T @ np.asarray(J) @ Nn
+    Yc = Nx.T @ np.diag([c for _, _, c in Cs]) @ Nx
+    nu = len(U)
+    rhs = np.r_[np.zeros(len(NODES)), 1.0, 0.0]               # AC 1 on vin, HT at AC ground
+    iout = NODES.index(OUT[0][0])
+    out = []
+    for s in 2j * np.pi * np.atleast_1d(np.asarray(f, float)):
+        S = np.block([[Y0 + s * Yc, Nu.T], [Nu, np.zeros((nu, nu))]])
+        out.append(np.linalg.solve(S, rhs)[iout])
+    return np.array(out)
+
+
 def build(fs, rk_scale=1.0, dc=False, prewarp_hz=None):
     """State-space matrices at sample rate fs. dc=True: capacitors open (for the operating point).
     prewarp_hz: pre-warp the small capacitances to this frequency (None = plain trapezoidal)."""
