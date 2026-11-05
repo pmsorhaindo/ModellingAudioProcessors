@@ -22,7 +22,7 @@ being trimmed (#14). `resampler_macs` is the resampler's multiplies per base-rat
 """
 import numpy as np
 from . import circuit
-from .solver import solve
+from .solver import solve, MAX_IT, TOL_V, TOL_F
 from .triode import currents, DZ_12AX7_RSD1
 from .resample import Resampler
 
@@ -30,8 +30,19 @@ PREWARP_HZ = 17300.0
 QUALITY = {"hq": (16, None), "standard": (8, None), "eco": (4, PREWARP_HZ)}   # (os, prewarp_hz)
 
 
+class OperatingPointError(RuntimeError):
+    """The DC operating-point solve failed (#7). Raised, not asserted, so it also fires under python -O."""
+
+
 class Stage:
-    def __init__(self, fs, bias=1.0, drive=1.0, output=1.0, triode=DZ_12AX7_RSD1, quality="standard", filt="fir"):
+    def __init__(self, fs, bias=1.0, drive=1.0, output=1.0, triode=DZ_12AX7_RSD1, quality="standard", filt="fir",
+                 newton=None):
+        # newton: optional solver overrides {max_it, tol_v, tol_f} (dk/solver.py defaults), for tests and experiments
+        nw = dict(max_it=MAX_IT, tol_v=TOL_V, tol_f=TOL_F)
+        if set(newton or {}) - set(nw):
+            raise TypeError(f"unknown newton option(s) {sorted(set(newton) - set(nw))}, expected {sorted(nw)}")
+        nw.update(newton or {})
+        self.newton = (nw["max_it"], nw["tol_v"], nw["tol_f"])
         self.fs_base = fs
         self.os, self.prewarp_hz = QUALITY[quality] if isinstance(quality, str) else quality
         self.rs = Resampler(fs, self.os, filt)
@@ -50,9 +61,13 @@ class Stage:
         K0 = m0["K"].tolist()
         v0, v1 = -1.0, 200.0
         # source-stepping on HT for robustness: ramp the supply in 10 steps
-        for s in np.linspace(0.1, 1.0, 10):
-            v0, v1, ig, ia, it, ok = solve(p[0] * s, p[1] * s, K0, v0, v1, self.par)
-            assert ok, "DC operating point did not converge"
+        for k, s in enumerate(np.linspace(0.1, 1.0, 10), 1):
+            v0, v1, ig, ia, it, ok = solve(p[0] * s, p[1] * s, K0, v0, v1, self.par, *self.newton)
+            if not ok:
+                raise OperatingPointError(
+                    f"DC operating point did not converge at source step {k}/10 (HT x {s:.1f}): "
+                    f"{it} Newton iterations (max_it, tol_v, tol_f = {self.newton}), "
+                    f"last iterate Vgk={v0:.6g} V, Vak={v1:.6g} V, bias={self.bias}")
         inl = np.array([ig, ia])
         w = m0["Si"] @ (m0["Nup"].T @ u - m0["Nnp"].T @ inl)
         nodes = dict(zip(circuit.NODES, w[:len(circuit.NODES)]))
@@ -85,7 +100,7 @@ class Stage:
         HT = circuit.VALUES["HT"]
         rec = {n: np.empty(len(vin)) for n in record}
         idx = {n: m["out_names"].index(n) for n in record if n in m["out_names"]}
-        x, (v0, v1), K, par = self.x, self.v, self.K, self.par
+        x, (v0, v1), K, par, nw = self.x, self.v, self.K, self.par, self.newton
         q0, q1 = self.v_prev
         iters = np.empty(len(vin), dtype=np.int16)
         Gu, Hu = G, H
@@ -96,7 +111,7 @@ class Stage:
             # signal is smooth per sample, so this lands within ~1e-6 V more often than v[n-1] does
             e0, e1 = 2.0 * v0 - q0, 2.0 * v1 - q1
             q0, q1 = v0, v1
-            v0, v1, ig, ia, it, ok = solve(p[0], p[1], K, e0, e1, par)
+            v0, v1, ig, ia, it, ok = solve(p[0], p[1], K, e0, e1, par, *nw)
             iters[n] = it
             if not ok:
                 self.nonconv += 1
