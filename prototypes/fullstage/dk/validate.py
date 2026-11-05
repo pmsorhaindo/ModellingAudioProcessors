@@ -45,12 +45,15 @@ def ref(model):
 
 
 def small_signal(stage, f):
-    """Exact small-signal response of the discretised DK stage at its op point (stage only),
-    and with the interpolation + decimation filters (whole chain)."""
+    """Exact small-signal response (dB) of the discretised DK stage at its op point: the stage alone, and the whole
+    chain as Stage.process() runs it (interpolator -> stage -> decimator). chain_response is already up -> down;
+    before #38 it was squared here, which counted the FIR passband twice (an extra -0.00012 dB at standard,
+    -0.00044 dB at hq, at 20 kHz; the IIR's magnitude is flat). The stage's own error is the trapezoidal warping
+    (#38, dk/budget.py)."""
     f = np.asarray(f, float)
     Hs = np.abs(linear.stage_response(stage, f))
-    Hh = np.abs(stage.rs.chain_response(f))
-    return 20 * np.log10(Hs), 20 * np.log10(Hs * Hh ** 2)
+    Hc = Hs * np.abs(stage.rs.chain_response(f))
+    return 20 * np.log10(Hs), 20 * np.log10(Hc)
 
 
 def prewarp_minimax(factor=4, lo=10e3, hi=20e3):
