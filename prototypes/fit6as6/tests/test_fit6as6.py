@@ -111,7 +111,7 @@ def test_datasheet_typical_operation_crosscheck():
 
 def _spice_eval(expr, v):
     s = expr.replace("1m", "1e-3")
-    s = re.sub(r"V\((\w+),K\)", lambda m: f"v['{m.group(1)}']", s).replace("V(ik)", "v['ik']")
+    s = re.sub(r"V\((\w+),K\)", lambda m: f"v['{m.group(1)}']", s).replace("V(ik)", "v['ik']").replace("V(ik0)", "v['ik0']")
     env = dict(ln=np.log, exp=np.exp, atan=np.arctan, max=np.maximum, pwr=lambda x, y: np.abs(x) ** y, v=v)
     return eval(s, env)
 

@@ -92,8 +92,23 @@ def pooled(q, p=P):
     return stats(m, d, G0)
 
 
+GM_BANDS = (("Ec3_below_-6", -99, -6), ("Ec3_-6_to_0", -6, 0), ("Ec3_0_to_5", 0, 5), ("Ec3_5_and_above", 5, 99))
+
+
+def gm_bands(q, p=P):
+    """pooled gm(q) error by Ec3 band (all gm graphs of that quantity; p.12 top is at Ec3 = 0)."""
+    rows = [r for r in GM if r["quantity"] == q]; out = {}
+    for name, lo, hi in GM_BANDS:
+        rs = [r for r in rows if lo <= r["Ec3_V"] < hi]
+        cs = dict.fromkeys((r["graph"], r["curve"]) for r in rs)
+        m = np.concatenate([gm_rows_model([r for r in rs if (r["graph"], r["curve"]) == k], p) for k in cs])
+        out[name] = stats(m, [r["gm_umho"] for k in cs for r in rs if (r["graph"], r["curve"]) == k], G0)
+    return out
+
+
 gm_check = gm_graphs(P)
 gm_summary = dict(gm1=pooled("gm1"), gm3=pooled("gm3"))
+gm_by_band = dict(gm1=gm_bands("gm1"), gm3=gm_bands("gm3"))
 
 
 # ---- 2) sheet self-consistency: slope of the sheet's own current curves (local quadratic over +-W)
@@ -237,7 +252,8 @@ ge_gm = ge_gm_check(P)
 
 # the same checks for the #25 parameters (fitted without p.8 bottom), for the #51 BEFORE/AFTER comparison
 before_25 = dict(params=P25, gm_summary=dict(gm1=pooled("gm1", P25), gm3=pooled("gm3", P25)),
-                 gm_per_graph={g: v["all"] for g, v in gm_graphs(P25).items()}, p8_bottom_summary=p8_summary(P25),
+                 gm_per_graph={g: v["all"] for g, v in gm_graphs(P25).items()},
+                 gm_by_Ec3_band=dict(gm1=gm_bands("gm1", P25), gm3=gm_bands("gm3", P25)), p8_bottom_summary=p8_summary(P25),
                  g3_cutoff_vs_plate_voltage=g3_cutoff_check(P25), ge_typical_vs_raytheon_gm_umho=ge_gm_check(P25))
 
 res = dict(
@@ -245,7 +261,7 @@ res = dict(
           "not refitted here. before_refit_25: the same checks with the #25 parameters",
     gm_definition=f"plate current derivative, central difference +-{H} V; umho",
     log_error=f"ln((model + f)/(data + f)), f = {G0} umho for gm, {I0_MA} mA for currents",
-    gm_check=dict(summary=gm_summary, per_graph=gm_check),
+    gm_check=dict(summary=gm_summary, per_graph=gm_check, by_Ec3_band=gm_by_band),
     sheet_self_consistency=self_check,
     p8_bottom=dict(summary=p8, per_curve=p8_per_curve, Ib_at_Eb_120_vs_transfer_graphs_mA=p8_vs_transfer,
                    g3_cutoff_vs_plate_voltage=g3_cutoff),
