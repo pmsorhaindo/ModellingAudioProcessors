@@ -87,6 +87,16 @@
    "lines_from_raw_scan": [
     "u=0"
    ]
+  },
+  "p8_plate_vs_Eb_Ec3": {
+   "page": 8,
+   "conditions": "Ib, Ic2, Ic3 vs Eb; Ec2 = 120 V, Ec1 = -2 V; Ec3 = -14..+10 V (p.8 bottom)",
+   "points": 930,
+   "px_per_u": 2.4728116275221006,
+   "px_per_v": -97.4513783451438,
+   "affine_rms_residual_px": 1.6551468142104575,
+   "affine_max_residual_px": 4.1601269500159725,
+   "lines_from_raw_scan": []
   }
  }
 }
