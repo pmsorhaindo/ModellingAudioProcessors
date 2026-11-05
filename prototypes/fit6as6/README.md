@@ -5,7 +5,7 @@ The lab uses this in place of the EF86 stand-in. Needs Python with `../valvelab/
 ```bash
 datasheets/fetch_datasheets.sh      # PDFs are not redistributed; fetched and SHA256-checked
 mkdir -p plots
-python digitise.py && python fit.py && python heldout.py && python emit_spice.py && python -m pytest -q tests
+python digitise.py && python fit.py && python heldout.py && python emit_spice.py && python ik_g3.py && python -m pytest -q tests
 ```
 The pipeline is deterministic: rerunning it from the fetched PDFs reproduces `data/` and `results/`
 byte for byte (checked 5 Nov 2026, after the Raytheon refit; after the #51 refit `fit.py`, `heldout.py` and
@@ -21,6 +21,10 @@ the p.8 bottom plate family (Ib vs Eb at Ec3 = −1…−14 V), which pins the p
 sheet's is 39–46). Summary and BEFORE/AFTER in [Refit with p.8 bottom](#refit-with-p8-bottom-issue-51).
 The #25 refit (no p.8 bottom) is kept in `results/fit_results.json` as `refit_25` and the earlier GE fit
 (Ec2 = 120 V only) as `before`; [Refit](#refit-to-the-raytheon-curves-issue-25) describes #25.
+Issue #53 extended the model with a g3-dependent cathode current and a non-linear plate term
+(`model6as6.py`, off by default), but did not change the current fit: on the #51 data split the new cathode-current
+parameter is not determined ([g3-dependent cathode current](#g3-dependent-cathode-current-issue-53)). A decision
+on the data split is needed there.
 
 ## Sources (`datasheets/`, fetched by `fetch_datasheets.sh`, not committed)
 | file | source URL | used for |
@@ -527,7 +531,8 @@ current rows only.
     So #51 is 6–12 % low at −1…−5 V.
 - **gm(g3) got worse (held out):** RMS log 0.419 → 0.625, bias 0 → −16 %. The weight-0.25 refit gives 0.580 /
   −12 % (computed with `heldout.py`'s functions, not stored).
-  - The loss is at positive g3. By Ec3 band, the #51 / #25 values are:
+  - The loss is at positive g3. By Ec3 band, the #51 / #25 values are (stored since #53 as `gm_check.by_Ec3_band`
+    and `before_refit_25.gm_by_Ec3_band` in `heldout_checks.json`):
 
     | Ec3 band | n | RMS log | bias |
     |---|---|---|---|
@@ -557,11 +562,199 @@ current rows only.
 - **gm(g3) is too low for Ec3 > 0** (above).
 
 A g3-dependent cathode-current term and a share function with separate plate and g3 slopes would address these.
-That is a new model, not attempted here.
+That is a new model, not attempted here. (#53 tried it; next section.)
+
+## g3-dependent cathode current (issue #53)
+**Status: study only. `dual_control` (the #51 fit) and `results/6AS6_fit.inc` are unchanged.** The refit the
+issue asked for (new form, #51 fit set) cannot determine the new cathode-current parameter. At its optimum the
+cathode current is wrong by about a factor of 2 in its g3 drop, and the held-out screen check is twice as bad as
+#51's. Making it the current model would be a regression. Options are at the end of this section.
+`ik_g3.py` runs every fit below and writes `results/ik_g3_study.json` (about 45 s); `tests/test_ik_g3.py` checks it.
+
+**Why.** After #51 (previous section): gm(g3) got worse (RMS log 0.419 → 0.625, −76 % at Ec3 ≥ +5 V). The
+held-out screen bias rose from +6 % to +15 %. The g3 cut-off has the wrong shape in Eb. The model's cathode
+current does not depend on g3, but on Raytheon p.11 (`raytheon_p11_cathode_current_mA`, split-check table above)
+Ib + Ic2 stays within 10 % from Ec3 = −4 to +10 V and is 13–25 % lower at Ec3 = −10 V.
+
+**Model form** (`model6as6.py`; KR = 0 and XA = 1, the defaults, give the #51 equations exactly, and fit.py /
+emit_spice.py reproduce `results/` byte for byte; `heldout_checks.json` only gains the gm-by-Ec3-band entries):
+
+  `Ik0 = 2·E1^EX/KG1` (Koren E1 in Vg1, Vg2, as before)
+  `z = (Vg3 + Up(Va) − V3C − RI·Ik0)/S3`,  `Up = (VA0/MU3)·(1 + ((Va/VA0)^XA − 1)/XA)`,  VA0 = 120 V
+  `s = (1 + exp(−z))^(−P3)`,  `f = FMAX·(2/π)atan(Va/KVB)·s`
+  `Ik = Ik0·(1 − KR/(1 + exp(z)))`,  `Ip = Ik·f`,  `Ig2 = Ik·(1 − f)`
+
+- **Cathode-current term (KR, one parameter).** The current-division picture (Radiomuseum "Dual control
+  Pentodes" thread: roughly constant cathode current under g3 control) holds on p.11 only while g3 passes
+  electrons. Past cut-off the electrons turned back at g3 lower the cathode current (the space-charge explanation
+  given since #25; I have no publication that gives its size). `1/(1 + e^z)` reuses the share's own cut-off
+  variable. While g3 passes electrons (z > 0) it is ≈ 0, so Ik ≈ Ik0. Past cut-off it goes to 1, so Ik → (1 − KR)·Ik0,
+  which is bounded below. It is overflow-safe as `exp(−softplus(z))`, like the existing `exp(−P3·softplus(−z))`.
+  - Three other one-parameter forms were fitted in a scratch study (not committed): `1 − KR·(1 − s)`,
+    `exp(−KR·softplus(−z))` and `1/(1 + KR·softplus(−z))`. All three gave the same identifiability result as
+    below.
+  - `1 − KR·(1 − s)` also moves Ik above cut-off: Ik(+10 V)/Ik(0) = 1.03–1.05, where the sheet's is 0.95–1.02.
+  - The exp form is exactly degenerate with P3 on every Ib point (Ib ∝ exp(−(P3 + KR)·softplus(−z))). The exp and
+    1/(1 + …) forms also send Ik → 0 as Vg3 → −∞.
+  - The form's *shape* was chosen knowing the p.11 cathode-current table, which comes from the held-out Ic2 curves
+    and has been documented since #25. Its *size* (KR) is fitted.
+- **Plate term (XA, one parameter): why the share function changed too.**
+  - The KR-only refit leaves the p.8 bottom cut-off shape where it was (RMS log 0.233 → 0.230, 0.1–0.6 mA 0.395 →
+    0.389). A cathode-current factor acts through the same z, so it cannot change how the cut-off moves with Eb.
+  - On the sheet that movement is not linear. Eb for Ib = 0.3 mA on p.8 bottom (`g3_cutoff_vs_plate_voltage`)
+    is 25, 44, 66, 88 V at Ec3 = −3…−6 V, about 21 V per volt of Ec3. At −11…−14 V it is 265, 310, 353, 413 V,
+    about 49 V/V.
+  - Va/MU3 gives straight iso-current lines: #51 has 43 V/V everywhere and reaches 0.3 mA at Eb = 25 V for
+    Ec3 = −5 V, where the sheet needs 66 V.
+  - With XA < 1 the local plate-to-g3 μ is MU3·(Va/VA0)^(1−XA). It rises with Eb, and the g3 slope (S3) stays.
+    Those are the "separate plate and g3 slopes" of the #51 residual.
+  - The form is a Box–Cox power about VA0 = 120 V, so at Va = 120 V the plate term and its slope are #51's
+    (Va/MU3), and XA = 1 is exactly #51.
+  - The power's base is floored at 1 mV, so its slope stays finite at Va → 0.
+  - The empirical basis is the sheet behaviour measured in this repo (p.8 bottom). No publication is cited for it.
+
+**Fits** (the #51 residual ln((I_model + I0)/(I_data + I0)), I0 = 0.02 mA, and bounds; KR ∈ [0, 0.95],
+XA ∈ [0.2, 1.5]):
+- `refit_53`: KR + XA on the #51 fit set, which is p.8 top–p.11 without the held-out Ic2-vs-Ec3 curves
+  (2779 points) plus p.8 bottom Ib (763, weight 1). This is the refit the issue asked for.
+- `refit_53_kr_only` and `refit_53_xa_only`: each new parameter alone, same data.
+- `diagnostic_p11_ic2_in_fit`: KR + XA with the p.11 top Ic2-vs-Ec3 curves (328 points) added to the fit.
+  - It is **not a candidate under the #53 data split**, because it fits half of the held-out screen check.
+  - It shows what KR does once screen current under g3 control is in the data.
+  - p.10 bottom Ic2 vs Ec3 (327) and p.8 bottom Ic2 (28) stay held out.
+- **Restarts:** every fit uses fit.py's 7 seeded starts (KR = 0.15, XA = 0.7 appended where those are fitted).
+  `refit_53` and the diagnostic also use 12 random starts (log-uniform in bounds, uniform for V3C/RI/KR, seed 53).
+  "Same minimum" means a cost within 10⁻⁶ (relative) of the best; no start goes lower.
+  - `refit_53`: 7/7 seeded and 11/12 random reach it.
+  - Diagnostic: 7/7 and 10/12.
+  - KR-only and XA-only: 7/7 seeded.
+- **KVB is on its lower bound** (0.5 V) in every fit with XA. With the power term the plate term itself carries the
+  low-Eb roll-off that the knee (KVB) carried in #51, so the two are partly redundant.
+
+**Parameters**:
+
+| param | MU | EX | KG1 | KP | FMAX | MU3 | V3C | S3 | P3 | RI | KVB | KR | XA |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| BEFORE (#51, `dual_control`) | 30.14 | 1.494 | 697.6 | 149.5 | 0.7107 | 43.22 | -3.031 | 2.075 | 2.302 | 53.93 | 5.231 | (0) | (1) |
+| `refit_53` (KR + XA, #51 fit set) | 30.11 | 1.506 | 684.5 | 148.5 | 0.684 | 33.36 | -3.816 | 2.285 | 3.192 | 45.49 | 0.5 | 0.7914 | 0.5647 |
+| `refit_53_kr_only` | 30.09 | 1.508 | 681.3 | 148.8 | 0.707 | 43.41 | -3.879 | 2.246 | 2.372 | 52.67 | 7.839 | 0.7467 | (1) |
+| `refit_53_xa_only` | 30.14 | 1.494 | 698.6 | 149.3 | 0.6916 | 33.62 | -3.086 | 2.136 | 3.063 | 44.95 | 0.5 | (0) | 0.5761 |
+| diagnostic: + p.11 top Ic2 in the fit | 30.12 | 1.490 | 696.5 | 149.6 | 0.708 | 33.60 | -4.077 | 2.347 | 3.992 | 46.54 | 0.5 | 0.2737 | 0.5743 |
+
+**Plate μ (MU3).**
+- **With XA = 1** (#51, KR-only), MU3 is the plate μ of a straight cut-off line: 43.2 / 43.4.
+- **With XA < 1**, MU3 is the *local* plate-to-g3 μ at Eb = 120 V. It is 33.4–33.6, below the 39–46 sheet range
+  quoted since #51. That range is not a local value, though: it is the slope of a straight line through the p.8
+  bottom cut-off points at Ec3 = −5…−14 V, which spans Eb 66–413 V (39.0 at 0.3 mA, 45.5 at 1 mA).
+  - Measured the same way on the model's curves, every XA fit gives 42.1–42.2 / 44.2 (#51: 42.7 / 43.0).
+  - The local μ of the XA fits is 21 at 40 V, 33.5 at 120 V, 45.9 at 250 V and 56 at 400 V
+    (`local_plate_mu_at_Eb_V`). The sheet's 0.3 mA line has 21 V/V at Eb 25–88 V and 49 V/V at 265–413 V.
+  - So the plate μ stays in the sheet's range wherever the sheet defines it. MU3 has a different meaning and its
+    number is not comparable with #51's.
+  - `test_plate_mu_stays_in_the_sheet_range` checks:
+    - the chord μ against the sheet's (15 %);
+    - MU3 in [39.0, 45.5] when XA = 1;
+    - the local μ at 250 V in that range (−5 / +15 %) when XA < 1.
+
+**Errors**: RMS log error / median |relative error| / mean relative error (bias); from `ik_g3_study.json` (currents
+as in fit.py, gm and p.8 bottom Ic2 as in heldout.py). "0.1–0.6 mA" selects points whose datasheet current is in
+that range. *Diagnostic column: the p.11 top Ic2 curves are fitted there, so its "held-out split" rows are not
+held out; the p.10 bottom rows are.*
+
+| | n | BEFORE (#51) | `refit_53` | KR only | XA only | diagnostic |
+|---|---|---|---|---|---|---|
+| fit set (p.8 top–p.11), all | 2779 | 0.102 / 5 % / -1 % | 0.104 / 5 % / -1 % | 0.101 / 5 % / -1 % | 0.106 / 5 % / -1 % | 0.107 / 5 % / -1 % |
+| fit set, 0.1–0.6 mA | 391 | 0.181 / 11 % / +3 % | 0.186 / 12 % / +3 % | 0.183 / 12 % / +3 % | 0.185 / 11 % / +4 % | 0.184 / 12 % / +4 % |
+| **held-out split (Ic2 vs Ec3), all** | 655 | 0.184 / 16 % / +15 % | 0.397 / 26 % / +0 % | 0.415 / 29 % / +0 % | 0.184 / 16 % / +15 % | (0.157 / 12 % / +6 %) |
+| held-out split, 0.1–0.6 mA | 111 | 0.177 / 13 % / +5 % | 0.399 / 29 % / +0 % | 0.414 / 31 % / +1 % | 0.179 / 13 % / +5 % | (0.205 / 23 % / -0 %) |
+| &nbsp; p.10 bottom Ic2 (held out in all), all | 327 | 0.206 / 16 % / +17 % | 0.441 / 33 % / +3 % | 0.461 / 36 % / +4 % | 0.207 / 16 % / +17 % | 0.199 / 15 % / +9 % |
+| &nbsp; p.10 bottom Ic2, 0.1–0.6 mA | 74 | 0.206 / 25 % / +12 % | 0.487 / 37 % / +3 % | 0.506 / 39 % / +3 % | 0.210 / 25 % / +12 % | 0.236 / 25 % / +5 % |
+| &nbsp; p.11 top Ic2, all | 328 | 0.158 / 16 % / +14 % | 0.347 / 22 % / -3 % | 0.365 / 26 % / -3 % | 0.156 / 16 % / +13 % | (fitted) 0.101 / 10 % / +4 % |
+| GE p.3/p.4 cross-check, all | 581 | 0.168 / 9 % / -10 % | 0.179 / 9 % / -10 % | 0.170 / 9 % / -11 % | 0.181 / 10 % / -10 % | 0.183 / 11 % / -11 % |
+| GE cross-check, 0.1–0.6 mA | 39 | 0.251 / 16 % / -17 % | 0.245 / 14 % / -16 % | 0.240 / 14 % / -16 % | 0.253 / 16 % / -17 % | 0.257 / 17 % / -18 % |
+| p.8 bottom Ib, all | 763 | 0.233 / 11 % / +10 % | 0.160 / 9 % / +7 % | 0.230 / 11 % / +9 % | 0.163 / 9 % / +7 % | 0.161 / 8 % / +6 % |
+| p.8 bottom Ib, Ec3 = −1…−9 V | 597 | 0.248 / 10 % / +11 % | 0.159 / 8 % / +8 % | 0.245 / 10 % / +11 % | 0.163 / 8 % / +9 % | 0.160 / 7 % / +8 % |
+| p.8 bottom Ib, deep cut Ec3 = −10…−14 V | 166 | 0.167 / 14 % / +4 % | 0.164 / 12 % / +0 % | 0.164 / 14 % / +3 % | 0.166 / 12 % / +0 % | 0.162 / 12 % / +0 % |
+| p.8 bottom Ib, 0.1–0.6 mA | 132 | 0.395 / 16 % / +22 % | 0.238 / 15 % / +6 % | 0.389 / 16 % / +21 % | 0.244 / 14 % / +6 % | 0.246 / 15 % / +7 % |
+| held-out p.8 bottom Ic2, Ec3 = −14 V | 16 | 0.129 / 14 % / +14 % | 0.745 / 52 % / -52 % | 0.790 / 55 % / -54 % | 0.130 / 14 % / +14 % | 0.094 / 9 % / -8 % |
+| held-out p.8 bottom Ic2, Ec3 = −4 V | 12 | 0.240 / 23 % / -21 % | 0.223 / 20 % / -20 % | 0.243 / 22 % / -21 % | 0.230 / 21 % / -20 % | 0.248 / 23 % / -22 % |
+| held-out gm(g1), all | 1180 | 0.242 / 13 % / -1 % | 0.242 / 13 % / +1 % | 0.243 / 13 % / -1 % | 0.241 / 13 % / +1 % | 0.239 / 12 % / +1 % |
+| &nbsp; gm(g1), Ec3 < −6 V | 18 | 0.718 / 51 % / +47 % | 0.708 / 50 % / +53 % | 0.726 / 52 % / +48 % | 0.693 / 48 % / +54 % | 0.707 / 49 % / +54 % |
+| &nbsp; gm(g1), −6…0 V | 199 | 0.389 / 16 % / +10 % | 0.382 / 14 % / +13 % | 0.390 / 16 % / +9 % | 0.381 / 14 % / +14 % | 0.383 / 14 % / +13 % |
+| &nbsp; gm(g1), 0…+5 V (incl. p.12 top at 0) | 702 | 0.191 / 13 % / -3 % | 0.197 / 13 % / -2 % | 0.193 / 13 % / -4 % | 0.196 / 13 % / -2 % | 0.191 / 12 % / -3 % |
+| &nbsp; gm(g1), ≥ +5 V | 261 | 0.125 / 11 % / -5 % | 0.123 / 11 % / -4 % | 0.123 / 11 % / -4 % | 0.126 / 12 % / -5 % | 0.115 / 11 % / -3 % |
+| **held-out gm(g3), all** | 587 | 0.625 / 30 % / -16 % | 0.540 / 28 % / -12 % | 0.524 / 27 % / -11 % | 0.636 / 32 % / -17 % | 0.507 / 26 % / -11 % |
+| &nbsp; gm(g3), Ec3 < −6 V | 59 | 0.604 / 39 % / +66 % | 0.604 / 39 % / +71 % | 0.606 / 38 % / +67 % | 0.601 / 39 % / +70 % | 0.610 / 38 % / +74 % |
+| &nbsp; gm(g3), −6…0 V | 228 | 0.234 / 19 % / +4 % | 0.228 / 17 % / +4 % | 0.236 / 18 % / +4 % | 0.227 / 17 % / +4 % | 0.223 / 17 % / +3 % |
+| &nbsp; gm(g3), 0…+5 V | 158 | 0.366 / 26 % / -22 % | 0.288 / 20 % / -17 % | 0.262 / 20 % / -11 % | 0.399 / 31 % / -27 % | 0.253 / 17 % / -13 % |
+| &nbsp; gm(g3), ≥ +5 V | 142 | 1.109 / 78 % / -76 % | 0.936 / 70 % / -69 % | 0.904 / 69 % / -67 % | 1.124 / 78 % / -76 % | 0.871 / 67 % / -65 % |
+
+**Cathode current on p.11** (Eb = Ec2 = 120 V; Ik(−10 V)/Ik(0) and Ik(+10 V)/Ik(0); sheet from
+`raytheon_p11_cathode_current_mA`, with Ic2 alone at −10 V):
+
+| Ec1 | sheet | BEFORE (#51) | `refit_53` | KR only | diagnostic |
+|---|---|---|---|---|---|
+| 0 V | 0.75 / 0.95 | 1 / 1 | 0.36 / 1.05 | 0.36 / 1.07 | 0.79 / 1.02 |
+| −1 V | 0.81 / 0.99 | 1 / 1 | 0.38 / 1.04 | 0.37 / 1.05 | 0.80 / 1.01 |
+| −2 V | 0.84 / 1.02 | 1 / 1 | 0.39 / 1.04 | 0.39 / 1.05 | 0.80 / 1.01 |
+| −3 V | 0.87 / 1.01 | 1 / 1 | 0.40 / 1.03 | 0.40 / 1.04 | 0.81 / 1.01 |
+
+**KR profile** (`kr_profile`: KR held fixed, every other parameter of `refit_53` refitted on the #51 fit set):
+
+| KR | 0 | 0.1 | 0.2 | 0.3 | 0.4 | 0.5 | 0.6 | 0.7 | 0.8 | 0.9 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| fit cost | 25.85 | 25.58 | 25.35 | 25.16 | 25.02 | 24.91 | 24.83 | 24.78 | 24.77 | 24.79 |
+| held-out split RMS log | 0.184 | 0.180 | 0.184 | 0.197 | 0.220 | 0.253 | 0.294 | 0.343 | 0.402 | 0.472 |
+| Ik(−10)/Ik(0) at Ec1 = −2 V (sheet 0.84) | 1 | 0.92 | 0.84 | 0.76 | 0.68 | 0.60 | 0.53 | 0.45 | 0.39 | 0.32 |
+
+**Findings.**
+- **On the #51 fit set, KR is not determined.**
+  - Between KR = 0 and 0.9 the cost changes by 4.4 %. The values that match the sheet's cathode current
+    (0.2–0.3) cost only 1.6–2.4 % more than the minimum.
+  - The minimum (0.79; KR alone 0.75) is set by the shape of the Ib toe. Ib = Ik·f, and every Ib point sees only
+    the product, so a g3-dependent Ik is traded against the share's cut-off position and slope (KR alone: V3C
+    −3.03 → −3.88 V, S3 2.07 → 2.25 V).
+  - The only digitised data that separate Ik(g3) from f(g3) are screen currents under g3 control. Those are the
+    p.10 bottom / p.11 top Ic2 and p.8 bottom Ic2 curves, and this split holds all of them out.
+  - At the minimum the cathode current falls to 0.36–0.40 of its Ec3 = 0 value at −10 V (sheet 0.75–0.87).
+    Held-out screen current gets much worse: split RMS log 0.184 → 0.397, p.8 bottom Ic2 at −14 V +14 % → −52 %.
+- **With screen data under g3 in the fit, KR is determined** (diagnostic):
+  - KR = 0.27 from 17 of 19 starts.
+  - Ik(−10)/Ik(0) = 0.79–0.81 (sheet 0.75–0.87); Ik(+10)/Ik(0) = 1.01–1.02 (sheet 0.95–1.02).
+  - The curves still held out improve or hold: p.10 bottom Ic2 0.206 → 0.199 with bias +17 % → +9 %, and p.8
+    bottom Ic2 at −14 V +14 % → −8 %.
+  - gm(g3) improves (0.625 → 0.507), mostly at 0…+5 V (−22 % → −13 %).
+  - It costs some low current: p.10 bottom Ic2 at 0.1–0.6 mA goes 0.206 → 0.236.
+  - The sheet's drop shrinks with current faster than the model's (sheet 0.75 at Ec1 = 0 → 0.87 at −3 V; model
+    0.79 → 0.81).
+- **The plate term (XA) helps whatever happens to KR.** p.8 bottom Ib 0.233 → 0.160–0.163, at 0.1–0.6 mA
+  0.395 → 0.238–0.246, toe bias +22 % → +6 %. The other fitted curves change little: fit set 0.102 → 0.104–0.107,
+  GE 0.168 → 0.179–0.183.
+- **No variant fixes gm(g3) far from the operating point.**
+  - At Ec3 ≥ +5 V every variant is still −65 to −76 %. The share saturates at FMAX there, which the cathode
+    current cannot change.
+  - Below −6 V every variant is still +66 to +74 %.
+  - Held-out p.8 bottom Ic2 at Ec3 = −4 V is −20 % in every variant.
+
+**Decision needed** (which parameter set becomes `dual_control`):
+1. **Fit p.11 top Ic2 too** (`diagnostic_p11_ic2_in_fit`) and keep p.10 bottom Ic2 and p.8 bottom Ic2 as the
+   held-out split check (327 + 28 points). This is the only option that makes Ik depend on g3 with a size the sheet
+   supports. It changes the data split agreed for #25/#51/#53.
+2. **XA only** (`refit_53_xa_only`): it fixes the p.8 bottom cut-off shape, but cathode current stays independent
+   of g3, so #53 is not addressed.
+3. **Keep #51.**
+
+To adopt 1 or 2, `fit.py` would compute that fit as `dual_control`, with #51 kept as `refit_51`. Then rerun
+`fit.py`, `heldout.py` and `emit_spice.py`, and update the `.inc` header text.
+- `emit_spice.expressions(p)` already writes the KR/XA form: an extra node `ik0` holds Ik0, and the pins and
+  subcircuit name are unchanged.
+- I ran `spice_check/check_6as6.cir` and `compare.py` in ngspice 41 on scratch includes (not committed). The worst
+  deviation from the Python model over the 20 curves, including the sweep start at Eb = 0 V, was 0.08 µA /
+  9×10⁻⁶ relative for `refit_53` and 0.02 µA / 1.1×10⁻⁵ for the diagnostic.
 
 ## SPICE
 `results/6AS6_fit.inc` defines `.SUBCKT 6AS6_FIT P G2 G3 G1 K` using B-sources (ln, exp, atan, pwr, max) and the
-GE datasheet capacitances, with the #51 refit parameters. The pin order and expressions are unchanged, so existing
+GE datasheet capacitances, with the #51 refit parameters (#53 did not change the file). The pin order and expressions are unchanged, so existing
 netlists keep working. A test checks it against the Python model by evaluating the same expression strings over
 Ec2 60–140 V, Ec3 −14…+12 V, Eb 20–420 V. **Checked in ngspice 41 (5 Nov 2026, #51 parameters):** `spice_check/check_6as6.cir` DC-sweeps the
 subcircuit at the GE conditions (p.3: Ec2 120 V, Ec3 0, Eb 0–240 V, Ec1 0…−4 V; p.4: Eb = Ec2 = 120 V, Ec1 −1…−3 V,
@@ -580,7 +773,9 @@ ngspice -b check_6as6.cir && python compare.py` → `spice_check.json`.
   (per-curve tables). Below 0.1 mA the model is extrapolation of Koren's exponential tail; the sheets have no usable
   curves there.
 - **g3 cut-off:**
-  - Cathode current does not depend on g3 in this model. Ic2 is over-predicted by up to ~40 % for Ec3 ≲ −6 V.
+  - Cathode current does not depend on g3 in the current fit (#51). Ic2 is over-predicted by up to ~40 % for
+    Ec3 ≲ −6 V. #53 added the term (KR), but the current data split cannot determine it
+    ([g3-dependent cathode current](#g3-dependent-cathode-current-issue-53)).
   - The Ib toe near g3 cut-off on p.10 bottom is up to 2.4× high (at Ec2 = 140 V up to 50 % low).
   - Since #51 the cut-off moves with plate voltage at the sheet's rate (MU3 = 43; sheet 39–46). Its shape in Eb
     is still off: at deep Ec3, Ib rises too steeply at high Eb (+25…+40 % at 400–420 V), and the low-Eb toes at
@@ -609,3 +804,8 @@ ngspice -b check_6as6.cir && python compare.py` → `spice_check.json`.
     - Model gm(g3) vs Raytheon: 20 %.
     - gm(g3) bounds: RMS log < 0.7, median < 35 %, bias −25…0 %.
     - Per-curve RMS log on the #25 fit points: < 0.27.
+  - `tests/test_ik_g3.py` (#53) checks that KR = 0, XA = 1 is exactly the #51 model and that the extension is
+    bounded and finite. It reruns `refit_53` and the diagnostic from their best starts, and checks that every
+    reported #53 metric reproduces and the restart counts hold. It also checks the identifiability findings
+    (flat KR profile, KR too large without screen data, sheet-sized with them), the plate μ against the sheet's,
+    and the KR/XA SPICE expressions against Python.
