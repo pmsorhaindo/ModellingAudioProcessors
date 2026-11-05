@@ -84,3 +84,21 @@ netlists' non-comment lines are byte-identical to what the old `BODY` template p
 them with ngspice-41 (`run(model, write=False)`), are **bit-identical** to the committed v3 JSONs: same SHA256
 (`reference_koren.json` 5df9aba2…, `reference_dz.json` 09f87103…), max abs and max rel difference 0 over the 1046
 numbers in each. So the JSONs were not rewritten.
+
+## v3.1 — AC band edges, and an audit of the AC reference (4 Nov 2026, #38)
+The `.ac dec 50 1 100k` grid's points inside the 20 Hz–20 kHz small-signal criterion run from 20.89 Hz to
+19.95 kHz, so neither band edge was evaluated, and the DK warping error peaks at the top edge (−0.0518 dB at
+20 kHz against −0.0515 dB at 19.95 kHz, 8×). `run_refs.py` now also runs `ac lin 1 20 20` and `ac lin 1 20k 20k`
+(`AC_EDGES_HZ`, in the generated `main` netlist and `stage_12ax7.cir`) and merges them into `"ac"` (251 → 253
+points; `"generator"` records the AC grid as `"ac"`). Both JSONs were regenerated with ngspice-41 from the generated
+netlists: every other value (op, AC points, sines, burst) is bit-identical to v3, so only the two added points and
+the `"generator"` entry change (the SHA256s above are v3's).
+
+Audit of the AC data the small-signal test uses (fresh runs, not committed; the `main` netlist):
+- `.ac` is a linear solve at the operating point, with no time step, so the #5 transient settings barely touch it:
+  reltol 1e-4 / vntol 1e-7 (the pre-#5 values) vs the committed settings move it by 1e-8 dB; 1000× tighter
+  (reltol 1e-9, abstol 1e-18, vntol 1e-12) and `gmin=1e-20` by 1e-15 dB.
+- Written at 16 digits (`set numdgt=15`, real and imaginary parts) on a 200/decade grid, it agrees with an
+  independent s-domain nodal solve of the same netlist and DZ Jacobian (`dk/circuit.py: analog_response`) to
+  6e-9 dB and 2e-8°. The committed JSON (7 decimals in dB) agrees with that solve to 7e-8 dB, its rounding.
+So the reference contributes nothing measurable to the DK small-signal deviation (`dk/RESULTS.md`, error budget).

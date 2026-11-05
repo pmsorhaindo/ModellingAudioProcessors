@@ -1,7 +1,7 @@
 # DK stage — validation of the quality settings (4 Nov 2026)
 
 `python -m dk.validate` → `results.json` (one entry per setting, plus the aliasing sweep); `python -m pytest -q dk/tests`
-→ **118 passed, all criteria pass for every setting** (criteria tightened in #5, aliasing limits from #6, CI guard #35, below).
+→ **124 passed, all criteria pass for every setting** (criteria tightened in #5, aliasing limits from #6, CI guard #35, small-signal budget #38, below).
 
 Setup: 48 kHz base rate, Drive = Bias = Output = 1, default setting **standard = 8× oversampling (stage at
 384 kHz)**. History: the first pass ran at 4× and failed only the small-signal criterion (0.21 dB at 20 kHz, see the
@@ -21,7 +21,7 @@ offset-tone sweep against each setting's limit (#6, "Aliasing" below).
 | FIR resampler: latency | 73 samples, 1.521 ms (exact) | 72 samples, 1.500 ms | 69 samples, 1.438 ms |
 | FIR resampler: MACs up / down | 247 / 247 | 143 / 143 | 91 / 91 |
 | IIR option: latency, MACs | 5 samples (0.104 ms, nominal), 36 / 36 | 5 samples, 20 / 20 | 4 samples (0.083 ms), 12 / 12 |
-| small signal, worst 20 Hz–20 kHz (target 0.1 dB) | 0.0136 dB at 20 kHz | 0.0517 dB at 20 kHz | **0.0536 dB** at 11 kHz; **−0.0527 dB at 20 kHz** (plain 4×: 0.212 dB, fail) |
+| small signal, worst 20 Hz–20 kHz (target 0.1 dB; #38 budget below) | 0.0133 dB at 20 kHz | 0.0520 dB at 20 kHz | **0.0538 dB** at 20 kHz; **+0.0535 dB at 11 kHz** (plain 4×: 0.213 dB, fail) |
 | H2–H5 worst tested dev (target 0.1 dB, ref > −90 dBc) | 0.00023 dB (H5, 2 V) | 0.00076 dB (H5, 2 V) | 0.0165 dB (H5, 2 V): 6× margin |
 | burst shift / τ / trajectory (0.5 % / 1 % / 0.5 %) | 0.031 % / 0.041 % / 0.0035 % | 0.031 % / 0.041 % / 0.0035 % | 0.009 % / 0.041 % / 0.0078 % |
 | aliasing, sweep worst, 8 V / 2 V (limit) | −66.03 (−63.0) / −121.22 dBc (−118.2) | −51.70 (−48.6) / −121.36 dBc (−118.3) | −32.65 (−29.6) / −75.74 dBc (−72.7) |
@@ -31,7 +31,7 @@ offset-tone sweep against each setting's limit (#6, "Aliasing" below).
 Operating point identical in all three (2×10⁻⁹ relative). Standard is bit-identical to the pre-#17 stage. Eco
 has the least margin on the #5 harmonic limit (0.0165 dB at H5, 2 V, vs 0.1 dB); its harmonics carry the 4× and
 pre-warp error that standard and hq do not. With `filt="iir"` every setting also passes every criterion above
-(small signal 0.0128 / 0.0515 / 0.0534 dB, H2–H5 worst 0.00013 / 0.00053 / 0.0167 dB, burst shift ≤ 0.031 %,
+(small signal 0.0129 / 0.0518 / 0.0537 dB, H2–H5 worst 0.00013 / 0.00053 / 0.0167 dB, burst shift ≤ 0.031 %,
 τ ≤ 0.082 %, trajectory ≤ 0.011 %). Its aliasing at 8 V matches the FIR's within 0.02 dB from 5 kHz up, including
 the worst tone. Its resampler floor is higher (it shows at 2 V and at low tones), and since #6 it has its own limits.
 In the pure-Python prototype CPU scales with the internal rate (the per-sample loop dominates: hq 1.9×, eco 0.53× of
@@ -48,15 +48,16 @@ frequency, and pre-warping every cap at 17.5 kHz measures 0.086 dB worst (at 21 
 The pre-warp frequency is the one that minimises the worst |deviation| from (ii) over 20 Hz–20 kHz at 4×
 (`validate.prewarp_minimax`, bounded scalar minimisation; `test_prewarp_frequency_is_the_minimax_optimum` re-derives it):
 
-| f₀ | none | 15 kHz | 17.0 kHz | **17.267 kHz (optimum)** | 17.3 kHz (used) | 17.5 kHz | 18 kHz | 20 kHz |
+| f₀ | none | 15 kHz | 17.0 kHz | 17.3 kHz (used) | **17.310 kHz (optimum)** | 17.5 kHz | 18 kHz | 20 kHz |
 |---|---|---|---|---|---|---|---|---|
-| worst dev | 0.212 dB | 0.093 | 0.058 | **0.0533** | 0.0536 | 0.0557 | 0.061 | 0.085 |
-| at | 20 kHz | 20 kHz | 20 kHz | both | 11 kHz | 11 kHz | 11 kHz | 12 kHz |
+| worst dev | 0.213 dB | 0.094 | 0.059 | 0.0538 | **0.0536** | 0.0556 | 0.061 | 0.085 |
+| at | 20 kHz | 20 kHz | 20 kHz | 20 kHz | both | 11 kHz | 11 kHz | 12 kHz |
 
 Below the optimum the worst case is still the warped roll-off at 20 kHz. Above it the error is set by the overshoot
 around 11 kHz, where pre-warping makes the response slightly too high. The 17.5 kHz in #17 is the same optimum on a
-0.5 kHz grid. The price is below 1 kHz: the pre-warped small caps act ~2.7 % small there, and CGP's Miller feedback
-still matters at 100 Hz, so eco is +0.0012 dB at 20 Hz and +0.0028 dB at 1 kHz (8×: < 10⁻⁴ dB). Its H2–H5
+0.5 kHz grid. (Re-measured in #38, now that the reference includes the exact 20 kHz band edge and the resampler
+is counted once: the optimum moved from 17.267 to 17.310 kHz, 10 Hz from the 17.3 kHz used.) The price is below
+1 kHz: the pre-warped small caps act ~2.7 % small there, and CGP's Miller feedback still matters at 100 Hz, so eco is +0.0012 dB at 20 Hz and +0.0028 dB at 1 kHz (8×: < 10⁻⁴ dB). Its H2–H5
 deviations are within 0.02 dB of standard's. The optimum depends on the circuit values and the base rate, so
 re-derive it (one call) when either changes.
 
@@ -277,7 +278,7 @@ at tight ngspice tolerances (reltol 1e-6, 0.5 µs step; `spice/RESULTS.md`, v3).
 | burst Vgk shift | 5 % | 0.5 % | 0.031 % | 16× |
 | burst recovery τ | 10 % | 1 % | 0.041 % | 24× |
 | burst trajectory RMS / shift | 5 % | 0.5 % | 0.0034 % | 145× |
-| small signal 20 Hz–20 kHz (unchanged) | 0.1 dB | 0.1 dB | 0.052 dB | 1.9× |
+| small signal 20 Hz–20 kHz (unchanged) | 0.1 dB | 0.1 dB | 0.0520 dB, trapezoidal warping (#38 budget below) | 1.9× |
 
 With `filt="iir"` the worst values are 2.1×10⁻⁹ / 0.00053 dB / 0.030 % / 0.082 % / 0.0047 %, also passing.
 
@@ -286,7 +287,7 @@ With `filt="iir"` the worst values are 2.1×10⁻⁹ / 0.00053 dB / 0.030 % / 0.
 | criterion | target | result | |
 |---|---|---|---|
 | operating point (Va, Vk, Ia, Vgk) | within 0.1 % | all within 2×10⁻⁹ relative (Va 204.536 V, Vk 1.4321 V, Ia 0.9546 mA, Vgk −1.5178 V) | pass |
-| small signal, 20 Hz–20 kHz | within 0.1 dB | **0.052 dB** worst, at 19.95 kHz (with resampling filters, 0.050 dB with the old Kaiser; stage alone 0.052 dB). −0.0071 dB at 10 kHz, < 0.001 dB at 1 kHz and below. At 4× it was 0.211 dB (fail) | pass |
+| small signal, 20 Hz–20 kHz | within 0.1 dB | **0.0520 dB** worst, at 20 kHz (with resampling filters; stage alone 0.0518 dB; before #38, on a grid without the band edge, 0.0517 dB at 19.95 kHz). −0.0067 dB at 10 kHz, < 0.001 dB at 1 kHz and below. At 4× it is 0.213 dB (fail). Breakdown: "Small-signal error budget" below | pass |
 | H2–H5 per drive level (where the reference is above −90 dBc) | within 0.1 dB | worst 0.00076 dB (H5 at 2 V: −43.0353 vs ref −43.0346 dBc); every tested harmonic ≤ 0.00076 dB; H1 within 2.1×10⁻⁵ dB; THD 0.169/1.776/16.700/60.691 % vs ref 0.169/1.776/16.700/60.693 % | pass |
 | 4 V burst: cycle-averaged Vgk shift, recovery τ, trajectory | 0.5 % / 1 % / 0.5 % RMS of shift | shift −2.841 V vs −2.842 V (0.03 %); τ 12.755 ms vs 12.750 ms (0.04 %, i.e. 2 samples at 384 kHz); trajectory RMS 0.003 % of shift; minimum at 30.0 ms in both | pass |
 
@@ -311,6 +312,67 @@ and below 1 kHz the DK response matches ngspice's AC analysis to < 10⁻⁵ dB. 
 use a higher-order discretisation for the small capacitances; or relax the criterion above ~10 kHz.
 **Decision (Michael, 4 Nov 2026): 8×.** Re-measured at 8×: 0.050 dB (chain), 0.052 dB (stage) — pass.
 The warping correction is now the eco setting (#17, above): 4× with the small caps pre-warped, 0.054 dB.
+
+## Small-signal error budget (#38): the 1.9× headroom is the trapezoidal warping
+`python -m dk.budget [--e2e]` prints the tables below; `dk/tests/test_smallsignal_budget.py` pins them. The deviation
+from (ii) that `validate.small_signal` measures splits exactly into four sources (signed dB; the rows add up to the
+total to 1e-14 dB). FIR resampler, the default:
+
+| source | hq @ 20 kHz | standard @ 20 kHz | eco @ 20 kHz | eco @ 10.96 kHz | worst hq / standard / eco |
+|---|---|---|---|---|---|
+| reference: ngspice `.ac` vs exact analog solve (7-decimal rounding) | +3.3e-8 | +3.3e-8 | +3.3e-8 | −2.1e-8 | 5.9e-8 (all) |
+| operating point: DK vs ngspice | +2.4e-9 | +2.4e-9 | +2.4e-9 | +4.2e-9 | 6.5e-9 (all) |
+| **warping**: discretised stage vs exact analog, same op point | **−0.01287** | **−0.05184** | **−0.05371** | **+0.05339** | 0.01287 / 0.05184 / 0.05371 |
+| resampler passband (FIR ripple) | −4.4e-4 | −1.2e-4 | −9.3e-5 | +1.3e-4 | 1.1e-3 / 8.1e-4 / 6.4e-4 (17.4 kHz) |
+| total = chain − reference | −0.01331 | −0.05196 | −0.05380 | +0.05352 | 0.01331 / 0.05196 / 0.05380 |
+
+With `filt="iir"` the resampler's magnitude is flat (3e-9 dB) and the totals are the warping alone (0.01287 / 0.05184 /
+0.05371 dB). So 99.8 % of standard's 0.0520 dB is the stage's own discretisation; nothing else is above 0.0011 dB.
+
+**Why the warping is 0.052 dB at 8×.** Every capacitor is trapezoidal with the same step T, so the linearised DK stage
+is exactly the bilinear transform of the analog circuit: H_d(f) = H_a(f_w) with f_w = (fs/π)·tan(πf/fs)
+(`test_stage_is_the_bilinear_warped_analog_response`: equal to 4e-9 dB, 1e-8°). The stage rolls off inside the audio
+band: the Miller capacitance (CGP × (1 + gain), gain 36.2 dB) against the 68k grid stopper puts its −3 dB point at
+14.3 kHz, so at 20 kHz it is already 4.70 dB below 1 kHz and falling at 4.0 dB/octave. At 384 kHz the bilinear map
+evaluates 20 kHz at analog 20.180 kHz (+0.90 %, ≈ (πf/fs)²/3), and the response there is 0.05184 dB lower: the
+measured stage error to all printed digits. That shift scales as 1/fs², and so does the error:
+
+| internal rate | 96 kHz (2×) | 192 kHz (4×) | 384 kHz (8×) | 768 kHz (16×) | 1.536 MHz (32×) | 3.072 MHz (64×) | 6.144 MHz (128×) |
+|---|---|---|---|---|---|---|---|
+| stage alone at 20 kHz (= worst) | −0.9626 dB | −0.2133 | −0.05184 | −0.01287 | −0.003212 | −0.000803 | −0.000201 |
+| ratio to previous | | 4.51 | 4.12 | 4.03 | 4.01 | 4.002 | 4.001 |
+
+The 1/fs² (Richardson) extrapolation from 64× and 128× leaves 6.5e-8 dB at fs → ∞, i.e. the reference's rounding.
+
+**The other suspects in #38, measured.** DK core without resamplers: 0.05184 dB, the chain 0.05196. FIR vs IIR: above.
+ngspice AC vs transient: the AC reference is ngspice's linear solve at the operating point and agrees with an
+independent s-domain solve (`circuit.analog_response`) to 7e-8 dB over 1 Hz–100 kHz (`spice/RESULTS.md` v3.1; the
+transient tolerances of #5 do not enter it). Measurement method, two real errors, both fixed in #38, and two that
+only `test_e2e_response` sees:
+- the reference's 50/decade grid had no point at either band edge, so the worst case was read at 19.95 kHz; the
+  reference now includes 20 Hz and 20 kHz exactly, which moves the reported worst *up* by 0.0004 dB;
+- `validate.small_signal` squared `chain_response`, which is already up → down, so the FIR passband was counted twice
+  (an extra −1.2e-4 dB at 20 kHz at standard, −4.4e-4 dB at hq; 0 with the IIR);
+- the 1 mV multitone through `process()` differs from the linearised chain by 7.5e-4 dB (second-order
+  intermodulation landing on tone bins, proportional to level: 7.5e-5 dB at 0.1 mV). `test_e2e_gain_matches_linearised_chain`
+  now checks process() against the same matrices to 0.002 dB;
+- log-f interpolation of the reference at the multitone's frequencies: 7.9e-4 dB.
+
+| worst small-signal deviation, 20 Hz–20 kHz (FIR) | hq | standard | eco |
+|---|---|---|---|
+| before #38 (grid without the band edges, resampler counted twice) | 0.01358 dB at 19.95 kHz | 0.05166 dB at 19.95 kHz (1.94×) | 0.05365 dB at 10.96 kHz |
+| after (`results.json`) | 0.01331 dB at 20 kHz | 0.05196 dB at 20 kHz (1.92×) | 0.05380 dB at 20 kHz |
+
+**Decision: documented as inherent, not changed.** The headroom is not a defect. It is the exact, predicted error of
+the trapezoidal rule at 384 kHz for this circuit, deterministic (no noise, no drift), and only the internal rate or the
+circuit can move it. To check after a change of `circuit.VALUES` (e.g. the real Culture Vulture values), rerun
+`python -m dk.budget`; the warping row is ≈ (slope at 20 kHz in dB/octave) × log2(1 + (πf/fs)²/3).
+The cheap fix exists and was measured: pre-warping the small capacitances at 8× as eco does at 4× (minimax optimum
+17.31 kHz). It brings standard to 0.0130 dB (7.7× headroom), but it is not free: the worst harmonic error grows from
+0.00076 to 0.00409 dB (H5, 2 V), 1 kHz moves by +0.0007 dB and 20 Hz by +0.0003 dB, and the default setting's
+output changes. That reverses the 4 Nov decision above (8×, no warping correction) and would make the #43 demo
+renders stale, so it is left to Michael. Its aliasing was not measured. Where more small-signal accuracy is wanted
+today, hq gives 0.0133 dB (7.5×).
 
 ## Resampler change (#14): before / after, against (ii)
 `python -m dk.validate` before (main at 7c182b4, 511-tap Kaiser, whole-buffer, delay trimmed) and after, at 8×.

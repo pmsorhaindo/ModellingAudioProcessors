@@ -19,8 +19,8 @@ sys.path.insert(0, ROOT)
 from analysis import harmonics, thd, db_rel
 from spice.run_refs import burst_metrics, AMPS
 from dk.stage import Stage, QUALITY
-from dk.triode import currents
 from dk import aliasing as AL
+from dk import linear
 
 FS = 48000.0
 # #5 tightened op 1% -> 0.1%, harmonics 1 dB above -100 dBc -> 0.1 dB above -90 dBc, burst 5/10/5% -> 0.5/1/0.5%,
@@ -45,22 +45,15 @@ def ref(model):
 
 
 def small_signal(stage, f):
-    """Exact small-signal response of the discretised DK stage at its op point (stage only),
-    and with the interpolation + decimation filters (whole chain)."""
-    m, dc = stage.m, stage.dc
-    _, _, J = currents(dc["vgk"], dc["vak"], stage.par)
-    Ji = np.array(J)
-    M = np.linalg.inv(np.eye(2) + m["K"] @ Ji)
-    G, H = m["G"], m["H"][:, :1]
-    Al = m["A"] + m["C"] @ Ji @ M @ G
-    Bl = m["B"][:, :1] + m["C"] @ Ji @ M @ H
-    Cl = m["D"][:1] + m["F"][:1] @ Ji @ M @ G
-    Dl = m["E"][:1, :1] + m["F"][:1] @ Ji @ M @ H
-    z = np.exp(2j * np.pi * np.asarray(f) / stage.fs)
-    n = Al.shape[0]
-    Hs = np.array([(Cl @ np.linalg.solve(zz * np.eye(n) - Al, Bl) + Dl)[0, 0] for zz in z])
-    Hh = np.abs(stage.rs.chain_response(np.asarray(f, float)))
-    return 20 * np.log10(np.abs(Hs)), 20 * np.log10(np.abs(Hs) * Hh ** 2)
+    """Exact small-signal response (dB) of the discretised DK stage at its op point: the stage alone, and the whole
+    chain as Stage.process() runs it (interpolator -> stage -> decimator). chain_response is already up -> down;
+    before #38 it was squared here, which counted the FIR passband twice (an extra -0.00012 dB at standard,
+    -0.00044 dB at hq, at 20 kHz; the IIR's magnitude is flat). The stage's own error is the trapezoidal warping
+    (#38, dk/budget.py)."""
+    f = np.asarray(f, float)
+    Hs = np.abs(linear.stage_response(stage, f))
+    Hc = Hs * np.abs(stage.rs.chain_response(f))
+    return 20 * np.log10(Hs), 20 * np.log10(Hc)
 
 
 def prewarp_minimax(factor=4, lo=10e3, hi=20e3):

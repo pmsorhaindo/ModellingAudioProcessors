@@ -26,6 +26,10 @@ let ia = -i(VHT)
 wrdata out/koren_op.txt v(a) v(k) v(g) v(gl) ia
 ac dec 50 1 100k
 wrdata out/koren_ac.txt db(v(out)) ph(v(out))
+ac lin 1 20 20
+wrdata out/koren_ac_20.txt db(v(out)) ph(v(out))
+ac lin 1 20k 20k
+wrdata out/koren_ac_20000.txt db(v(out)) ph(v(out))
 foreach A 0.05 0.5 2 8
   alter @Vin[sin] = [ 0 $A 1000 ]
   tran 5e-07 0.5 0.3 5e-07
