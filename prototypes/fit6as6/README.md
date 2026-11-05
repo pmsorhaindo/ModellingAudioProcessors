@@ -5,11 +5,12 @@ The lab uses this in place of the EF86 stand-in. Needs Python with `../valvelab/
 ```bash
 datasheets/fetch_datasheets.sh      # PDFs are not redistributed; fetched and SHA256-checked
 mkdir -p plots
-python digitise.py && python fit.py && python emit_spice.py && python -m pytest -q tests
+python digitise.py && python fit.py && python heldout.py && python emit_spice.py && python -m pytest -q tests
 ```
 The pipeline is deterministic: rerunning it from the fetched PDFs reproduces `data/` and `results/`
 byte for byte (checked 5 Nov 2026, after the Raytheon refit). Plots (`plots/`) are regenerated, not committed.
-`fit.py` takes about 5 s; CI runs only the tests, from the committed `data/`.
+`fit.py` takes about 5 s; CI runs only the tests, from the committed `data/`. `heldout.py` (issue #48) compares
+the committed parameters with the Raytheon curves that no fit uses ([Held-out checks](#held-out-checks-issue-48)).
 
 **Current model (issue #25):** the dual-control model below, refitted to the Raytheon 5725/6AS6W 1960
 curves (Ec2 60–140 V, Ec1 down to −5 V) with a log-scale error, so the 0.1–0.6 mA region the Culture
@@ -20,7 +21,7 @@ GE sheet (Ec2 = 120 V only) is kept in `results/fit_results.json` as `before`. S
 ## Sources (`datasheets/`, fetched by `fetch_datasheets.sh`, not committed)
 | file | source URL | used for |
 |---|---|---|
-| `138_5_5725.pdf` | https://frank.pocnet.net/sheets/138/5/5725.pdf (Raytheon 5725/6AS6W, 15 Dec 1960, 13 pp.), SHA256 `6f226c6b…49c8` | **the refit**: pp. 8–11 (six graphs, below) |
+| `138_5_5725.pdf` | https://frank.pocnet.net/sheets/138/5/5725.pdf (Raytheon 5725/6AS6W, 15 Dec 1960, 13 pp.), SHA256 `6f226c6b…49c8` | **the refit**: pp. 8–11 (six graphs, below); held-out checks (#48): p.8 bottom and the gm graphs on pp. 11–13 |
 | `084_6_6AS6.pdf` | https://frank.pocnet.net/sheets/084/6/6AS6.pdf (General Electric 6AS6, ET-T706, 12-49, 4 pp.) | the earlier fit (`before`) and now a cross-check: p.3 plate and screen characteristics; p.4 plate current vs suppressor voltage |
 | `127_6_6AS6.pdf` | https://frank.pocnet.net/sheets/127/6/6AS6.pdf (Tung-Sol 6AS6, 5 pp.) | has curves; not digitised yet, kept for cross-validation |
 | `049_5_5725.pdf` | https://frank.pocnet.net/sheets/049/5/5725.pdf (RCA 5725, 6 pp.) | ratings and characteristic limits only, no curves |
@@ -81,9 +82,8 @@ The pages are 1-bit 300 ppi scans (`pdfimages -list`), rendered at 300 dpi, so t
 | `p11_vs_Ec3_Ec1` | 11 top | Ib, Ic2 vs Ec3; Eb = Ec2 = 120 V | Ib: Ec1 = 0…−5 V; Ic2: 0…−4 V | 716 (96) | 49.8 /V, 49.0 /mA; 1.6 / 4.2 |
 
 Points per curve are the `n` column of the per-curve table under [Refit](#refit-to-the-raytheon-curves-issue-25).
-Not digitised: p.8 bottom (15 plate curves for Ec3 = −14…+10 V plus g3 current, too dense to separate
-reliably), the gm graphs on pp. 11–13 (derivatives; candidates for small-signal validation) and pp. 1–7 (MIL test
-tables).
+p.8 bottom and the gm graphs on pp. 11–13 were added in issue #48 (next section). Pp. 1–7 are MIL test tables
+with no curves.
 
 - **Calibration.** Every major grid line is located in the scan as a straight, slightly tilted line, using the
   darkness profile in 60 px strips. The thin-line residue (scan minus curve strokes) is used, so a curve next to a
@@ -126,6 +126,57 @@ tables).
   At 3–5 mA the graphs agree to 2 %. At 0.4–0.7 mA they disagree by 9–23 %, which is roughly the floor any fit
   can reach there. The Raytheon readings at 120/120/−2 V (Ib 5.08–5.17, Ic2 3.44–3.49 mA) match the GE typical
   values (5.2 / 3.5 mA).
+
+### Raytheon p.8 bottom and the gm graphs (issue #48; `raytheon_5725_p8bottom.csv`, `raytheon_5725_gm_p11-13.csv`)
+Same pipeline, PDF and SHA256 as above (`RAY_GRAPHS` in `digitise.py`), one overlay per graph in `plots/`. These
+are in separate files because no fit uses them (`fit.py` reads only `raytheon_5725_p8-11.csv`) and the gm file is
+in µmho. These graphs are drawn on a 2–3 px grid with a 4–7 px pen. A 3×3 opening leaves parts of the grid, so they
+use a 4 px disc opening. On the gm graphs the heavy zero-µmho line is blanked before tracing (`clear_axis`) so
+toes are not followed along it. The heavy Ec3 = 0 line hides every curve where it crosses, so no gm point
+lies exactly at Ec3 = 0.
+
+| graph (`graph` column) | page | conditions | curves digitised | points | calibration: px per unit (x, y); affine RMS / max px |
+|---|---|---|---|---|---|
+| `p8_plate_vs_Eb_Ec3` | 8 bottom | Ib, Ic2, Ic3 vs Eb; Ec2 = 120 V, Ec1 = −2 V | Ib: Ec3 = −1…−14 V; Ic2: −14, −4 V; Ic3: +2, +1, +0.5 V | 930 | 2.47 /V, 97.5 /mA; 1.7 / 4.2 |
+| `p11_gm1_vs_Ec3_Ec2` | 11 bottom | gm(g1) vs Ec3; Eb = 120 V, Ec1 = −2 V | Ec2 = 60…140 V | 363 | 49.8 /V, 0.196 /µmho; 1.2 / 2.9 |
+| `p12_gm1_vs_Ec1_Ec2` | 12 top | gm(g1) vs Ec1; Eb = 120 V, Ec3 = 0 | Ec2 = 60…140 V | 504 | 194 /V, 0.244 /µmho; 2.0 / 5.7 |
+| `p12_gm1_vs_Ec3_Ec1` | 12 bottom | gm(g1) vs Ec3; Eb = Ec2 = 120 V | Ec1 = 0…−5 V (0.5 V steps below −3) | 313 | 48.3 /V, 0.195 /µmho; 1.5 / 5.0 |
+| `p13_gm3_vs_Ec3_Ec2` | 13 top | gm(g3) vs Ec3; Eb = 120 V, Ec1 = −2 V | Ec2 = 60…140 V | 300 | 48.7 /V, 0.485 /µmho; 1.2 / 3.7 |
+| `p13_gm3_vs_Ec3_Ec1` | 13 bottom | gm(g3) vs Ec3; Eb = Ec2 = 120 V | Ec1 = 0…−4 V | 287 | 48.5 /V, 0.486 /µmho; 1.2 / 3.6 |
+
+Points per curve:
+- p.8 bottom Ib, Ec3 = −1…−14 V: 71, 68, 74, 73, 69, 66, 61, 61, 54, 46, 41, 33, 26, 20.
+  Ic2 at −14 / −4 V: 16 / 12. Ic3 at +2 / +1 / +0.5 V: 45 / 50 / 44.
+- p.11 bottom (Ec2 = 140…60 V): 77, 76, 75, 70, 65.
+- p.12 top (Ec2 = 140…60 V): 136, 119, 101, 83, 65.
+- p.12 bottom (Ec1 = 0, −1, −2, −3, −3.5, −4, −4.5, −5 V): 10, 10, 20, 45, 51, 57, 59, 61.
+- p.13 top (Ec2 = 140…60 V): 78, 74, 70, 51, 27.
+- p.13 bottom (Ec1 = 0…−4 V): 61, 62, 61, 71, 32.
+
+What was **not** digitised, and why (no point was guessed; each reason is also in `RAY_GRAPHS`):
+- **p.8 bottom, Ib at Ec3 = +10, +6, +4, +2 and 0 V.**
+  - All five leave the knee as one stroke. +10 and +6 stay together up to Eb ≈ 330 V and are 6 px apart after
+    that; +6, +4 and +2 are 6–14 px apart, below the 10 px crossing filter.
+  - The inline labels "+6.0", "+4.0", "+2.0" and "Ib @ Ec3 = 0" cut the strokes.
+  - Tracers seeded on +6/+4 and on +2/0 ended on the same strokes, which the shared-stroke guard caught.
+  - Ec3 = 0 at these conditions is p.9 top's Ec1 = −2 V curve, so nothing is lost there.
+- **p.8 bottom, Ic2 at Ec3 = −12, −10, −8, −6, −2, 0, +2, +4 and +10 V.**
+  - The eleven dashed curves cross 14 solid curves and each other, and the dashes are cut at every crossing.
+  - Letting the dashed tracer bridge gaps longer than 30 columns made it hop to other curves (checked against
+    the right-hand labels).
+  - With 30-column gaps only −14 and −4 V give 10 or more points. −14 V is used only above Eb = 240 V,
+    where it leaves −12 V; both run along the 7.5 mA line below that.
+- **p.8 bottom, Ic3 at Ec3 = +10 and +4 V:** 6–9 px apart from Eb = 200 to 300 V and one stroke below 120 V.
+- **Parts of curves:**
+  - Ib toes: −12 / −13 V below Eb = 270 / 300 V, where they run together along the axis. The steep −1 / −2 V
+    toes below the knee.
+  - p.12 bottom: Ec1 = 0 / −1 V below Ec3 = 6.5 V and −2 V below 4 V. These three cross repeatedly between
+    Ec3 = −7 and +5.5 V.
+  - p.12 bottom, −3…−5 V: below where each leaves the common toe.
+  - p.13 bottom: Ec1 = −4 V above Ec3 = 0.5 V, where it runs into the −3 V tail.
+  - The near-vertical rising edges on p.13 (runs taller than 22 px).
+- **Check of the identity and calibration:** Ib at Eb = 120 V read off p.8 bottom matches p.10 bottom within 5 %
+  and p.11 top within 10 % for Ec3 = −1…−7 V (`heldout_checks.json`, `Ib_at_Eb_120_vs_transfer_graphs_mA`).
 
 ## Models (`model6as6.py`, `fit.py`, output `results/fit_results.json`, `plots/fit_comparison.png`)
 - **Residuals.** The current fit (#25) uses ln((I_model + I0)/(I_data + I0)), I0 = 0.02 mA (1–2 px of
@@ -192,11 +243,15 @@ function. The GE points are a cross-check only.
   voltages 60–140 V, Ec1 to −5 V, cut-off tails), not from the log residual. With this model form, the
   low-current curves are already pinned by the larger currents of the same families. The log residual is kept
   because it states the objective honestly, and it is marginally better overall and on the held-out curves.
-- **Where the remaining low-current error sits** (per-curve table): the Ec2 = 60–100 V transfer tails on p.9
-  bottom (model 20 % low), the Ec1 = −5 V plate curve on p.9 top (16 % high), the Ec1 = −4 V curves on p.11 (Ib
-  27 % low, Ic2 21 % low; p.11 reads up to 23 % above p.9/p.10 there), and a few g3 cut-off toe points on p.10
-  bottom (Ec3 −8…−6 V, up to 2× high, 3–9 points per curve). The sheet's own graph-to-graph spread at these
-  currents is 9–23 %.
+- **Where the remaining low-current error sits** (per-curve table):
+  - The Ec2 = 80 and 100 V transfer tails on p.9 bottom: model 19–21 % low (60 V: 7 % low).
+  - The Ec1 = −5 V plate curve on p.9 top: 16 % high.
+  - The Ec1 = −4 V curves on p.11: Ib 27 % low, Ic2 21 % low. p.11 reads up to 23 % above p.9/p.10 there.
+  - A few g3 cut-off toe points on p.10 bottom. 3 / 2 / 5 points at Ec2 = 120 / 100 / 80 V, Ec3 −8.0…−4.7 V,
+    are more than 1.5× high, up to 3.1× at Ec2 = 120 V, Ec3 = −8 V. At Ec2 = 140 V the toe is instead up to
+    38 % low (Ec3 −7.5…−5.5 V).
+
+  The sheet's own graph-to-graph spread at these currents is 9–23 %.
 - **GE cross-check:** the refit is 9 % low on the GE curves overall and 17 % low at 0.1–0.6 mA (the two makers'
   average curves differ; before, it was fitted to GE and matched to 4 %).
 
@@ -283,6 +338,85 @@ g3 well below about −4 V.
 
 </details>
 
+## Held-out checks (issue #48)
+`heldout.py` writes `results/heldout_checks.json` and `plots/heldout_gm.png`. Nothing is refitted: it takes the
+committed `dual_control` (AFTER) parameters from `fit_results.json` and compares them with Raytheon data that no
+fit has seen.
+- Model gm(g1) = ∂Ib/∂Ec1 and gm(g3) = ∂Ib/∂Ec3 come from central differences (±0.01 V).
+- The errors are RMS of ln((model + 10 µmho)/(sheet + 10 µmho)), median |relative error| and mean relative
+  error (bias). For currents the offset is 0.02 mA, as in the fit.
+
+**The parameters were not changed.** The gm check alone would not call for a refit. The p.8-bottom check
+(below) shows the AFTER model is clearly wrong in one region, g3 well below cut-off at plate voltages away from
+120 V. That is reported here for a decision, not fixed.
+
+**gm check** (all digitised points, toes included):
+
+| graph | n | RMS log | median | bias |
+|---|---|---|---|---|
+| all gm(g1) | 1180 | 0.241 | 9 % | +3 % |
+| all gm(g3) | 587 | 0.419 | 23 % | +0 % |
+| p.11 bottom, gm(g1) vs Ec3, Ec2 family | 363 | 0.342 | 8 % | +16 % |
+| p.12 top, gm(g1) vs Ec1, Ec2 family | 504 | 0.204 | 12 % | −1 % |
+| p.12 bottom, gm(g1) vs Ec3, Ec1 family | 313 | 0.132 | 8 % | −4 % |
+| p.13 top, gm(g3) vs Ec3, Ec2 family | 300 | 0.472 | 27 % | −2 % |
+| p.13 bottom, gm(g3) vs Ec3, Ec1 family | 287 | 0.355 | 20 % | +3 % |
+
+- **gm(g1) near the fitted operating point is good.**
+  - Ec2 = 120 V, Ec1 = −2 V on p.11: RMS log 0.099, median 4 %. Ec1 = −2 V on p.12 bottom: 5 %.
+  - The large RMS on p.11 comes mostly from the cut-off toes. There gm is a few tens of µmho and a 0.1 V
+    shift is a factor of several.
+- **gm(g1) goes wrong toward Ec1 = 0 and high screen voltage.**
+  - On p.12 top the sheet's gm(g1) peaks at 2860–3400 µmho, 0.4–1.7 V below Ec1 = 0. The model's peaks
+    12–24 % higher (3410–3860 µmho), at or near Ec1 = 0.
+  - With positive g3 it overshoots: Ec1 = 0 / −1 V on p.12 bottom are 41 / 24 % high, and Ec2 = 140 V on
+    p.11 levels off about 15 % high (Ec3 ≥ 8 V).
+  - At Ec2 = 60–80 V the model's gm(g1) is low on p.12 top (bias −11 / −16 %) and high on p.11 bottom
+    (+21 / +35 %, mostly toe points).
+- **gm(g3) has the right size but the wrong shape.**
+  - The sheet's gm(g3) peaks at Ec3 = −3.5…−5.3 V and falls steeply below. For Ec2 ≥ 100 V the model's peak
+    is 0.4–1.9 V less negative.
+  - Peak heights are 0.54–1.29× the sheet's: low at Ec2 = 60–100 V, high at Ec1 = 0 / −1 V and at
+    Ec2 = 140 V, within 1 % at Ec1 = −2 V, Ec2 = 120 V.
+- **Sheet self-consistency (the floor).** The sheet's gm curves against the slope (local quadratic) of its own
+  current curves at the same conditions:
+  - p.12 top vs p.9 bottom: n 363, RMS log 0.179, median 7 %, bias −7 %.
+  - p.13 top vs p.10 bottom: n 230, RMS log 0.320, median 12 %, bias −6 %.
+  - p.13 bottom vs p.11 top: n 230, RMS log 0.341, median 12 %, bias +2 %.
+
+  So the drawn gm and current curves agree to about 10 % (gm(g3) worse at low current). The model's gm(g1) is
+  near that floor, and its gm(g3) is about twice it.
+- **GE p.1 typical gm vs the Raytheon gm curves** (Eb = Ec2 = 120 V, Ec1 = −2 V):
+
+  | Ec3 | gm(g1) GE / Raytheon p.11 (p.12 top) / model | gm(g3) GE / Raytheon p.13 top, bottom / model |
+  |---|---|---|
+  | −3 V | 1850 / 1962 / 1827 | 810 / 699, 703 / 785 |
+  | 0 V | 3200 / 3168 (3188) / 3217 | 470 / 404, 386 / 432 |
+
+  GE's and Raytheon's gm(g1) agree to 6 %, and the model is within 7 % of both. Raytheon's gm(g3) is 13–18 %
+  below GE's, and the model sits in between (7–12 % above Raytheon). The Ec3 = 0 values are read across the heavy zero line, within 0.3 V on each side.
+
+**p.8 bottom: plate family at fixed Ec3** (Ec2 = 120 V, Ec1 = −2 V; `p8_bottom` in the JSON):
+
+| Ib points | n | RMS log | median | bias |
+|---|---|---|---|---|
+| Ec3 = −1…−9 V | 597 | 0.857 | 33 % | −11 % |
+| Ec3 = −10…−14 V | 166 | 2.502 | 96 % | −94 % |
+| 0.1–0.6 mA | 132 | 1.883 | 96 % | +1 % |
+
+- At Eb = 120 V the model is about as close to these curves as to p.10/p.11. Model / p.8 bottom in mA:
+  4.50 / 4.71 at Ec3 = −1 V, 3.13 / 3.31 at −3 V, 1.56 / 1.60 at −5 V, 0.49 / 0.37 at −7 V.
+- **Away from 120 V the plate voltage moves the g3 cut-off on the sheet much more than in the model.**
+  - Ib reaches 0.3 mA at Eb = 66 V for Ec3 = −5 V and at 413 V for −14 V. A straight-line fit gives an
+    effective plate-to-g3 μ of 39 (46 at 1 mA; `g3_cutoff_vs_plate_voltage` in the JSON).
+  - The model's MU3 is 225. So for Ec3 ≤ −7 V it is far low at high Eb (−54 to −99 % per curve).
+  - For Ec3 = −3…−5 V it is too high in the toe at low Eb (+6 to +43 % per curve).
+  - The #25 data varied Ec3 only at Eb = 120 V, so it could not pin MU3. p.8 bottom is the data that would.
+- The two Ic2 curves (Ec3 = −14 / −4 V, Eb 240–380 V) are over-predicted by 15 / 26 %.
+- Fixing this needs a refit with p.8 bottom in the fit set, and probably a stronger plate term in the share
+  function. That was out of scope here and has not been done. The model is only reliable for Ec3 ≲ −5 V close to
+  Eb = 120 V.
+
 ## SPICE
 `results/6AS6_fit.inc` defines `.SUBCKT 6AS6_FIT P G2 G3 G1 K` using B-sources (ln, exp, atan, pwr, max) and the
 GE datasheet capacitances, with the refit parameters. The pin order and expressions are unchanged, so existing
@@ -290,23 +424,35 @@ netlists keep working. A test checks it against the Python model by evaluating t
 Ec2 60–140 V. **Checked in ngspice 41 (5 Nov 2026, refit parameters):** `spice_check/check_6as6.cir` DC-sweeps the
 subcircuit at the GE conditions (p.3: Ec2 120 V, Ec3 0, Eb 0–240 V, Ec1 0…−4 V; p.4: Eb = Ec2 = 120 V, Ec1 −1…−3 V,
 Ec3 −10…+10 V) and the Raytheon p.9 transfer condition (Eb = 120 V, Ec2 = 60 and 140 V, Ec1 −5…0 V).
-`spice_check/compare.py` compares Ib and Ic2 with the Python model. Worst deviation over all 18 curves: 0.14 µA
-absolute, 4.6×10⁻⁵ relative (from the 6-significant-figure parameters in the `.inc`). Run: `cd spice_check && mkdir -p out &&
+`spice_check/compare.py` compares Ib and Ic2 with the Python model. Worst deviation over all 20 curves (10 sweeps,
+Ib and Ic2): 0.14 µA absolute, 4.6×10⁻⁵ relative (from the 6-significant-figure parameters in the `.inc`). Run: `cd spice_check && mkdir -p out &&
 ngspice -b check_6as6.cir && python compare.py` → `spice_check.json`.
 
 ## Limitations
 - **Valid range (fitted data):** Ec2 60–140 V, Ec1 −5 to 0 V, Ec3 about −9 to +12 V, Eb 20–400 V, currents down to
   about 0.1 mA. Below Eb ≈ 20–40 V (the knee, KVB) the curves bunch together and few points survive. There is no
-  data for a positive g1 and no grid-current model.
+  data for a positive g1 and no grid-current model. The fitted data vary Ec3 only at Eb = 120 V. Held-out p.8
+  bottom shows that for Ec3 ≲ −5 V the model is only valid near that plate voltage (see g3 cut-off below).
 - **Low current:** about 10 % median and RMS log 0.18 in 0.1–0.6 mA, with individual curves up to 20–27 % off (see
   above). Below 0.1 mA the model is extrapolation of Koren's exponential tail; the sheets have no usable curves there.
-- **g3 cut-off:** cathode current does not depend on g3 in this model. Ic2 is over-predicted by up to ~40 % for
-  Ec3 ≲ −6 V, and the Ib toe near g3 cut-off is up to 2× high.
+- **g3 cut-off:**
+  - Cathode current does not depend on g3 in this model. Ic2 is over-predicted by up to ~40 % for Ec3 ≲ −6 V.
+  - The Ib toe near g3 cut-off on p.10 bottom is up to 3× high (at Ec2 = 140 V up to 38 % low).
+  - **The cut-off does not move with plate voltage as it should** (p.8 bottom,
+    [held-out checks](#held-out-checks-issue-48)). For Ec3 ≲ −5 V, Ib is only right near Eb = 120 V, and at Ec3 ≤ −10 V the model gives almost no plate
+    current.
 - **Source data:** "average characteristics" from manufacturers' sheets, not a measured valve. Raytheon and GE
   differ by about 10 % (production spread is far larger: Ib 2.5–9 mA, research note). The Raytheon graphs agree
   with each other to 2 % at a few mA but only 9–23 % at 0.4–0.7 mA.
-- **Not yet used:** Raytheon p.8 bottom (Ec3 −14…+10 V plate family, positive-g3 current) and pp. 11–13 gm curves,
-  the GE p.4 Ic2-vs-Ec3 plot and the Tung-Sol curves. The gm curves are the natural held-out check of derivatives.
+- **Not yet used:**
+  - Not digitised: the GE p.4 Ic2-vs-Ec3 plot, the Tung-Sol curves, and the parts of Raytheon p.8 bottom
+    listed under issue #48 above.
+  - Digitised but in no fit (held-out checks only): Raytheon p.8 bottom and the pp. 11–13 gm curves.
+  - Ic3 (g3 current) is digitised, but the model has no g3 current.
 - **Tests:** importing `fit.py` in the tests reruns all three fits (about 5 s), which are deterministic. The tests
   check that the committed parameters and per-curve errors reproduce, the error bounds, the low-current
   improvement, the split check and the cathode-current data.
+  - `tests/test_raytheon_heldout.py` (#48) checks the new data's point counts and calibration, and p.8 bottom
+    against p.10/p.11.
+  - It also checks that `heldout_checks.json` reproduces, bounds on the gm and sheet-consistency numbers, and
+    the documented cut-off limitation.
