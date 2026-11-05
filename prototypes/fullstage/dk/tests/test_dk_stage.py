@@ -28,7 +28,7 @@ def test_silence_has_no_startup_thump(quality):
 
 def test_newton_always_converges(res):
     for k, st in res["iterations"].items():
-        assert st["nonconverged"] == 0, k
+        assert st["nonconverged"] == 0 and st["converged"], k
 
 
 @pytest.mark.parametrize("q", ["va", "vk", "ia", "vgk"])
