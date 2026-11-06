@@ -16,6 +16,8 @@ Parameters (all our choices, documented here):
             (validate.prewarp_minimax; see RESULTS.md).
   filt    : resampler, orthogonal to quality: "fir" (default) linear-phase half-band FIR, "iir" polyphase
             allpass (HIIR design), ~5 samples latency and ~1/5 of the multiplies, non-linear phase near 20 kHz.
+  triode_math : "libm" (default) or "fast" (#18): the triode's exp / log1p / pow from libm or from dk/fastmath.py
+            (the arithmetic of the C fast path, dk/fastmath.h; slower in Python). Both pass the same criteria.
 The stage runs at os*fs between a streaming half-band cascade (dk/resample.py). process() keeps the filter
 state, so it can be called block by block; the output is delayed by `latency_samples` (base rate) instead of
 being trimmed (#14). `resampler_macs` is the resampler's multiplies per base-rate sample (up, down).
@@ -24,7 +26,7 @@ import warnings
 import numpy as np
 from . import circuit
 from .solver import solve, MAX_IT, TOL_V, TOL_F
-from .triode import currents, DZ_12AX7_RSD1
+from .triode import DZ_12AX7_RSD1, EVAL
 from .resample import Resampler
 
 PREWARP_HZ = 17300.0
@@ -42,13 +44,16 @@ class NonConvergenceWarning(RuntimeWarning):
 
 class Stage:
     def __init__(self, fs, bias=1.0, drive=1.0, output=1.0, triode=DZ_12AX7_RSD1, quality="standard", filt="fir",
-                 newton=None):
+                 newton=None, triode_math="libm"):
         # newton: optional solver overrides {max_it, tol_v, tol_f} (dk/solver.py defaults), for tests and experiments
         nw = dict(max_it=MAX_IT, tol_v=TOL_V, tol_f=TOL_F)
         if set(newton or {}) - set(nw):
             raise TypeError(f"unknown newton option(s) {sorted(set(newton) - set(nw))}, expected {sorted(nw)}")
         nw.update(newton or {})
         self.newton = (nw["max_it"], nw["tol_v"], nw["tol_f"])
+        if triode_math not in EVAL:
+            raise ValueError(f"triode_math must be one of {sorted(EVAL)}, got {triode_math!r}")
+        self.triode_math, self.ev = triode_math, EVAL[triode_math]
         self.fs_base = fs
         self.os, self.prewarp_hz = QUALITY[quality] if isinstance(quality, str) else quality
         self.rs = Resampler(fs, self.os, filt)
@@ -68,7 +73,7 @@ class Stage:
         v0, v1 = -1.0, 200.0
         # source-stepping on HT for robustness: ramp the supply in 10 steps
         for k, s in enumerate(np.linspace(0.1, 1.0, 10), 1):
-            v0, v1, ig, ia, it, ok = solve(p[0] * s, p[1] * s, K0, v0, v1, self.par, *self.newton)
+            v0, v1, ig, ia, it, ok = solve(p[0] * s, p[1] * s, K0, v0, v1, self.par, *self.newton, ev=self.ev)
             if not ok:
                 raise OperatingPointError(
                     f"DC operating point did not converge at source step {k}/10 (HT x {s:.1f}): "
@@ -109,7 +114,7 @@ class Stage:
         HT = circuit.VALUES["HT"]
         rec = {n: np.empty(len(vin)) for n in record}
         idx = {n: m["out_names"].index(n) for n in record if n in m["out_names"]}
-        x, (v0, v1), K, par, nw = self.x, self.v, self.K, self.par, self.newton
+        x, (v0, v1), K, par, nw, ev = self.x, self.v, self.K, self.par, self.newton, self.ev
         q0, q1 = self.v_prev
         iters = np.empty(len(vin), dtype=np.int16)
         bad = 0
@@ -121,7 +126,7 @@ class Stage:
             # signal is smooth per sample, so this lands within ~1e-6 V more often than v[n-1] does
             e0, e1 = 2.0 * v0 - q0, 2.0 * v1 - q1
             q0, q1 = v0, v1
-            v0, v1, ig, ia, it, ok = solve(p[0], p[1], K, e0, e1, par, *nw)
+            v0, v1, ig, ia, it, ok = solve(p[0], p[1], K, e0, e1, par, *nw, ev=ev)
             iters[n] = it
             if not ok:
                 bad += 1

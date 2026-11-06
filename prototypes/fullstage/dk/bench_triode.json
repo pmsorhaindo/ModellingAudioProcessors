@@ -1,10 +1,11 @@
 {
  "method_python": "Scalar Python calls with Python floats on 930 operating points (Vgk -4..+1 V x 30, Vak 50-350 V x 31). Each timed block = 20 passes over the points, divided by the call count; 3 warm-up blocks per case, then 41 blocks per case interleaved across cases; median (and min) block reported. time.perf_counter_ns, single thread. call_overhead = the same loop calling an empty function; *_net ratios subtract it.",
- "method_c": "dk/bench_triode.c: the same 930 points in C arrays, each form a noinline function writing (Ig, Ia, J); 3 warm-up blocks, then 41 blocks of 2000 passes per form interleaved; median (and min) block, CLOCK_MONOTONIC. max_rel_diff = largest |after - before| / |before| over the outputs.",
+ "method_c": "dk/bench_triode.c: the same 930 points in C arrays, each form a noinline function writing (Ig, Ia, J); 3 warm-up blocks, then 41 blocks of 2000 passes per form and timing, interleaved; median (and min) block, CLOCK_MONOTONIC. *_chain: each call's Vgk depends on the previous call's output (no overlap between calls: the latency one Newton iteration sees). max_rel_diff = largest |after - before| / |before| over the outputs; max_rel_diff_fast = the same for fast vs after.",
  "libm_calls_per_call": {
   "currents_before": "4 exp + 2 log1p + 4 pow = 10 (issue's count: 2 softplus + 2 sigmoid + 4 pow = 8)",
   "currents_after": "2 exp + 2 log1p + 2 pow = 6 (issue's count: 2 softplus/sigmoid pairs + 2 pow = 4)",
-  "currents_only": "2 exp + 2 log1p + 2 pow, unchanged by #16"
+  "currents_only": "2 exp + 2 log1p + 2 pow, unchanged by #16",
+  "currents_fast": "0: 2 fastmath exp + 2 log1p + 2 pow (pow = exp(g log s)), inlined in C (#18)"
  },
  "machine": {
   "python": "3.13.5",
@@ -15,33 +16,45 @@
  },
  "python": {
   "currents_before": {
-   "ns_per_call_median": 625.8047849462365,
-   "ns_per_call_min": 613.5654838709678
+   "ns_per_call_median": 626.854623655914,
+   "ns_per_call_min": 616.6169892473118
   },
   "currents_after": {
-   "ns_per_call_median": 578.4831182795699,
-   "ns_per_call_min": 568.0670430107527
+   "ns_per_call_median": 628.740752688172,
+   "ns_per_call_min": 611.5605913978494
+  },
+  "currents_fast": {
+   "ns_per_call_median": 2764.7395161290324,
+   "ns_per_call_min": 2727.064569892473
   },
   "currents_only_before": {
-   "ns_per_call_median": 380.5028494623656,
-   "ns_per_call_min": 366.7595698924731
+   "ns_per_call_median": 370.96016129032256,
+   "ns_per_call_min": 357.4712365591398
   },
   "currents_only_after": {
-   "ns_per_call_median": 378.4045698924731,
-   "ns_per_call_min": 361.2617741935484
+   "ns_per_call_median": 373.04924731182797,
+   "ns_per_call_min": 358.7132258064516
+  },
+  "currents_only_fast": {
+   "ns_per_call_median": 2523.034623655914,
+   "ns_per_call_min": 2495.101182795699
   },
   "call_overhead": {
-   "ns_per_call_median": 19.293118279569892,
-   "ns_per_call_min": 18.695645161290322
+   "ns_per_call_median": 19.576505376344087,
+   "ns_per_call_min": 19.010698924731184
   }
  },
  "speedup_currents": {
-  "gross": 1.0818030209894507,
-  "net": 1.084625380759074
+  "gross": 0.9970001482738411,
+  "net": 0.9969037430535667
  },
  "speedup_currents_only": {
-  "gross": 1.0055450693169186,
-  "net": 1.005842975935377
+  "gross": 0.9943999725597645,
+  "net": 0.9940898242674489
+ },
+ "speedup_currents_fast_vs_after": {
+  "gross": 0.22741410140818064,
+  "net": 0.2219045808666943
  },
  "c": {
   "gcc": "gcc (Debian 14.2.0-19) 14.2.0",
@@ -51,13 +64,49 @@
    "passes": 2000,
    "warmup": 3,
    "repeat": 41,
-   "before_ns_per_call_median": 96.955,
-   "before_ns_per_call_min": 96.448,
-   "after_ns_per_call_median": 58.425,
-   "after_ns_per_call_min": 58.1,
+   "before_ns_per_call_median": 96.61,
+   "before_ns_per_call_min": 96.397,
+   "after_ns_per_call_median": 58.105,
+   "after_ns_per_call_min": 57.93,
+   "fast_ns_per_call_median": 51.852,
+   "fast_ns_per_call_min": 51.733,
+   "before_chain_ns_per_call_median": 103.207,
+   "before_chain_ns_per_call_min": 103.017,
+   "after_chain_ns_per_call_median": 74.997,
+   "after_chain_ns_per_call_min": 74.828,
+   "fast_chain_ns_per_call_median": 72.597,
+   "fast_chain_ns_per_call_min": 72.413,
    "max_rel_diff": 5.05e-16,
-   "build": "gcc -O2 -fno-builtin-exp -fno-builtin-log1p -fno-builtin-pow dk/bench_triode.c -lm",
-   "speedup": 1.6594779632006846
+   "max_rel_diff_fast": 2.27e-10,
+   "build": "gcc -O2 -fno-builtin-exp -fno-builtin-log1p -fno-builtin-pow -I dk dk/bench_triode.c -lm",
+   "speedup": 1.6626796317012307,
+   "speedup_fast_vs_after": 1.1205932268764947,
+   "speedup_fast_vs_after_chain": 1.03305921732303
+  },
+  "double_x86-64-v3": {
+   "type": "double",
+   "points": 930,
+   "passes": 2000,
+   "warmup": 3,
+   "repeat": 41,
+   "before_ns_per_call_median": 96.284,
+   "before_ns_per_call_min": 95.928,
+   "after_ns_per_call_median": 58.43,
+   "after_ns_per_call_min": 58.204,
+   "fast_ns_per_call_median": 41.996,
+   "fast_ns_per_call_min": 41.776,
+   "before_chain_ns_per_call_median": 102.18,
+   "before_chain_ns_per_call_min": 101.763,
+   "after_chain_ns_per_call_median": 74.57,
+   "after_chain_ns_per_call_min": 74.261,
+   "fast_chain_ns_per_call_median": 58.57,
+   "fast_chain_ns_per_call_min": 58.368,
+   "max_rel_diff": 5.05e-16,
+   "max_rel_diff_fast": 2.27e-10,
+   "build": "gcc -O2 -fno-builtin-exp -fno-builtin-log1p -fno-builtin-pow -march=x86-64-v3 -I dk dk/bench_triode.c -lm",
+   "speedup": 1.6478521307547493,
+   "speedup_fast_vs_after": 1.3913229831412515,
+   "speedup_fast_vs_after_chain": 1.273177394570599
   },
   "float": {
    "type": "float",
@@ -65,13 +114,17 @@
    "passes": 2000,
    "warmup": 3,
    "repeat": 41,
-   "before_ns_per_call_median": 64.104,
-   "before_ns_per_call_min": 63.671,
-   "after_ns_per_call_median": 39.613,
-   "after_ns_per_call_min": 39.262,
+   "before_ns_per_call_median": 63.54,
+   "before_ns_per_call_min": 63.348,
+   "after_ns_per_call_median": 39.26,
+   "after_ns_per_call_min": 39.075,
+   "before_chain_ns_per_call_median": 74.852,
+   "before_chain_ns_per_call_min": 74.624,
+   "after_chain_ns_per_call_median": 51.951,
+   "after_chain_ns_per_call_min": 51.779,
    "max_rel_diff": 2.37e-07,
-   "build": "gcc -O2 -fno-builtin-exp -fno-builtin-log1p -fno-builtin-pow -DR=float -DR_IS_FLOAT=1 dk/bench_triode.c -lm",
-   "speedup": 1.6182566329235353
+   "build": "gcc -O2 -fno-builtin-exp -fno-builtin-log1p -fno-builtin-pow -DR=float -DR_IS_FLOAT=1 -I dk dk/bench_triode.c -lm",
+   "speedup": 1.6184411614875192
   }
  }
 }

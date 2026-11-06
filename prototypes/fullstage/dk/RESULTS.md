@@ -480,3 +480,45 @@ The C figures show what #16 saves on the evaluation itself: 1.57–1.66× in dou
 end of the issue's 1.6–1.8× estimate.
 In Python, interpreter overhead (dict lookups, tuple building, calls) dominates and the saving is about 8 %.
 Python's timings are noise for the stage as a whole; re-measure the C++ core (#20).
+
+## Fast exp / log / pow (#18)
+`dk/fastmath.py` (Python reference) and `dk/fastmath.h` (C twin, same ops / tables, no FMA) replace libm
+`exp` / `log1p` / `pow` in `currents_fast()` / `currents_only_fast()`. Algorithm: table reduction (N=128) +
+minimax polynomials fitted by `dk/fastmath_fit.py`; `pow(s,g) = exp(g·log s)`. Stage switch:
+`Stage(triode_math="libm"|"fast")` (default remains `"libm"` — in Python the fast path is slower than a C
+libm call; it exists to run the C arithmetic against the criteria). Domain of every argument the stage hits
+is recorded in `dk/fastmath_domain.json` (`python -m dk.fastmath_domain`).
+
+**Error bounds** (relative vs glibc libm; `dk/tests/test_fastmath.py` asserts `fastmath.BOUND`; measured worst
+on the test grids 6 Nov 2026, this box, then ~2–3× margin):
+
+| fn | measured worst | BOUND |
+|---|---|---|
+| exp on `[EXP_LO, EXP_HI]` | 3.86×10⁻¹³ | 1×10⁻¹² |
+| log1p on `[0, 1]` | 9.04×10⁻¹⁴ | 3×10⁻¹³ |
+| log on positive normals | 1.56×10⁻¹² | 5×10⁻¹² |
+| pow(s, 1.26) stage domain | 3.96×10⁻¹³ | 1×10⁻¹² |
+| pow(s, 1.314) stage domain | 4.29×10⁻¹³ | 1×10⁻¹² |
+| currents_fast vs currents (Ig, Ia, J) | 2.21×10⁻¹⁰ | 1×10⁻⁹ |
+
+C with `-O2 -ffp-contract=off` matches Python bit for bit on the sample grids in the same test; with FMA
+(`-march=x86-64-v3`) the bits differ but stay inside BOUND (`max_rel_diff_fast` 2.27×10⁻¹⁰ in the bench JSON).
+
+**Criteria** (`python -m dk.validate --triode-math fast` → `results_fastmath.json`): hq / standard / eco all
+`pass_vs_dz` true (op, ac stage/chain, harmonics, burst). Worst AC vs DZ: hq 0.013 dB, standard 0.052 dB,
+eco 0.054 dB (CRIT 0.1 dB). CRIT unchanged. `python -m pytest -q` → 247 passed, 1 skipped.
+
+**Speed** (`python -m dk.bench_triode` → `bench_triode.json`, same 930-point method as #16; fast timed against
+the #16 libm `after` baseline):
+
+| eval | after (#16 libm) | fast (#18) | speedup |
+|---|---|---|---|
+| C double `-O2`, ns/call (throughput) | 58.1 | 51.9 | 1.12× |
+| C double `-O2`, ns/call (chain / Newton-like) | 75.0 | 72.6 | 1.03× |
+| C double `-O2 -march=x86-64-v3`, throughput | 58.4 | 42.0 | 1.39× |
+| C double `-O2 -march=x86-64-v3`, chain | 74.6 | 58.6 | 1.27× |
+| Python `currents_fast` vs `currents` | — | — | 0.23× (slower; expected) |
+
+The issue hoped ~3–5× on the model eval; on this box the C double path is 1.12× (baseline ISA) to 1.39× (FMA).
+Kernel throughput of `fm_exp` alone can look better, but the full `currents` path still spends time on the
+non-transcendental arithmetic and call overhead. No float fast path (not needed for the double stage).

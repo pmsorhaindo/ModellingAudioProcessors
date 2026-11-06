@@ -1,60 +1,17 @@
-/* #16: C port of dk.triode.currents() before / after (same expressions as the Python gold and the new code),
+/* #16 / #18: C ports of dk.triode.currents() (dk/triode_eval.h: before #16, after #16 = libm, fast = #18 fastmath),
  * timed per call on the grid of dk/bench_triode.py. Built and run by `python -m dk.bench_triode`:
- *   gcc -O2 -fno-builtin-exp -fno-builtin-log1p -fno-builtin-pow [-DR=float -DR_IS_FLOAT=1] bench_triode.c -lm
- * -fno-builtin-* keeps every exp/log1p/pow a real libm call in both versions (no CSE across them).
+ *   gcc -O2 -fno-builtin-exp -fno-builtin-log1p -fno-builtin-pow [-march=x86-64-v3] [-DR=float -DR_IS_FLOAT=1]
+ *       bench_triode.c -lm
+ * -fno-builtin-* keeps every exp/log1p/pow a real libm call (no CSE across them). The fast form is double only.
+ * Two timings per form:
+ *   throughput  independent points, as #16 measured it: consecutive calls can overlap in the CPU;
+ *   chain       each call's Vgk depends on the previous call's output (by 0 * Ig, a real data dependency), so calls
+ *               cannot overlap: the latency of one evaluation, which is what one Newton iteration waits for.
  * Prints one JSON object. */
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-
-#ifndef R
-#define R double
-#endif
-#if R_IS_FLOAT
-#define EXP expf
-#define LOG1P log1pf
-#define POW powf
-#define FABS fabsf
-#define RNAME "float"
-#else
-#define EXP exp
-#define LOG1P log1p
-#define POW pow
-#define FABS fabs
-#define RNAME "double"
-#endif
-
-static const R G = 2.242e-3, MU = 103.2, GAM = 1.26, C = 3.40, GG = 6.177e-4, XI = 1.314, CG = 9.901, IG0 = 8.025e-8;
-
-static R softplus(R x) { return (x > 0 ? x : 0) + LOG1P(EXP(-FABS(x))); }
-static R sigmoid(R x) {
-    if (x >= 0) return 1 / (1 + EXP(-x));
-    R e = EXP(x);
-    return e / (1 + e);
-}
-
-__attribute__((noinline)) static void cur_before(R vgk, R vak, R o[6]) {
-    R zk = C * (vak / MU + vgk), sk = softplus(zk) / C;
-    R ik = G * POW(sk, GAM), dik = G * GAM * POW(sk, GAM - 1) * sigmoid(zk);
-    R zg = CG * vgk, sg = softplus(zg) / CG;
-    R ig = GG * POW(sg, XI) + IG0, dig = GG * XI * POW(sg, XI - 1) * sigmoid(zg);
-    o[0] = ig; o[1] = ik - ig; o[2] = dig; o[3] = 0; o[4] = dik - dig; o[5] = dik / MU;
-}
-
-static void sp_sig(R x, R *sp, R *sg) {
-    R e = EXP(-FABS(x));
-    if (x >= 0) { *sp = x + LOG1P(e); *sg = 1 / (1 + e); }
-    else        { *sp = LOG1P(e);     *sg = e / (1 + e); }
-}
-
-__attribute__((noinline)) static void cur_after(R vgk, R vak, R o[6]) {
-    R zk = C * (vak / MU + vgk), spk, sigk; sp_sig(zk, &spk, &sigk);
-    R sk = spk / C, pk = POW(sk, GAM), ik = G * pk, dik = G * GAM * (sk > 0 ? pk / sk : 0) * sigk;
-    R zg = CG * vgk, spg, sigg; sp_sig(zg, &spg, &sigg);
-    R sg = spg / CG, pg = POW(sg, XI), ig = GG * pg + IG0, dig = GG * XI * (sg > 0 ? pg / sg : 0) * sigg;
-    o[0] = ig; o[1] = ik - ig; o[2] = dig; o[3] = 0; o[4] = dik - dig; o[5] = dik / MU;
-}
+#include "triode_eval.h"
 
 #define NG 30
 #define NA 31
@@ -64,34 +21,73 @@ __attribute__((noinline)) static void cur_after(R vgk, R vak, R o[6]) {
 #define REPEAT 41
 static R VG[NP], VA[NP];
 static volatile R sink;
+static volatile R zero = 0;
 
-static double block(void (*f)(R, R, R *)) {
+typedef void (*fn)(R, R, R *);
+
+static double elapsed(struct timespec t0, struct timespec t1) {
+    return ((t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec)) / ((double)PASSES * NP);
+}
+
+static double block(fn f) {
     struct timespec t0, t1; R o[6], acc = 0;
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (int p = 0; p < PASSES; p++)
         for (int i = 0; i < NP; i++) { f(VG[i], VA[i], o); acc += o[0] + o[1] + o[2] + o[4] + o[5]; }
     clock_gettime(CLOCK_MONOTONIC, &t1);
     sink = acc;
-    return ((t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec)) / ((double)PASSES * NP);
+    return elapsed(t0, t1);
+}
+
+static double chain(fn f) {
+    struct timespec t0, t1; R o[6] = {0}, z = zero;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (int p = 0; p < PASSES; p++)
+        for (int i = 0; i < NP; i++) f(VG[i] + z * o[0], VA[i], o);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    sink = o[1];
+    return elapsed(t0, t1);
 }
 
 static int cmp(const void *a, const void *b) { double x = *(const double *)a, y = *(const double *)b; return (x > y) - (x < y); }
 
+static double maxrel(fn a_, fn b_) {      /* largest |b - a| / |a| over the outputs */
+    double m = 0;
+    for (int i = 0; i < NP; i++) {
+        R a[6], b[6]; a_(VG[i], VA[i], a); b_(VG[i], VA[i], b);
+        for (int k = 0; k < 6; k++) if (a[k] != b[k]) { double r = fabs((double)a[k] - b[k]) / fabs((double)a[k]); if (r > m) m = r; }
+    }
+    return m;
+}
+
+#if R_IS_FLOAT
+#define NF 2
+static const char *NAMES[NF] = {"before", "after"};
+static fn FNS[NF] = {cur_before, cur_after};
+#else
+#define NF 3
+static const char *NAMES[NF] = {"before", "after", "fast"};
+static fn FNS[NF] = {cur_before, cur_after, cur_fast};
+#endif
+
 int main(void) {
     for (int i = 0; i < NG; i++)                     /* linspace(-4, 1, 30) x linspace(50, 350, 31) */
         for (int j = 0; j < NA; j++) { VG[i * NA + j] = -4.0 + 5.0 * i / (NG - 1); VA[i * NA + j] = 50.0 + 300.0 * j / (NA - 1); }
-    double maxrel = 0;                               /* after vs before, relative to the entry's magnitude */
-    for (int i = 0; i < NP; i++) {
-        R a[6], b[6]; cur_before(VG[i], VA[i], a); cur_after(VG[i], VA[i], b);
-        for (int k = 0; k < 6; k++) if (a[k] != b[k]) { double r = fabs((double)a[k] - b[k]) / fabs((double)a[k]); if (r > maxrel) maxrel = r; }
-    }
-    double tb[REPEAT], ta[REPEAT];
-    for (int w = 0; w < WARMUP; w++) { block(cur_before); block(cur_after); }
-    for (int r = 0; r < REPEAT; r++) { tb[r] = block(cur_before); ta[r] = block(cur_after); }   /* interleaved */
-    qsort(tb, REPEAT, sizeof(double), cmp); qsort(ta, REPEAT, sizeof(double), cmp);
-    printf("{\"type\": \"%s\", \"points\": %d, \"passes\": %d, \"warmup\": %d, \"repeat\": %d, "
-           "\"before_ns_per_call_median\": %.3f, \"before_ns_per_call_min\": %.3f, "
-           "\"after_ns_per_call_median\": %.3f, \"after_ns_per_call_min\": %.3f, \"max_rel_diff\": %.3g}\n",
-           RNAME, NP, PASSES, WARMUP, REPEAT, tb[REPEAT / 2], tb[0], ta[REPEAT / 2], ta[0], maxrel);
+    static double t[2][NF][REPEAT];
+    for (int w = 0; w < WARMUP; w++) for (int f = 0; f < NF; f++) { block(FNS[f]); chain(FNS[f]); }
+    for (int r = 0; r < REPEAT; r++)                 /* interleaved across forms and both timings */
+        for (int f = 0; f < NF; f++) { t[0][f][r] = block(FNS[f]); t[1][f][r] = chain(FNS[f]); }
+    printf("{\"type\": \"%s\", \"points\": %d, \"passes\": %d, \"warmup\": %d, \"repeat\": %d", RNAME, NP, PASSES, WARMUP, REPEAT);
+    for (int m = 0; m < 2; m++)
+        for (int f = 0; f < NF; f++) {
+            qsort(t[m][f], REPEAT, sizeof(double), cmp);
+            printf(", \"%s%s_ns_per_call_median\": %.3f, \"%s%s_ns_per_call_min\": %.3f", NAMES[f], m ? "_chain" : "",
+                   t[m][f][REPEAT / 2], NAMES[f], m ? "_chain" : "", t[m][f][0]);
+        }
+    printf(", \"max_rel_diff\": %.3g", maxrel(cur_before, cur_after));
+#if !R_IS_FLOAT
+    printf(", \"max_rel_diff_fast\": %.3g", maxrel(cur_after, cur_fast));
+#endif
+    printf("}\n");
     return 0;
 }

@@ -9,13 +9,12 @@ Both are input vin -> output out. Matrix computations only, no time stepping.
 """
 import numpy as np
 from . import circuit
-from .triode import currents
 
 
 def jacobian(stage):
-    """d(Ig, Ia)/d(Vgk, Vak) at the stage's DC operating point."""
+    """d(Ig, Ia)/d(Vgk, Vak) at the stage's DC operating point, with the stage's triode evaluation (#18)."""
     dc = stage.dc
-    return np.array(currents(dc["vgk"], dc["vak"], stage.par)[2])
+    return np.array(stage.ev[0](dc["vgk"], dc["vak"], stage.par)[2])
 
 
 def linearised(stage):

@@ -145,12 +145,12 @@ def setting_name(quality):
     return quality if isinstance(quality, str) else f"{quality[0]}x"
 
 
-def measure(quality, filt, drive, f, window=WINDOW_S, settle=SETTLE_S, fs=FS):
+def measure(quality, filt, drive, f, window=WINDOW_S, settle=SETTLE_S, fs=FS, triode_math="libm"):
     """Aliasing of Stage(fs, quality, filt) for a `drive`-volt sine near f Hz (on a coherent bin, see tone_bin).
     quality: a stage.QUALITY key, or an (os, prewarp_hz) pair such as (GROUND_TRUTH_OS, None)."""
     n, n0 = int(round(window * fs)), int(round(settle * fs))
     m = tone_bin(f, n, fs)
-    st = Stage(fs, quality=quality, filt=filt)
+    st = Stage(fs, quality=quality, filt=filt, triode_math=triode_math)
     L = st.latency_samples
     x = drive * np.sin(2 * np.pi * m * np.arange(n0 + n + L) / n)
     y = st.process(x)["out"][n0 + L:n0 + L + n]
