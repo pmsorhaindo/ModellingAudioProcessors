@@ -1,0 +1,77 @@
+{
+ "method_python": "Scalar Python calls with Python floats on 930 operating points (Vgk -4..+1 V x 30, Vak 50-350 V x 31). Each timed block = 20 passes over the points, divided by the call count; 3 warm-up blocks per case, then 41 blocks per case interleaved across cases; median (and min) block reported. time.perf_counter_ns, single thread. call_overhead = the same loop calling an empty function; *_net ratios subtract it.",
+ "method_c": "dk/bench_triode.c: the same 930 points in C arrays, each form a noinline function writing (Ig, Ia, J); 3 warm-up blocks, then 41 blocks of 2000 passes per form interleaved; median (and min) block, CLOCK_MONOTONIC. max_rel_diff = largest |after - before| / |before| over the outputs.",
+ "libm_calls_per_call": {
+  "currents_before": "4 exp + 2 log1p + 4 pow = 10 (issue's count: 2 softplus + 2 sigmoid + 4 pow = 8)",
+  "currents_after": "2 exp + 2 log1p + 2 pow = 6 (issue's count: 2 softplus/sigmoid pairs + 2 pow = 4)",
+  "currents_only": "2 exp + 2 log1p + 2 pow, unchanged by #16"
+ },
+ "machine": {
+  "python": "3.13.5",
+  "numpy": "2.5.4",
+  "platform": "Linux-6.12.94+-x86_64-with-glibc2.41",
+  "processor": "x86_64",
+  "note": "this box (lab VM), one run"
+ },
+ "python": {
+  "currents_before": {
+   "ns_per_call_median": 625.8047849462365,
+   "ns_per_call_min": 613.5654838709678
+  },
+  "currents_after": {
+   "ns_per_call_median": 578.4831182795699,
+   "ns_per_call_min": 568.0670430107527
+  },
+  "currents_only_before": {
+   "ns_per_call_median": 380.5028494623656,
+   "ns_per_call_min": 366.7595698924731
+  },
+  "currents_only_after": {
+   "ns_per_call_median": 378.4045698924731,
+   "ns_per_call_min": 361.2617741935484
+  },
+  "call_overhead": {
+   "ns_per_call_median": 19.293118279569892,
+   "ns_per_call_min": 18.695645161290322
+  }
+ },
+ "speedup_currents": {
+  "gross": 1.0818030209894507,
+  "net": 1.084625380759074
+ },
+ "speedup_currents_only": {
+  "gross": 1.0055450693169186,
+  "net": 1.005842975935377
+ },
+ "c": {
+  "gcc": "gcc (Debian 14.2.0-19) 14.2.0",
+  "double": {
+   "type": "double",
+   "points": 930,
+   "passes": 2000,
+   "warmup": 3,
+   "repeat": 41,
+   "before_ns_per_call_median": 96.955,
+   "before_ns_per_call_min": 96.448,
+   "after_ns_per_call_median": 58.425,
+   "after_ns_per_call_min": 58.1,
+   "max_rel_diff": 5.05e-16,
+   "build": "gcc -O2 -fno-builtin-exp -fno-builtin-log1p -fno-builtin-pow dk/bench_triode.c -lm",
+   "speedup": 1.6594779632006846
+  },
+  "float": {
+   "type": "float",
+   "points": 930,
+   "passes": 2000,
+   "warmup": 3,
+   "repeat": 41,
+   "before_ns_per_call_median": 64.104,
+   "before_ns_per_call_min": 63.671,
+   "after_ns_per_call_median": 39.613,
+   "after_ns_per_call_min": 39.262,
+   "max_rel_diff": 2.37e-07,
+   "build": "gcc -O2 -fno-builtin-exp -fno-builtin-log1p -fno-builtin-pow -DR=float -DR_IS_FLOAT=1 dk/bench_triode.c -lm",
+   "speedup": 1.6182566329235353
+  }
+ }
+}
