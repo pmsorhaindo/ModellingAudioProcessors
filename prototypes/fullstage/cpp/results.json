@@ -1,0 +1,222 @@
+{
+ "method": "python -m cpp.validate_cpp: dk.validate.run with the C++ core (cpp/dk_core.h, test_core cli, gcc -O2) in place of dk.stage.Stage; deviations = |C++ - Python| against dk/results.json",
+ "compiler": "x86_64-conda-linux-gnu-g++ (conda-forge gcc 14.4.0-7) 14.4.0",
+ "limits": {
+  "op_rel": 1e-09,
+  "ac_db": 1e-06,
+  "harm_db": 1e-05,
+  "h1_rel": 1e-07,
+  "thd_rel": 1e-06,
+  "burst_v": 1e-06,
+  "burst_t_s": 1e-09,
+  "burst_tau_rel": 1e-06,
+  "burst_crit": 1e-07,
+  "iter_hist_frac": 0.0001
+ },
+ "settings": {
+  "hq": {
+   "deviation": {
+    "op_rel": 0.0,
+    "dz_op_rel_diff": 0.0,
+    "koren_op_rel_diff": 0.0,
+    "ac_db": 8.78135608672892e-09,
+    "harm_db": 5.5119777186973806e-08,
+    "h1_rel": 7.104714594419193e-10,
+    "thd_rel": 2.9658457911807545e-09,
+    "harm_db_all": 7.242707386012626e-05,
+    "burst_v": 5.075949438548832e-09,
+    "burst_t_s": 0.0,
+    "burst_tau_rel": 0.0,
+    "burst_crit": 1.1467804483800137e-10,
+    "iter_hist_frac": 0.0,
+    "resampler_equal": true,
+    "pass_vs_dz": {
+     "op": true,
+     "ac_stage": true,
+     "ac_chain": true,
+     "harmonics": true,
+     "burst": true
+    }
+   },
+   "failed": [],
+   "pass_vs_dz": {
+    "op": true,
+    "ac_stage": true,
+    "ac_chain": true,
+    "harmonics": true,
+    "burst": true
+   },
+   "op": {
+    "va": 204.53553787975113,
+    "vk": 1.432087306924738,
+    "ia": 0.0009546446212024883,
+    "vgk": -1.5177943930806308,
+    "vg": -0.08570708615589348
+   },
+   "ac_maxdev_db_chain_vs_dz": 0.013308636541321306,
+   "iterations": {
+    "0.05": {
+     "mean": 1.9968273584513772,
+     "max": 2,
+     "nonconverged": 0
+    },
+    "0.5": {
+     "mean": 1.999652099862917,
+     "max": 2,
+     "nonconverged": 0
+    },
+    "2": {
+     "mean": 2.0169951813234746,
+     "max": 3,
+     "nonconverged": 0
+    },
+    "8": {
+     "mean": 2.1752741660781787,
+     "max": 3,
+     "nonconverged": 0
+    },
+    "burst": {
+     "mean": 1.1973791359506258,
+     "max": 3,
+     "nonconverged": 0
+    }
+   }
+  },
+  "standard": {
+   "deviation": {
+    "op_rel": 0.0,
+    "dz_op_rel_diff": 0.0,
+    "koren_op_rel_diff": 0.0,
+    "ac_db": 4.3693333395822265e-09,
+    "harm_db": 1.8224582731818373e-08,
+    "h1_rel": 4.204795400752914e-10,
+    "thd_rel": 5.844968953283569e-10,
+    "harm_db_all": 3.901350606838605e-05,
+    "burst_v": 6.681870612368357e-10,
+    "burst_t_s": 0.0,
+    "burst_tau_rel": 0.0,
+    "burst_crit": 1.1327994823369294e-11,
+    "iter_hist_frac": 0.0,
+    "resampler_equal": true,
+    "pass_vs_dz": {
+     "op": true,
+     "ac_stage": true,
+     "ac_chain": true,
+     "harmonics": true,
+     "burst": true
+    }
+   },
+   "failed": [],
+   "pass_vs_dz": {
+    "op": true,
+    "ac_stage": true,
+    "ac_chain": true,
+    "harmonics": true,
+    "burst": true
+   },
+   "op": {
+    "va": 204.53553787975113,
+    "vk": 1.432087306924738,
+    "ia": 0.0009546446212024883,
+    "vgk": -1.5177943930806308,
+    "vg": -0.08570708615589348
+   },
+   "ac_maxdev_db_chain_vs_dz": 0.05195848293467975,
+   "iterations": {
+    "0.05": {
+     "mean": 1.9969882020604852,
+     "max": 2,
+     "nonconverged": 0
+    },
+    "0.5": {
+     "mean": 1.999755940511798,
+     "max": 2,
+     "nonconverged": 0
+    },
+    "2": {
+     "mean": 2.287844798936524,
+     "max": 3,
+     "nonconverged": 0
+    },
+    "8": {
+     "mean": 2.4518839315387173,
+     "max": 4,
+     "nonconverged": 0
+    },
+    "burst": {
+     "mean": 1.3179869684499315,
+     "max": 4,
+     "nonconverged": 0
+    }
+   }
+  },
+  "eco": {
+   "deviation": {
+    "op_rel": 0.0,
+    "dz_op_rel_diff": 0.0,
+    "koren_op_rel_diff": 0.0,
+    "ac_db": 3.559108563422342e-10,
+    "harm_db": 2.2828743340141955e-09,
+    "h1_rel": 2.717148728237362e-11,
+    "thd_rel": 1.2955148065429967e-10,
+    "harm_db_all": 7.2623008975369885e-06,
+    "burst_v": 2.113198505071523e-10,
+    "burst_t_s": 0.0,
+    "burst_tau_rel": 0.0,
+    "burst_crit": 6.268001376719297e-12,
+    "iter_hist_frac": 0.0,
+    "resampler_equal": true,
+    "pass_vs_dz": {
+     "op": true,
+     "ac_stage": true,
+     "ac_chain": true,
+     "harmonics": true,
+     "burst": true
+    }
+   },
+   "failed": [],
+   "pass_vs_dz": {
+    "op": true,
+    "ac_stage": true,
+    "ac_chain": true,
+    "harmonics": true,
+    "burst": true
+   },
+   "op": {
+    "va": 204.53553787975113,
+    "vk": 1.432087306924738,
+    "ia": 0.0009546446212024883,
+    "vgk": -1.5177943930806308,
+    "vg": -0.08570708615589348
+   },
+   "ac_maxdev_db_chain_vs_dz": 0.05380280241528368,
+   "iterations": {
+    "0.05": {
+     "mean": 1.9997922639079313,
+     "max": 2,
+     "nonconverged": 0
+    },
+    "0.5": {
+     "mean": 1.9999376791723793,
+     "max": 3,
+     "nonconverged": 0
+    },
+    "2": {
+     "mean": 2.9452927001537246,
+     "max": 3,
+     "nonconverged": 0
+    },
+    "8": {
+     "mean": 2.55305579791433,
+     "max": 5,
+     "nonconverged": 0
+    },
+    "burst": {
+     "mean": 1.5847486704408988,
+     "max": 4,
+     "nonconverged": 0
+    }
+   }
+  }
+ }
+}
