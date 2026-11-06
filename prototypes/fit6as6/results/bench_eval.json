@@ -1,0 +1,38 @@
+{
+ "method": "model6as6.dual_ip_ig2 on a fixed grid of 5200 operating points (Ec1 -5..0 V x 8, Ec2 60-140 V x 5, Ec3 -14..+12 V x 13, Eb 20-420 V x 10). Vectorised: 20 warm-up calls, then the median of 200 timed calls on the whole grid, divided by the point count. Scalar: 1 warm-up pass, then the median of 5 timed passes of one call per point with Python floats. time.perf_counter_ns; single thread; *_min is the fastest repeat.",
+ "machine": {
+  "python": "3.13.5",
+  "numpy": "2.5.4",
+  "platform": "Linux-6.12.94+-x86_64-with-glibc2.41",
+  "processor": "x86_64",
+  "note": "this box (lab VM), one run"
+ },
+ "results": {
+  "form_51": {
+   "vectorised_ns_per_point": 29.62596153846154,
+   "vectorised_ns_per_point_min": 29.481346153846154,
+   "scalar_us_per_call": 4.6715698076923085,
+   "scalar_us_per_call_min": 4.661181346153846
+  },
+  "dual_control_55": {
+   "vectorised_ns_per_point": 30.616153846153846,
+   "vectorised_ns_per_point_min": 29.54769230769231,
+   "scalar_us_per_call": 6.616788846153846,
+   "scalar_us_per_call_min": 6.557868461538462
+  },
+  "dual_control_55_unshared_exp": {
+   "vectorised_ns_per_point": 50.06923076923077,
+   "vectorised_ns_per_point_min": 49.33576923076923,
+   "scalar_us_per_call": 6.626188076923077,
+   "scalar_us_per_call_min": 6.581412692307692
+  }
+ },
+ "ratio_55_to_51": {
+  "vectorised": 1.0334231281035993,
+  "scalar": 1.4163951559192154
+ },
+ "ratio_unshared_to_shared": {
+  "vectorised": 1.6353860455767444,
+  "scalar": 1.0014205124249498
+ }
+}
