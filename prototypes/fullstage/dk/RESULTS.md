@@ -441,3 +441,42 @@ the solver share is far larger in C/C++ (~85–90 % in the C port timing), where
 So in Python each doubling of the rate costs ~2× (eco ≈3.4, standard ≈6.5, hq ≈12.5 s of CPU per second of
 audio). This is interpreter overhead and says nothing about the C++ core, where the cost of each setting should be
 re-measured.
+
+## Triode evaluation cost (#16)
+`dk/triode.currents()` now shares one exp(−|z|) between each softplus and its sigmoid (`softplus_sigmoid`), and
+forms the derivative powers as sk^(γ−1) = sk^γ / sk and sg^(ξ−1) = sg^ξ / sg. libm calls executed per evaluation:
+
+| | exp | log1p | pow | total | the issue's count |
+|---|---|---|---|---|---|
+| `currents()` before | 4 | 2 | 4 | 10 | 8 (2 softplus + 2 sigmoid + 4 pow) |
+| `currents()` after | 2 | 2 | 2 | 6 | 4 (2 softplus/sigmoid pairs + 2 pow) |
+| `currents_only()` | 2 | 2 | 2 | 6 | unchanged: it had no sigmoid and no derivative powers |
+
+The C port's disassembly has the same counts (each `log1p` is on one of two branches, so one runs per pair).
+
+**Accuracy** (`dk/tests/test_triode.py`, against a verbatim copy of the pre-#16 formulas on 511 × 453 points,
+Vgk −20…+5 V plus the cutoff tail down to −300 V, Vak 0…450 V plus 1000 V): softplus, sigmoid, `currents_only()`,
+Ig and Ia are bit-identical. The Jacobian is within 4 ulps (worst 3 ulps on dIg/dVgk, 4 on dIa/dVgk and dIa/dVak;
+the test allows 8). Entries below 1e-300 agree to 1e-300 absolute: where exp(−|z|) underflows, softplus is 0 and the
+new code returns a zero derivative where the old one had 0^(γ−1) = 0. Everything downstream is unchanged:
+`python -m pytest -q` → 238 passed, 1 skipped (the Koren model is not fetched in this worktree), including every
+criterion against the ngspice references, and `python -m dk.aliasing_guard` passes with 0.00 dB deltas.
+
+**Speed** (`python -m dk.bench_triode` → `bench_triode.json`): 930 operating points (Vgk −4…+1 V × 30, Vak
+50–350 V × 31), before and after timed in interleaved blocks, median of 41 blocks. The C part is `dk/bench_triode.c`,
+a port of both forms as noinline functions, built with gcc 14.2.0 at
+`-O2 -fno-builtin-exp -fno-builtin-log1p -fno-builtin-pow` so that every call stays a real libm call. The figures
+are from the committed JSON run. The ranges are over all runs of 6 Nov 2026 on the lab VM: 5 for Python, 6 for C
+(including a first hand-built run). The VM was not idle (load average 2–3.5 from other work).
+
+| eval | before | after | speedup (committed run) | speedup range (all runs) |
+|---|---|---|---|---|
+| C double, ns/call | 97.0 | 58.4 | 1.66× | 1.57–1.66× |
+| C float, ns/call | 64.1 | 39.6 | 1.62× | 1.62× |
+| Python `currents()`, ns/call | 625.8 | 578.5 | 1.08× | 1.04–1.10× |
+| Python `currents_only()`, ns/call | — | — | 1.01× (unchanged code) | 0.98–1.01× |
+
+The C figures show what #16 saves on the evaluation itself: 1.57–1.66× in double and 1.62× in float, at the low
+end of the issue's 1.6–1.8× estimate.
+In Python, interpreter overhead (dict lookups, tuple building, calls) dominates and the saving is about 8 %.
+Python's timings are noise for the stage as a whole; re-measure the C++ core (#20).

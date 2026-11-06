@@ -39,6 +39,10 @@ ngspice netlist, which `spice/run_refs.py` generates; see `spice/README.md`).
 11. Netlists generated from `dk/circuit.VALUES` (#4): `spice/run_refs.py` builds every ngspice netlist from VALUES and
     the shared `SOLVER`; the hand-written `.cir` duplicates are gone, and `spice/tests/test_netlists.py` fails on any
     divergence. The regenerated references are bit-identical to the committed ones.
+12. Cheaper triode evaluation (#16, `dk/triode.py`): each sigmoid reuses its softplus's exp(−|z|), and the derivative
+    powers are sk^γ / sk and sg^ξ / sg, so `currents()` makes 6 libm calls instead of 10 (8 → 4 in the issue's count).
+    Ig and Ia are unchanged bit for bit; the Jacobian moves by ≤ 4 ulps (`dk/tests/test_triode.py`). Measured with
+    `dk/bench_triode.py` (`dk/RESULTS.md`).
 
 ## Run
 ```bash
@@ -51,6 +55,7 @@ python -m dk.validate                              # -> dk/results.json (~6 min 
 python -m dk.aliasing                              # regenerates the 64x aliasing ground truth (~11 min on 8 cores)
 python -m pytest -q                                # dk/tests + spice/tests (netlists vs VALUES, #4)
 python -m dk.aliasing_guard                        # CI aliasing guard: limits + baseline ratchet (~8 s on 8 cores)
+python -m dk.bench_triode                          # #16: triode eval before/after, Python + C (gcc) -> dk/bench_triode.json (~5 s)
 python spice6as6/run_refs.py                       # 6AS6: regenerates spice6as6/reference_{dual,r51}.json
 python -m dk6as6.validate                          # 6AS6: -> dk6as6/results.json (standard, hq, plain 4x)
 python -m dk6as6.compare_fits                      # 6AS6: #51 vs #55 harmonics -> dk6as6/fit_comparison.json
