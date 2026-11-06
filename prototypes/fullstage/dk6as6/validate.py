@@ -1,0 +1,161 @@
+"""Validate the 6AS6 DK stage against its same-model ngspice reference (spice6as6/reference_dual.json, #26).
+
+  (ii) 'dual' : ngspice running the same fit6as6 dual_control equations and parameters (#55) on the same netlist ->
+                isolates METHOD error. The pass criteria are dk/validate.CRIT, unchanged, tested against this only.
+  There is no (i): no independent 6AS6 SPICE model in this repo's sources.
+Same measurements as dk/validate.py (op point, small signal 20 Hz-20 kHz over the whole resampler chain, H2-H5 of 1 kHz
+sines at spice/run_refs.AMPS, the 4 V tone-burst bias shift and recovery). run(model="r51") checks the DK stage with
+the #51 parameters against reference_r51.json the same way (for dk6as6/compare_fits.py; informational).
+Aliasing (dk/aliasing.py) is not part of this first 6AS6 pass.
+Run: python -m dk6as6.validate   (from prototypes/fullstage). Writes dk6as6/results.json: "standard" and "hq" against
+(ii), and "plain_4x": the same run at 4x without pre-warp, for information only (no 4x setting yet: its aliasing,
+dk/aliasing.py, has not been assessed for this stage).
+"""
+import json, os, sys, time
+import numpy as np
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+sys.path.insert(0, ROOT)
+from analysis import harmonics, thd, db_rel
+from spice.run_refs import burst_metrics, AMPS
+from dk.validate import CRIT, aligned
+from dk6as6.stage import Stage, QUALITY
+from dk6as6 import linear, pentode
+
+FS = 48000.0
+PARAMS = {"dual": pentode.DUAL_CONTROL, "r51": pentode.REFIT_51}
+OP_KEYS = ("va", "vk", "ia", "ig2", "vgk")
+
+
+def ref(model):
+    return json.load(open(os.path.join(ROOT, "spice6as6", f"reference_{model}.json")))
+
+
+def small_signal(stage, f):
+    """(stage alone, whole chain) small-signal response in dB, as dk/validate.small_signal."""
+    f = np.asarray(f, float)
+    Hs = np.abs(linear.stage_response(stage, f))
+    Hc = Hs * np.abs(stage.rs.chain_response(f))
+    return 20 * np.log10(Hs), 20 * np.log10(Hc)
+
+
+def ac_dev(st, r):
+    f = np.array(r["ac"]["f"]); sel = (f >= CRIT["ac_band"][0]) & (f <= CRIT["ac_band"][1])
+    ds, dch = small_signal(st, f[sel])
+    refdb = np.array(r["ac"]["db"])[sel]
+    o = dict(ac_maxdev_db_stage=float(np.max(np.abs(ds - refdb))), ac_maxdev_db_chain=float(np.max(np.abs(dch - refdb))),
+             ac_worst_f_stage=float(f[sel][np.argmax(np.abs(ds - refdb))]),
+             ac_worst_f_chain=float(f[sel][np.argmax(np.abs(dch - refdb))]))
+    o["ac_dev_at"] = {str(int(fx)): float((ds - refdb)[np.argmin(abs(f[sel] - fx))]) for fx in (20, 100, 1000, 10000, 20000)}
+    o["ac_chain_dev_at"] = {str(int(fx)): float((dch - refdb)[np.argmin(abs(f[sel] - fx))])
+                            for fx in (20, 100, 1000, 10000, 20000)}
+    return o
+
+
+def sines(quality="standard", filt="fir", model="dual", T=0.5, amps=AMPS):
+    """1 kHz sines through Stage.process: harmonics, iteration stats and CPU per amplitude."""
+    out, times, its = {}, {}, {}
+    n = int(T * FS)
+    for a in amps:
+        s = Stage(FS, quality=quality, filt=filt, pentode=PARAMS[model])
+        t = np.arange(n + s.latency_samples) / FS
+        t0 = time.perf_counter()
+        y = aligned(s, float(a) * np.sin(2 * np.pi * 1000 * t))["out"]
+        times[a] = (time.perf_counter() - t0) / (len(t) / FS)
+        h = harmonics(y, FS, 1000.0, 100)
+        out[a] = dict(H_peak_V=h[:5].tolist(), H_dBc=db_rel(h)[:5].tolist(), thd_pct=100 * thd(h))
+        its[a] = s.iteration_stats()
+    return out, times, its
+
+
+def harm_dev(sine, r):
+    res = {}
+    for a in sine:
+        rd = np.array(r["sine"][a]["H_dBc"]); dd = np.array(sine[a]["H_dBc"])
+        rows = {}
+        for hk in range(1, 5):          # H2..H5
+            rows[f"H{hk+1}"] = dict(ref_dBc=float(rd[hk]), dk_dBc=float(dd[hk]), dev_db=float(dd[hk] - rd[hk]),
+                                    tested=bool(rd[hk] > CRIT["harm_floor_dbc"]))
+        rows["H1_dev_db"] = float(20 * np.log10(sine[a]["H_peak_V"][0] / r["sine"][a]["H_peak_V"][0]))
+        rows["thd_ref_pct"] = r["sine"][a]["thd_pct"]; rows["thd_dk_pct"] = sine[a]["thd_pct"]
+        res[a] = rows
+    return res
+
+
+def run(T=0.5, quality="standard", filt="fir", model="dual"):
+    st = Stage(FS, quality=quality, filt=filt, pentode=PARAMS[model])
+    out = dict(criteria=CRIT, fs_base=FS, quality=quality, oversampling=st.os, prewarp_hz=st.prewarp_hz, filter=filt,
+               model=model, params=PARAMS[model])
+    out["resampler"] = dict(latency_samples=st.latency_samples, latency_ms=st.rs.latency_ms,
+                            macs_up_down=st.resampler_macs)
+    dc = st.dc
+    out["op"] = dict(va=dc["nodes"]["a"], vk=dc["nodes"]["k"], ia=dc["ip"], ig2=dc["ig2"], vgk=dc["vgk"],
+                     vg=dc["nodes"]["g"], vg2k=dc["vg2k"], vg3k=dc["vg3k"], vak=dc["vak"])
+    r = ref(model)
+    o = dict(op_rel={k: abs(out["op"][k] / r["op"][k] - 1) for k in OP_KEYS})
+    o.update(ac_dev(st, r))
+    out["ac_gain_1k_db"] = float(small_signal(st, [1000.0])[0][0])
+
+    out["sine"], times, its = sines(quality, filt, model, T)
+    o["harm"] = harm_dev(out["sine"], r)
+
+    s = Stage(FS, quality=quality, filt=filt, pentode=PARAMS[model])
+    nb = int(0.12 * FS); tb = np.arange(nb + s.latency_samples) / FS
+    xb = 4 * np.sin(2 * np.pi * 1000 * tb) * ((tb > 10e-3) & (tb < 30e-3))
+    rb = aligned(s, xb, record=("out", "vgk"))
+    vg = rb["_internal"]["vgk"]
+    ti = (np.arange(len(vg)) - s.rs.up_delay_internal) / s.fs   # Vgk is seen after the interpolator only
+    keep = (ti >= 0) & (ti < nb / FS); vg, ti = vg[keep], ti[keep]
+    out["burst"] = burst_metrics(ti, vg)
+    its["burst"] = s.iteration_stats()
+    rb_ = r["burst"]
+    shift_ref = rb_["min_vgk"] - rb_["rest_vgk"]
+    tr = np.array(out["burst"]["traj_vgk"]) - out["burst"]["rest_vgk"]
+    rr = np.array(rb_["traj_vgk"]) - rb_["rest_vgk"]
+    o["burst"] = dict(min_rel=abs((out["burst"]["min_vgk"] - out["burst"]["rest_vgk"]) / shift_ref - 1),
+                      tau_rel=abs(out["burst"]["recovery_tau_s"] / rb_["recovery_tau_s"] - 1),
+                      traj_rel=float(np.sqrt(np.mean((tr - rr) ** 2)) / abs(shift_ref)),
+                      t_min_diff_ms=1e3 * (out["burst"]["t_min"] - rb_["t_min"]),
+                      ref=dict(rest=rb_["rest_vgk"], min=rb_["min_vgk"], tau=rb_["recovery_tau_s"]))
+    out["vs"] = {model: o}
+    out["iterations"] = its
+    out["cpu"] = dict(method=f"time.perf_counter around Stage.process (pure Python, one core, 48 kHz base, {st.os}x OS, "
+                             f"{filt} half-band resampling included); value = seconds of CPU per second of audio",
+                      seconds_per_second=times)
+    out["passed"] = dict(
+        op=all(v < CRIT["op_rel"] for v in o["op_rel"].values()),
+        ac_stage=o["ac_maxdev_db_stage"] < CRIT["ac_db"],
+        ac_chain=o["ac_maxdev_db_chain"] < CRIT["ac_db"],
+        harmonics=all(abs(h["dev_db"]) < CRIT["harm_db"] for a in AMPS for k, h in o["harm"][a].items()
+                      if isinstance(h, dict) and h["tested"]),
+        burst=(o["burst"]["min_rel"] < CRIT["burst_min_rel"] and o["burst"]["tau_rel"] < CRIT["burst_tau_rel"]
+               and o["burst"]["traj_rel"] < CRIT["burst_traj_rel"]),
+        newton=all(v["converged"] for v in its.values()))
+    return out
+
+
+def summary(res):
+    o = res["vs"][res["model"]]
+    lines = [json.dumps(dict(op=res["op"], passed=res["passed"]), default=float),
+             f"op_rel {o['op_rel']} ac stage {o['ac_maxdev_db_stage']:.4f} dB @ {o['ac_worst_f_stage']:.0f} Hz, "
+             f"chain {o['ac_maxdev_db_chain']:.4f} dB @ {o['ac_worst_f_chain']:.0f}; chain at {o['ac_chain_dev_at']}",
+             f"burst {o['burst']}"]
+    for a in AMPS:
+        lines.append(f"{a}: " + str({k: (round(v['dev_db'], 5), v['tested']) if isinstance(v, dict) else round(v, 5)
+                                     for k, v in o["harm"][a].items()}))
+    lines.append(str({k: (round(v["mean"], 2), v["max"], v["nonconverged"]) for k, v in res["iterations"].items()}))
+    lines.append(str(res["cpu"]["seconds_per_second"]))
+    return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    res = {q: run(quality=q) for q in QUALITY}
+    res["plain_4x"] = run(quality=(4, None))
+    json.dump(res, open(os.path.join(HERE, "results.json"), "w"), indent=1, default=float)
+    for q in QUALITY:
+        print(f"== {q}: {res[q]['oversampling']}x, resampler {res[q]['resampler']}")
+        print(summary(res[q]))
+    print("== plain 4x (information only)")
+    print(summary(res["plain_4x"]))
+    if not all(all(res[q]["passed"].values()) for q in QUALITY):
+        sys.exit("criteria failed: " + str({q: res[q]["passed"] for q in QUALITY}))
