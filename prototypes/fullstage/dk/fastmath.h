@@ -1,8 +1,10 @@
 /* #18: table + minimax-polynomial exp / log / log1p / pow (double), the C twin of dk/fastmath.py.
  * Same algorithm, same constants (fastmath_tables.h is generated from dk/fastmath.py), same operation order:
  * built without FMA contraction (plain -O2 on x86-64, or -ffp-contract=off) it returns the same bits as the
- * Python functions (dk/tests/test_fastmath.py). With FMA contraction the bits differ but stay within the bounds
- * (also tested). Algorithms, domains and error bounds: dk/fastmath.py docstring and BOUND.
+ * Python functions (dk/tests/test_fastmath.py, kernels on the bound grids and cur_fast on the currents grid).
+ * Built with FMA contraction (-O2 -march=x86-64-v3) some bits differ; dk/tests/test_fastmath.py checks that build's
+ * kernels and cur_fast against libm with the same BOUND (#60). Algorithms, domains and error bounds:
+ * dk/fastmath.py docstring and BOUND.
  * Outside its domain each function calls libm, so it never returns something libm would not. */
 #ifndef DK_FASTMATH_H
 #define DK_FASTMATH_H
@@ -49,9 +51,9 @@ static inline double fm_log(double x) {
     return (kd * FM_LN2_HI + FM_LOG_LC[i]) + (kd * FM_LN2_LO + fm_log_poly(r));
 }
 
-/* 0 <= e <= 1 (the softplus' log1p(exp(-|z|))); libm outside. */
+/* 0 < e <= 1 (the softplus' log1p(exp(-|z|))); libm outside. */
 static inline double fm_log1p(double e) {
-    if (!(e >= 0.0 && e <= 1.0)) return log1p(e);
+    if (!(e > 0.0 && e <= 1.0)) return log1p(e);
     double t = 1.0 + e, c = e - (t - 1.0);
     double kd; int i;
     double r = fm_log_reduce(t, &kd, &i);
