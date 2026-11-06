@@ -10,6 +10,7 @@ wave digital filters for comparison, before the 6AS6 stage and a C++ core.
 | `spice/` | ngspice references: Koren 12AX7 (i) and Dempwolf–Zölzer (ii) on the same netlist, generated from `dk/circuit.VALUES` (#4) | done; settled 500 ms sine data, tight solver (#5) |
 | `analysis.py` | shared measurements (DFT harmonics, THD, bias shift, recovery τ) | done |
 | `dk/` | nodal DK prototype in Python/NumPy with streaming half-band resamplers, Drive/Bias/Output, quality settings hq 16× / standard 8× (default) / eco 4× + small-cap pre-warp | all tests pass in every setting (small-signal worst 0.014 / 0.052 / 0.054 dB; plain 4× fails with 0.21 dB from trapezoidal warping) — see `dk/RESULTS.md` |
+| `dk6as6/`, `spice6as6/` | the 6AS6 stage (#26): same passives as the 12AX7 stage, screen / suppressor at Ec2 = 120 V / Ec3 = 0 V, the fit6as6 `dual_control` law (#55); nodal DK in `dk6as6/` (reusing `dk/`'s resampler, stage controls and tolerances), its same-model ngspice reference in `spice6as6/` | standard 8× and hq 16× pass the 12AX7 criteria against the same-model reference — see `dk6as6/RESULTS.md` |
 | WDF version | — | next |
 
 **Circuit values are example values, not Culture Vulture values** (`dk/circuit.VALUES`, the single source for every
@@ -50,6 +51,9 @@ python -m dk.validate                              # -> dk/results.json (~6 min 
 python -m dk.aliasing                              # regenerates the 64x aliasing ground truth (~11 min on 8 cores)
 python -m pytest -q                                # dk/tests + spice/tests (netlists vs VALUES, #4)
 python -m dk.aliasing_guard                        # CI aliasing guard: limits + baseline ratchet (~8 s on 8 cores)
+python spice6as6/run_refs.py                       # 6AS6: regenerates spice6as6/reference_{dual,r51}.json
+python -m dk6as6.validate                          # 6AS6: -> dk6as6/results.json (standard, hq, plain 4x)
+python -m dk6as6.compare_fits                      # 6AS6: #51 vs #55 harmonics -> dk6as6/fit_comparison.json
 ```
 
 ### Aliasing guard and its baseline (#35)
