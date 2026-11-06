@@ -489,24 +489,66 @@ minimax polynomials fitted by `dk/fastmath_fit.py`; `pow(s,g) = exp(g·log s)`. 
 libm call; it exists to run the C arithmetic against the criteria). Domain of every argument the stage hits
 is recorded in `dk/fastmath_domain.json` (`python -m dk.fastmath_domain`).
 
-**Error bounds** (relative vs glibc libm; `dk/tests/test_fastmath.py` asserts `fastmath.BOUND`; measured worst
-on the test grids 6 Nov 2026, this box, then ~2–3× margin):
+**Error bounds** (`dk/tests/test_fastmath.py` asserts `fastmath.BOUND`; corrected in #60 after an independent
+review of #59). Kernels: relative error against glibc libm. Currents: componentwise against the term magnitudes
+(below). Measured worst on the test grids (6 Nov 2026, this box), then ~2.5–3.5× margin. These are measured
+bounds, not proofs:
 
-| fn | measured worst | BOUND |
-|---|---|---|
-| exp on `[EXP_LO, EXP_HI]` | 3.86×10⁻¹³ | 1×10⁻¹² |
-| log1p on `[0, 1]` | 9.04×10⁻¹⁴ | 3×10⁻¹³ |
-| log on positive normals | 1.56×10⁻¹² | 5×10⁻¹² |
-| pow(s, 1.26) stage domain | 3.96×10⁻¹³ | 1×10⁻¹² |
-| pow(s, 1.314) stage domain | 4.29×10⁻¹³ | 1×10⁻¹² |
-| currents_fast vs currents (Ig, Ia, J) | 2.21×10⁻¹⁰ | 1×10⁻⁹ |
+| fn | grid | measured worst | BOUND | before #60 |
+|---|---|---|---|---|
+| exp | `[EXP_LO, EXP_HI]`, dense at the `EXP_LO` edge | 3.87×10⁻¹³ | 1×10⁻¹² | 1×10⁻¹² |
+| log1p | `(0, 1]` | 9.21×10⁻¹⁴ | 3×10⁻¹³ | 3×10⁻¹³ |
+| log | positive normals: logspace 10⁻³⁰⁷…10³⁰⁸, every reduction bin, 1 ∓ 2⁻ᵏ, 1 ∓ 10⁻¹⁶…10⁻² | 9.21×10⁻¹⁴ | 3×10⁻¹³ | 5×10⁻¹² (false near 1⁻) |
+| pow(s, 1.26) | stage domain (and a bit beyond), s → 1 | 3.97×10⁻¹³ | 1×10⁻¹² | 1×10⁻¹² |
+| pow(s, 1.314) | stage domain (and a bit beyond) | 4.21×10⁻¹³ | 1×10⁻¹² | 1×10⁻¹² |
+| currents_fast vs currents (Ig, Ia, J) | Vgk −16…+2 V × Vak 0…450 V (121 × 121) + 108 points on and next to Ia = 0 | 8.78×10⁻¹³ | 3×10⁻¹² | 1×10⁻⁹ (per element, grid-dependent) |
 
-C with `-O2 -ffp-contract=off` matches Python bit for bit on the sample grids in the same test; with FMA
-(`-march=x86-64-v3`) the bits differ but stay inside BOUND (`max_rel_diff_fast` 2.27×10⁻¹⁰ in the bench JSON).
+- *log near 1 (#60, M1).* Before #60 the reduction bin [1 − 2⁻⁸, 1) had centre 0.998046875. As x → 1⁻,
+  log x = ln c + P(r) cancelled, and the relative error had no bound: 1.1×10⁻¹⁰ at 1 − 2⁻²⁰ and 0.95 at
+  `nextafter(1, 0)`, against the published 5×10⁻¹². The old grid's 1.56×10⁻¹² was this cancellation at
+  x = 0.99975. That bin now has centre 1, as the bin [1, 1 + 2⁻⁷) above it already did. Near 1, log x = P(x − 1)
+  with x − 1 exact, so the bound is relative from both sides; it is exact (equal to libm) at 1 − 2⁻ᵏ for k ≥ 17.
+- *Polynomial refit.* The log polynomial's r range widens from [−0.003861, 0.0078125] to [−2⁻⁸, 0.0078125]. It was
+  refitted with `dk/fastmath_fit.py`: poly_err goes from 9.03×10⁻¹⁴ to 9.21×10⁻¹⁴. This is the only change to the
+  arithmetic. The other bins next to 1 cancel by at most about 2×.
+- *Stage impact.* pow only ever saw log's absolute error, so it and the stage were never affected.
+- *Currents metric (#60, M2).* Ia = Ik − Ig and dIa/dVgk = dIk − dIg cross zero inside the stage's domain. A
+  per-element |Δ|/|·| has no bound there: about 3×10³ on the Ia = 0 curve, and 1.5×10⁻⁸ on a dense grid next to it
+  with the pre-#60 code. Each output is now divided by the sum of the magnitudes of the terms it is formed from
+  (`currents_err`): Ia by Ik + Ig, dIa/dVgk by |dIk| + |dIg|. That denominator is ≥ Ig0 > 0.
+- *Currents box.* It covers the recorded (Vgk, Vak), which `dk/fastmath_domain.py` now records as well: Vgk
+  −13.87…+0.20 V and Vak 12.75…296.8 V over hq/standard/eco. The test also checks every grid against the recorded
+  domain. 2×10⁵ random points in the box give 9.22×10⁻¹³.
 
-**Criteria** (`python -m dk.validate --triode-math fast` → `results_fastmath.json`): hq / standard / eco all
-`pass_vs_dz` true (op, ac stage/chain, harmonics, burst). Worst AC vs DZ: hq 0.013 dB, standard 0.052 dB,
-eco 0.054 dB (CRIT 0.1 dB). CRIT unchanged. `python -m pytest -q` → 247 passed, 1 skipped.
+**C.** With `-O2 -ffp-contract=off`, C matches Python bit for bit, in `test_c_matches_python_kernels` and
+`test_c_matches_python_currents`. Those tests cover:
+- every bound grid above, including the `EXP_LO` edge, where C adds to the exponent bits and Python calls `ldexp`;
+- every log bin, and x → 1;
+- `cur_fast` on the whole currents grid.
+
+A separate 6.9×10⁵-point spot check also agreed bit for bit.
+
+With FMA contraction (`-O2 -march=x86-64-v3`, the 1.39× build below), some bits differ:
+- 848 of the 14749 currents points;
+- 1 of the pow(s, 1.314) grid points;
+- 12 / 10 of 10⁶ random log / log1p inputs.
+
+`test_c_fma_kernels_within_bound` and `test_c_currents_within_bound` hold that build to the same BOUND against
+libm. The measured worst is the same as in the table. `test_c_fma_build_is_contracted` checks that the build really
+differs. The bench's `max_rel_diff_fast` is the old per-element metric; it is informational and not a bound.
+
+**Criteria** (`python -m dk.validate --triode-math fast` → `results_fastmath.json`, rerun with the #60 tables):
+- hq / standard / eco: all `pass_vs_dz` true (op, AC stage/chain, harmonics, burst), with CRIT unchanged.
+- Worst AC vs DZ: hq 0.013 dB, standard 0.052 dB, eco 0.054 dB (CRIT 0.1 dB). These are libm's own deviations to
+  about 10⁻¹² dB.
+- Newton iteration statistics are identical to `results.json`.
+
+`dk/tests/test_fastmath_stage.py` (#60) is the lean pytest of the fast path. It runs:
+- the full `validate.run` on eco (~20 s; the cheapest setting, and the one with the largest AC deviation);
+- the op point and AC against CRIT on every setting.
+
+`python -m dk.aliasing_guard --triode-math fast` (CI subset, #35) passes: 12 of 12 rows ok, every delta vs the
+libm baseline 0.00 dB.
 
 **Speed** (`python -m dk.bench_triode` → `bench_triode.json`, same 930-point method as #16; fast timed against
 the #16 libm `after` baseline):
@@ -519,6 +561,8 @@ the #16 libm `after` baseline):
 | C double `-O2 -march=x86-64-v3`, chain | 74.6 | 58.6 | 1.27× |
 | Python `currents_fast` vs `currents` | — | — | 0.23× (slower; expected) |
 
+This is one run on the lab VM; 1.12× is a gap of about 6 ns per call. `bench_triode.json` was measured with the
+pre-#60 tables. #60 changed table entries and coefficients, not operations, so the timings still apply.
 The issue hoped ~3–5× on the model eval; on this box the C double path is 1.12× (baseline ISA) to 1.39× (FMA).
 Kernel throughput of `fm_exp` alone can look better, but the full `currents` path still spends time on the
 non-transcendental arithmetic and call overhead. No float fast path (not needed for the double stage).

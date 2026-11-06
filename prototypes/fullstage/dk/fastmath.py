@@ -11,21 +11,26 @@ Algorithms (glibc-style table reduction, our own tables and coefficients, dk/fas
   exp(x)    k = round(x N / ln2), r = x - k ln2/N (Cody-Waite, two constants), |r| <= ln2 / 2N, N = 128;
             exp(x) = 2^(k div N) * T[k mod N] * P(r),  T[j] = 2^(j/N) correctly rounded,  P = 1 + r + c2 r^2 ...
   log(x)    x = 2^k m, m in [0.6875, 1.375) (bit offset trick), bin i of m (7 bits: 80 bins of 2^-8 below 1, 48
-            of 2^-7 above), c_i = bin centre (c = 1 exactly for the bin [1, 1 + 2^-7)), r = (m - c_i) * (1/c_i)
-            (m - c_i is exact, so r has a relative, not absolute, rounding error); log x = k ln2 + ln c_i + P(r),
-            P = r + a2 r^2 + ... (minimax for log1p on the r range)
-  log1p(e)  for 0 <= e <= 1 (all the softplus needs): t = 1 + e, c = e - (t - 1) exactly (Fast2Sum), then the log
+            of 2^-7 above), c_i = bin centre, except c = 1 exactly for the two bins next to 1, [1 - 2^-8, 1) and
+            [1, 1 + 2^-7); r = (m - c_i) * (1/c_i) (m - c_i is exact, so r has a relative, not absolute, rounding
+            error); log x = k ln2 + ln c_i + P(r), P = r + a2 r^2 + ... (minimax for log1p on the r range).
+            Near 1 (k = 0, c = 1) this is log x = P(x - 1) with x - 1 exact, so the error stays relative as x -> 1
+            from either side (#60: with the centre 0.998046875 below 1, ln c + P(r) cancelled and the relative
+            error had no bound, 0.95 at nextafter(1, 0)).
+  log1p(e)  for 0 < e <= 1 (all the softplus needs): t = 1 + e, c = e - (t - 1) exactly (Fast2Sum), then the log
             kernel on t plus the first-order correction c / t ~ c (1/c_i) 2^-k. Relative accuracy down to e -> 0
             (the c_i = 1 bin has ln c_i = 0 and r = t - 1 exact).
   pow(s, g) exp(g log s) (= exp2(g log2 s), natural base so the exp and log kernels are shared). Its relative error
             grows with |g log s| (rounding of g log s): see POW_* below.
-Outside each function's domain the libm function is called (math.exp / math.log / math.log1p / **), so results
-there are libm's bit for bit: exp for x < EXP_LO (result below ~2.2e-308, libm gives a subnormal) or x > EXP_HI,
-log / pow for x not a positive normal double, log1p for e outside [0, 1].
+Outside each function's domain the libm function is called (math.exp / math.log / math.log1p / **; in C exp /
+log / log1p / pow): exp for x < EXP_LO (result below ~2.2e-308, libm gives a subnormal) or x > EXP_HI, log / pow
+for x not a positive normal double, log1p for e outside (0, 1]. In C the results there are libm's bit for bit; in
+Python they are math's, which raises where C returns inf / NaN (math.exp(710), math.log(0), math.log(-1)). The
+stage never gets there (dk/fastmath_domain.json).
 
 Error bounds (relative, against glibc libm, measured by dk/tests/test_fastmath.py on dense grids and asserted):
 see the BOUND dict. They are measured bounds plus margin, not proofs; the polynomial part is exact
-(fastmath_fit.poly_err), the rest is double rounding (a few ulps).
+(fastmath_fit.poly_err: exp 3.86e-13, log1p kernel 9.21e-14), the rest is double rounding (a few ulps).
 """
 import math, sys
 from decimal import Decimal as D, localcontext
@@ -59,7 +64,7 @@ def _tables():
         c, inv, lc = [], [], []
         for i in range(1 << LOG_BITS):
             a, w = (0.6875 + i / 256.0, 1 / 256.0) if i < 80 else (1.0 + (i - 80) / 128.0, 1 / 128.0)
-            ci = 1.0 if i == 80 else a + 0.5 * w
+            ci = 1.0 if i in (79, 80) else a + 0.5 * w         # 79 = [1 - 2^-8, 1): see fast_log
             c.append(ci)
             inv.append(float(1 / D(ci)))
             lc.append(float(D(ci).ln()))
@@ -86,19 +91,23 @@ def log_r_range(bits=LOG_BITS):
 # ---- coefficients (python -m dk.fastmath_fit) -----------------------------------------------------------
 H = float.fromhex
 EXP_C = tuple(map(H, ("0x1.0000000000000p+0", "0x1.0000000000000p+0", "0x1.0000088170cb7p-1", "0x1.5555567dc582ep-3")))
-LOG_A = tuple(map(H, ("0x0.0p+0", "0x1.0000000000000p+0", "-0x1.000000000c641p-1", "0x1.555556e053f23p-2",
-                      "-0x1.000029798b940p-2", "0x1.9669e951bc36ap-3")))
+LOG_A = tuple(map(H, ("0x0.0p+0", "0x1.0000000000000p+0", "-0x1.000000000978cp-1", "0x1.555556e3a1bc5p-2",
+                      "-0x1.000036696d7d0p-2", "0x1.9673fc75c2346p-3")))
 
-# ---- error bounds, relative (dk/tests/test_fastmath.py) -------------------------------------------------
+# ---- error bounds (dk/tests/test_fastmath.py) -----------------------------------------------------------
 BOUND = dict(
-    # Relative |fast - libm| / |libm|, measured on the grids in dk/tests/test_fastmath.py (6 Nov 2026, this box).
-    # Values are measured worst + margin (~2-3x), not proofs. log slightly exceeds 1e-12; documented as measured.
-    exp=1e-12,          # measured 3.86e-13 on [EXP_LO, EXP_HI]
-    log=5e-12,          # measured 1.56e-12 on positive normals (logspace -300..3 and [0.5,1.5])
-    log1p=3e-13,        # measured 9.04e-14 on [0, 1]
-    pow_g1_26=1e-12,    # measured 3.96e-13 on the stage domain for gamma=1.26 (and a bit beyond)
-    pow_g1_314=1e-12,   # measured 4.29e-13 for xi=1.314
-    currents=1e-9,      # measured 2.21e-10 on Vgk -4..+1 x Vak 50..350 (Ig, Ia, J)
+    # Kernels: relative |fast - libm| / |libm|, worst on the grids in dk/tests/test_fastmath.py (#60, 6 Nov 2026,
+    # this box; the same worst for C built with and without FMA contraction), then ~2.5-3.5x margin. Not proofs.
+    exp=1e-12,          # measured 3.87e-13 on [EXP_LO, EXP_HI] (incl. the EXP_LO edge)
+    log=3e-13,          # measured 9.21e-14 on positive normals: logspace 1e-307..1e308, every bin, 1 -+ 2^-k, 1 -+ 1e-16..1e-2
+    log1p=3e-13,        # measured 9.21e-14 on (0, 1]
+    pow_g1_26=1e-12,    # measured 3.97e-13 on the stage domain for gamma=1.26 (and a bit beyond)
+    pow_g1_314=1e-12,   # measured 4.21e-13 for xi=1.314
+    # currents_fast vs currents: componentwise against the term magnitudes, |d out| / (sum of |terms| of out), e.g.
+    # Ia = Ik - Ig -> |d Ia| / (Ik + Ig) (test_fastmath.currents_err; a plain relative error has no bound where Ia
+    # crosses zero). Measured 8.78e-13 on Vgk -16..+2 x Vak 0..450 V (121 x 121, the recorded stage domain is
+    # Vgk -13.9..+0.2, Vak 12.8..297) plus 108 points on and next to the Ia = 0 curve; 9.22e-13 on 2e5 random points.
+    currents=3e-12,
 )
 
 
@@ -141,7 +150,7 @@ def fast_log(x):
 
 
 def fast_log1p(e):
-    if not (0.0 <= e <= 1.0):
+    if not (0.0 < e <= 1.0):
         return math.log1p(e)
     t = 1.0 + e
     c = e - (t - 1.0)
