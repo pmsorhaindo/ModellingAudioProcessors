@@ -17,7 +17,10 @@ dual_control : OUR empirical extension (not from a publication):
     Ip  = Ik*f,   Ig2 = Ik*(1-f)
   i.e. cathode current set by g1/g2, split between plate and screen by g3 and the plate (current-division
   picture). KR = 0 and XA = 1 (the defaults, and every parameter set up to #51) is the earlier model, with
-  cathode current independent of g3 and a linear plate term.
+  cathode current independent of g3 and a linear plate term. Since issue #55, dual_control is fitted with KR, XA.
+  With KR > 0, z is computed once and the KR term reuses the share's exp: e = exp(-|z|) gives both
+  softplus(-z) = max(-z, 0) + ln(1 + e) for s and 1/(1 + exp(z)) = (e if z >= 0 else 1)/(1 + e), so KR adds
+  no transcendental call (bench_eval.py).
 """
 import numpy as np
 
@@ -66,11 +69,21 @@ def dual_ik(vg1, vg2, MU, EX, KG1, KP):
 def _f(vg1, vg2, vg3, va, p):
     ik0 = dual_ik(vg1, vg2, p["MU"], p["EX"], p["KG1"], p["KP"])
     xa, kr = p.get("XA", 1.0), p.get("KR", 0.0)
-    f = dual_share(vg3, va, p["FMAX"], p["MU3"], p["V3C"], p["S3"], p["P3"], p.get("RI", 0.0), ik0, p.get("KVB", 1e-9), xa)
     if kr == 0.0:
-        return ik0, f
+        return ik0, dual_share(vg3, va, p["FMAX"], p["MU3"], p["V3C"], p["S3"], p["P3"], p.get("RI", 0.0), ik0,
+                               p.get("KVB", 1e-9), xa)
+    # issue #55: one z and one exp for both the share and the KR term (overflow-safe; see docstring)
     z = dual_z(vg3, va, p["MU3"], p["V3C"], p["S3"], p.get("RI", 0.0), ik0, xa)
-    return ik0 * (1.0 - kr * np.exp(-_sp(z))), f   # exp(-sp(z)) = 1/(1+e^z), overflow-safe
+    e = np.exp(-np.abs(z))
+    knee = (2.0 / np.pi) * np.arctan(np.maximum(va, 0) / p.get("KVB", 1e-9))
+    f = p["FMAX"] * knee * np.exp(-p["P3"] * (np.maximum(-z, 0.0) + np.log1p(e)))
+    return ik0 * (1.0 - kr * np.where(z >= 0, e, 1.0) / (1.0 + e)), f
+
+
+def dual_ip_ig2(vg1, vg2, vg3, va, p):
+    """(Ip, Ig2) from one evaluation of Ik and the share (what a circuit solver needs per operating point)."""
+    ik, f = _f(vg1, vg2, vg3, va, p); ip = ik * f
+    return ip, ik - ip
 
 
 def dual_cathode(vg1, vg2, vg3, va, p):

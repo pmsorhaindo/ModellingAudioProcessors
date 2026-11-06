@@ -1,5 +1,6 @@
 """Issue #53: g3-dependent cathode current (KR) and plate power (XA) in model6as6.py, and the study in ik_g3.py.
-The #51 model (dual_control) is unchanged. Values at the time of writing in brackets (README, issue #53)."""
+The study is on the #25-#53 data split; its BEFORE is the #51 model (refit_51; dual_control until #55). Values at the
+time of writing in brackets (README, issue #53)."""
 import json, os, sys
 import numpy as np
 import pytest
@@ -21,8 +22,8 @@ V = dict(g1=RNG.uniform(-5, 0, 400), g2=RNG.uniform(60, 140, 400), g3=RNG.unifor
 
 
 def test_defaults_are_the_51_model():
-    """KR = 0, XA = 1 (absent or explicit) gives the #51 equations exactly; dual_control is still the #51 fit."""
-    p = FIT["dual_control"]["params"]
+    """KR = 0, XA = 1 (absent or explicit) gives the #51 equations exactly (refit_51, the #51 fit)."""
+    p = FIT["refit_51"]["params"]
     assert p["MU3"] == pytest.approx(43.2167, rel=1e-5) and "KR" not in p and "XA" not in p
     g1, g2, g3, va = V["g1"], V["g2"], V["g3"], V["va"]
     ik = M.dual_ik(g1, g2, p["MU"], p["EX"], p["KG1"], p["KP"])
@@ -79,7 +80,8 @@ def test_restarts_reach_the_same_minimum():
     for key, need in (("refit_53", 10), ("diagnostic_p11_ic2_in_fit", 10)):
         r = R[key]["restarts"]
         assert r["seeded_same_minimum"] == r["seeded"] == 7                    # [7 / 7]
-        assert r["random"] == 12 and r["random_same_minimum"] >= need           # [11, 10 of 12]
+        assert r["random"] == 12 and r["random_same_minimum"] >= need           # [10 / 10 of 12; refit_53 was 11 before #55's
+                                                                               # shared-exp change moved one start]
         assert min(r["lowest_cost_by_start"]) == pytest.approx(R[key]["cost"], rel=1e-12)
 
 
@@ -141,8 +143,9 @@ def test_spice_expressions_match_python_for_the_extension():
             v["ik"] = _spice_eval(e["ik"], v)
             ip = v["ik"] * _spice_eval(e["share"], v)
             assert ip == pytest.approx(M.dual_ip(v["G1"], v["G2"], v["G3"], v["P"], p), rel=1e-4), key
-    # the committed include (#51 parameters) still has the old two-node form
-    assert set(E.EXPR) == {"ik", "share"} and "Bik0" not in E.text()
+    # since #55 the committed include is the KR/XA form; #51 parameters still give the old two-node form
+    assert set(E.EXPR) == {"ik0", "ik", "share"} and "Bik0 ik0 0" in E.text()
+    assert set(E.expressions(FIT["refit_51"]["params"])) == {"ik", "share"}
 
 
 def test_heldout_gm_bands_reproduce():
@@ -150,5 +153,6 @@ def test_heldout_gm_bands_reproduce():
         for band, v in HO["gm_check"]["by_Ec3_band"][q].items():
             for m, x in v.items():
                 assert H.gm_by_band[q][band][m] == pytest.approx(x, rel=1e-6, abs=1e-9), (q, band, m)
-    b = HO["gm_check"]["by_Ec3_band"]["gm3"]
-    assert b["Ec3_5_and_above"]["mean_rel"] < -0.7                               # [-76 %], README #51
+    b, b51 = HO["gm_check"]["by_Ec3_band"]["gm3"], HO["before_refit_51"]["gm_by_Ec3_band"]["gm3"]
+    assert b51["Ec3_5_and_above"]["mean_rel"] < -0.7                             # [-76 %], README #51
+    assert b["Ec3_5_and_above"]["mean_rel"] < -0.6                               # [-65 %], #55: still far too low

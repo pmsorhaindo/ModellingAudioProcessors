@@ -1,8 +1,10 @@
 """Checks of the refit against the Raytheon curves digitised in issue #48 (see README.md).
 
-Nothing here is fitted: the model is dual_control from results/fit_results.json (the #51 refit). The same checks
-are repeated for the #25 parameters (refit_25) under `before_refit_25`. Since #51 the p.8 bottom Ib curves are in
-the fit, so item 3 is a fit-quality check for them; its Ic2 curves and the gm graphs are still held out.
+Nothing here is fitted: the model is dual_control from results/fit_results.json (the #55 refit, KR and XA free).
+The same checks are repeated for the #51 parameters (refit_51) under `before_refit_51` and for the #25 parameters
+(refit_25) under `before_refit_25`. Since #51 the p.8 bottom Ib curves are in the fit, so item 3 is a fit-quality
+check for them; its Ic2 curves and the gm graphs are still held out (with p.10 bottom Ic2 vs Ec3 they are the
+held-out screen check of the #55 split; p.11 top Ic2 vs Ec3 is in the fit since #55).
 1) gm check: model gm(g1) = dIb/dEc1 and gm(g3) = dIb/dEc3 by central differences (+-H V) at the sheet
    conditions of the five gm graphs on pp. 11-13, against the digitised gm curves.
 2) Sheet self-consistency: the same gm taken as the slope of the sheet's own current curves (p.9 bottom ->
@@ -21,7 +23,7 @@ H = 0.01                  # V, central-difference step (as the GE cross-check in
 G0 = 10.0                 # umho, offset in the log error (1-2 px on the gm graphs), like I0 in fit.py
 LOW = (0.1, 0.6)          # mA, the low-current region used throughout fit.py
 FIT = json.load(open(os.path.join(HERE, "results", "fit_results.json")))
-P, P25 = FIT["dual_control"]["params"], FIT["refit_25"]["params"]
+P, P51, P25 = FIT["dual_control"]["params"], FIT["refit_51"]["params"], FIT["refit_25"]["params"]
 
 
 def load(fn, val):
@@ -142,7 +144,7 @@ for gg, lab, cg, sw, w in SELF:
     self_check[gg] = dict(from_current_graph=cg, window_V=w, all=stats(np.concatenate(ms), np.concatenate(ds), G0),
                           per_curve=per)
 
-# ---- 3) p.8 bottom: plate family at fixed Ec3 (in the fit since #51) and the two Ic2 curves (held out)
+# ---- 3) p.8 bottom: plate family at fixed Ec3 (in the fit since #51) and the two Ic2 curves (held out, also in #55)
 def p8_model(rows, p=P):
     g1, g2, g3, va = arr(rows, "Ec1_V", "Ec2_V", "Ec3_V", "Eb_V")
     ib = np.array([r["quantity"] == "Ib" for r in rows])
@@ -250,15 +252,20 @@ def ge_gm_check(p):
 
 ge_gm = ge_gm_check(P)
 
-# the same checks for the #25 parameters (fitted without p.8 bottom), for the #51 BEFORE/AFTER comparison
-before_25 = dict(params=P25, gm_summary=dict(gm1=pooled("gm1", P25), gm3=pooled("gm3", P25)),
-                 gm_per_graph={g: v["all"] for g, v in gm_graphs(P25).items()},
-                 gm_by_Ec3_band=dict(gm1=gm_bands("gm1", P25), gm3=gm_bands("gm3", P25)), p8_bottom_summary=p8_summary(P25),
-                 g3_cutoff_vs_plate_voltage=g3_cutoff_check(P25), ge_typical_vs_raytheon_gm_umho=ge_gm_check(P25))
+# the same checks for earlier parameter sets: #51 (BEFORE of #55) and #25 (fitted without p.8 bottom; BEFORE of #51)
+def before(q):
+    return dict(params=q, gm_summary=dict(gm1=pooled("gm1", q), gm3=pooled("gm3", q)),
+                gm_per_graph={g: v["all"] for g, v in gm_graphs(q).items()},
+                gm_by_Ec3_band=dict(gm1=gm_bands("gm1", q), gm3=gm_bands("gm3", q)), p8_bottom_summary=p8_summary(q),
+                g3_cutoff_vs_plate_voltage=g3_cutoff_check(q), ge_typical_vs_raytheon_gm_umho=ge_gm_check(q))
+
+
+before_51, before_25 = before(P51), before(P25)
 
 res = dict(
-    model="dual_control params from results/fit_results.json (issue #51 refit, p.8 bottom Ib in the fit); "
-          "not refitted here. before_refit_25: the same checks with the #25 parameters",
+    model="dual_control params from results/fit_results.json (issue #55 refit: KR and XA free, p.11 top Ic2 and "
+          "p.8 bottom Ib in the fit); not refitted here. before_refit_51 / before_refit_25: the same checks with the "
+          "#51 / #25 parameters",
     gm_definition=f"plate current derivative, central difference +-{H} V; umho",
     log_error=f"ln((model + f)/(data + f)), f = {G0} umho for gm, {I0_MA} mA for currents",
     gm_check=dict(summary=gm_summary, per_graph=gm_check, by_Ec3_band=gm_by_band),
@@ -266,7 +273,7 @@ res = dict(
     p8_bottom=dict(summary=p8, per_curve=p8_per_curve, Ib_at_Eb_120_vs_transfer_graphs_mA=p8_vs_transfer,
                    g3_cutoff_vs_plate_voltage=g3_cutoff),
     ge_typical_vs_raytheon_gm_umho=ge_gm,
-    before_refit_25=before_25)
+    before_refit_51=before_51, before_refit_25=before_25)
 with open(os.path.join(HERE, "results", "heldout_checks.json"), "w") as f:
     json.dump(res, f, indent=1)
 
@@ -292,7 +299,7 @@ if __name__ == "__main__":
         ax.plot([r["Eb_V"] for r in rc], [r["I_mA"] for r in rc], "o", ms=2, color=col)
         eb = np.linspace(1, 440, 300)
         ax.plot(eb, M.dual_ip(-2.0, 120.0, rc[0]["Ec3_V"], eb, P) * 1e3, "-", color=col, lw=1)
-    ax.set_yscale("log"); ax.set_ylim(0.05, 10); ax.set_title("p8 bottom Ib, Ec3 = -1..-14 V (in the #51 fit)", fontsize=9)
+    ax.set_yscale("log"); ax.set_ylim(0.05, 10); ax.set_title("p8 bottom Ib, Ec3 = -1..-14 V (in the fit since #51)", fontsize=9)
     ax.grid(alpha=.3, which="both")
     plt.tight_layout(); os.makedirs(os.path.join(HERE, "plots"), exist_ok=True)
     plt.savefig(os.path.join(HERE, "plots", "heldout_gm.png"), dpi=100)
