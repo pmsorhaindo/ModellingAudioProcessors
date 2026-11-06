@@ -11,6 +11,7 @@ wave digital filters for comparison, before the 6AS6 stage and a C++ core.
 | `analysis.py` | shared measurements (DFT harmonics, THD, bias shift, recovery τ) | done |
 | `dk/` | nodal DK prototype in Python/NumPy with streaming half-band resamplers, Drive/Bias/Output, quality settings hq 16× / standard 8× (default) / eco 4× + small-cap pre-warp | all tests pass in every setting (small-signal worst 0.014 / 0.052 / 0.054 dB; plain 4× fails with 0.21 dB from trapezoidal warping) — see `dk/RESULTS.md` |
 | `dk6as6/`, `spice6as6/` | the 6AS6 stage (#26): same passives as the 12AX7 stage, screen / suppressor at Ec2 = 120 V / Ec3 = 0 V, the fit6as6 `dual_control` law (#55); nodal DK in `dk6as6/` (reusing `dk/`'s resampler, stage controls and tolerances), its same-model ngspice reference in `spice6as6/` | standard 8× and hq 16× pass the 12AX7 criteria against the same-model reference — see `dk6as6/RESULTS.md` |
+| `cpp/` | header-only realtime C++17 core of the 12AX7 DK stage (#19): fixed-size state, no allocation in `process()`, FTZ/DAZ guard, lock-free coefficient swap, #7 fallback, hq / standard / eco with the FIR resampler | reproduces `dk/results.json` in every setting (harmonics to 5.5e-8 dB, identical Newton histograms) — see `cpp/README.md` |
 | WDF version | — | next |
 
 **Circuit values are example values, not Culture Vulture values** (`dk/circuit.VALUES`, the single source for every
@@ -43,6 +44,9 @@ ngspice netlist, which `spice/run_refs.py` generates; see `spice/README.md`).
     powers are sk^γ / sk and sg^ξ / sg, so `currents()` makes 6 libm calls instead of 10 (8 → 4 in the issue's count).
     Ig and Ia are unchanged bit for bit; the Jacobian moves by ≤ 4 ulps (`dk/tests/test_triode.py`). Measured with
     `dk/bench_triode.py` (`dk/RESULTS.md`).
+13. Realtime C++ core (#19, `cpp/dk_core.h`): a header-only port of the stage, checked against vectors exported from
+    the Python stage, bit for bit against the live solver and triode, and by running `dk.validate` on it
+    (`cpp/README.md`). libm stays the default math (fast is 0.94–1.21× in the full process(), #18).
 
 ## Run
 ```bash
@@ -56,6 +60,7 @@ python -m dk.aliasing                              # regenerates the 64x aliasin
 python -m pytest -q                                # dk/tests + spice/tests (netlists vs VALUES, #4)
 python -m dk.aliasing_guard                        # CI aliasing guard: limits + baseline ratchet (~8 s on 8 cores)
 python -m dk.bench_triode                          # #16: triode eval before/after, Python + C (gcc) -> dk/bench_triode.json (~5 s)
+python -m pytest -q cpp/tests                      # #19: C++ core vs the Python stage (needs a C++17 compiler; ~20 s)
 python spice6as6/run_refs.py                       # 6AS6: regenerates spice6as6/reference_{dual,r51}.json
 python -m dk6as6.validate                          # 6AS6: -> dk6as6/results.json (standard, hq, plain 4x)
 python -m dk6as6.compare_fits                      # 6AS6: #51 vs #55 harmonics -> dk6as6/fit_comparison.json

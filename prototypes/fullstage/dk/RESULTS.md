@@ -566,3 +566,18 @@ pre-#60 tables. #60 changed table entries and coefficients, not operations, so t
 The issue hoped ~3–5× on the model eval; on this box the C double path is 1.12× (baseline ISA) to 1.39× (FMA).
 Kernel throughput of `fm_exp` alone can look better, but the full `currents` path still spends time on the
 non-transcendental arithmetic and call overhead. No float fast path (not needed for the double stage).
+
+## C++ core (#19)
+`cpp/dk_core.h` is the header-only realtime port of this stage; details, protocol and limitations are in
+`cpp/README.md`. Measured on this lab VM (gcc 14.4, x86-64, 6–7 Nov 2026):
+- `dk.validate.run` on the C++ core (`python -m cpp.validate_cpp` → `cpp/results.json`) reproduces this file in hq,
+  standard and eco. Op point identical. AC within 8.8e-9 dB, H2–H5 within 5.5e-8 dB, burst Vgk within 5.1e-9 V,
+  Newton histograms identical. Every `pass_vs_dz` criterion holds.
+- Sample vectors (`cpp/vectors.txt`): with Python's matrices loaded, the C++ stage agrees to 2.7e-11 V (tolerance
+  1e-9 V). With its own matrices it agrees to 7.7e-7 V (tolerance 1e-5 V). That gap is matrix rounding: Python's own
+  matrices put its output 2.5e-7 V from the exact-matrix stage (`python -m cpp.matrix_rounding`). `solve()` and the
+  triode currents are bit-identical to Python without FMA contraction.
+- `process()` makes 0 allocations (counted by replaced `operator new` / `delete` and interposed glibc `malloc`).
+- Speed: standard 8× costs 2.98–3.64 µs per base sample, one channel (5.7–7.0× realtime; Python 6.4 s/s). libm time /
+  fast time is 0.96–1.06× there (0.94–1.21× over all settings), so the core's default stays libm, as in the Python
+  stage.
