@@ -30,9 +30,9 @@ def key(q, flt, d):
     return f"{q}/{flt}/{d:g}V"
 
 
-def run_subset(workers=None):
+def run_subset(workers=None, triode_math="libm"):
     """measure() at every CI tone of every setting / filter / drive; a flat list of result dicts."""
-    jobs = [(q, flt, d, f, dict(window=AL.CI_WINDOW_S, settle=AL.CI_SETTLE_S))
+    jobs = [(q, flt, d, f, dict(window=AL.CI_WINDOW_S, settle=AL.CI_SETTLE_S, triode_math=triode_math))
             for (q, flt), tones in AL.CI_TONES.items() for d, fs in tones.items() for f in fs]
     if workers and workers > 1:
         with ProcessPoolExecutor(workers) as ex:
@@ -151,12 +151,16 @@ def main(argv=None):
     ap.add_argument("--json", help="write the full results (records, rows) here")
     ap.add_argument("--update-baseline", action="store_true", help="rewrite the baseline from this run")
     ap.add_argument("--reason", help="why the baseline changes (required with --update-baseline)")
+    ap.add_argument("--triode-math", default="libm", choices=("libm", "fast"),
+                    help="triode exp/log1p/pow: libm (default, what CI runs) or dk/fastmath.py (#18)")
     a = ap.parse_args(argv)
     if a.update_baseline and not (a.reason and a.reason.strip()):
         ap.error("--update-baseline needs --reason \"...\" (it is stored in the baseline; also put it in the commit)")
+    if a.update_baseline and a.triode_math != "libm":
+        ap.error("the baseline is measured with --triode-math libm (what CI runs)")
 
     t0 = time.perf_counter()
-    recs = run_subset(a.workers)
+    recs = run_subset(a.workers, a.triode_math)
     wall = time.perf_counter() - t0
     measured = worst_by_key(recs)
     base = load_baseline(a.baseline)

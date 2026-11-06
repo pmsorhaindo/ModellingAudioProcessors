@@ -68,9 +68,10 @@ def prewarp_minimax(factor=4, lo=10e3, hi=20e3):
                 without_prewarp_db=worst(None))
 
 
-def run(T=0.5, quality="standard", filt="fir"):
-    st = Stage(FS, quality=quality, filt=filt)
-    out = dict(criteria=CRIT, fs_base=FS, quality=quality, oversampling=st.os, prewarp_hz=st.prewarp_hz, filter=filt)
+def run(T=0.5, quality="standard", filt="fir", triode_math="libm"):
+    st = Stage(FS, quality=quality, filt=filt, triode_math=triode_math)
+    out = dict(criteria=CRIT, fs_base=FS, quality=quality, oversampling=st.os, prewarp_hz=st.prewarp_hz, filter=filt,
+               triode_math=triode_math)
     out["resampler"] = dict(latency_samples=st.latency_samples, latency_ms=st.rs.latency_ms,
                             macs_up_down=st.resampler_macs)
     dc = st.dc
@@ -95,7 +96,7 @@ def run(T=0.5, quality="standard", filt="fir"):
     out["sine"], times, its = {}, {}, {}
     n = int(T * FS)
     for a in AMPS:
-        s = Stage(FS, quality=quality, filt=filt)
+        s = Stage(FS, quality=quality, filt=filt, triode_math=triode_math)
         t = np.arange(n + s.latency_samples) / FS
         t0 = time.perf_counter()
         y = aligned(s, float(a) * np.sin(2 * np.pi * 1000 * t))["out"]
@@ -115,7 +116,7 @@ def run(T=0.5, quality="standard", filt="fir"):
             rows["thd_ref_pct"] = r["sine"][a]["thd_pct"]; rows["thd_dk_pct"] = out["sine"][a]["thd_pct"]
             o["harm"][a] = rows
 
-    s = Stage(FS, quality=quality, filt=filt)
+    s = Stage(FS, quality=quality, filt=filt, triode_math=triode_math)
     nb = int(0.12 * FS); tb = np.arange(nb + s.latency_samples) / FS
     xb = 4 * np.sin(2 * np.pi * 1000 * tb) * ((tb > 10e-3) & (tb < 30e-3))
     rb = aligned(s, xb, record=("out", "vgk"))
@@ -187,7 +188,18 @@ def summary(res):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--workers", type=int, default=os.cpu_count(), help="processes for the aliasing sweep")
+    ap.add_argument("--triode-math", default="libm", choices=("libm", "fast"),
+                    help="fast (#18): every setting with dk/fastmath.py's exp/log1p/pow against the same criteria, "
+                         "-> dk/results_fastmath.json (no aliasing sweep or prewarp search; results.json untouched)")
     args = ap.parse_args()
+    if args.triode_math == "fast":
+        res = {q: run(quality=q, triode_math="fast") for q in QUALITY}
+        json.dump(res, open(os.path.join(HERE, "results_fastmath.json"), "w"), indent=1, default=float)
+        for q in QUALITY:
+            print(f"== {q} (triode_math=fast)")
+            print(summary(res[q]))
+        bad = [q for q in QUALITY if not all(res[q]["pass_vs_dz"].values())]
+        sys.exit(f"criteria failed with fast math: {bad}" if bad else 0)
     res = {q: run(quality=q) for q in QUALITY}
     res["prewarp_minimax"] = prewarp_minimax()
     res["aliasing"] = aliasing(args.workers)
