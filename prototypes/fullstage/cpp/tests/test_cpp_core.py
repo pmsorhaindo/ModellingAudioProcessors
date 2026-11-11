@@ -180,3 +180,10 @@ def test_bench_records():
         assert {"host", "build", "state_before", "state_after", "meta", "results"} <= set(d), f
         assert d["meta"]["reps"] >= 5 and not d["build"]["dirty"], f
         _bench_rows_ok(d["results"], 72)
+
+
+def test_bench_flags_argv():
+    from cpp.bench import _argv_with_flags
+    assert _argv_with_flags(["--flags", "-O3", "--reps", "5"]) == ["--flags=-O3", "--reps", "5"]
+    assert _argv_with_flags(["--flags=-O3"]) == ["--flags=-O3"]
+    assert _argv_with_flags(["--flags", "-O3 -march=x86-64-v3"]) == ["--flags=-O3 -march=x86-64-v3"]

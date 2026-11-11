@@ -143,6 +143,24 @@ def table(rec):
     return "\n".join(lines)
 
 
+
+def _argv_with_flags(argv):
+    """Rewrite argv so `--flags -O3` is accepted as well as `--flags=-O3` and `--flags "-O3 -march=..."`.
+
+    argparse otherwise treats a following token that starts with `-` as a new option, and `--flags -O3`
+    fails with "expected one argument".
+    """
+    out, i = [], 0
+    while i < len(argv):
+        if argv[i] == "--flags" and i + 1 < len(argv):
+            out.append("--flags=" + argv[i + 1])
+            i += 2
+            continue
+        out.append(argv[i])
+        i += 1
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--flags", default=DEFAULT_FLAGS, help=f"optimisation / target flags (default {DEFAULT_FLAGS!r})")
@@ -151,7 +169,7 @@ def main():
     ap.add_argument("--only", help="comma-separated substrings of configuration names")
     ap.add_argument("--out", help="write the results file here (else stdout)")
     ap.add_argument("--table", metavar="RESULTS_JSON", help="print the markdown tables of a results file and exit")
-    a = ap.parse_args()
+    a = ap.parse_args(_argv_with_flags(sys.argv[1:]))
     if a.table:
         print(table(json.load(open(a.table))))
         return

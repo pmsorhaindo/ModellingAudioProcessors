@@ -1,18 +1,15 @@
 # cpp/ — per-instance CPU benchmark of the C++ core (#20)
 
-> **Status (11 Nov 2026): harness landed, official results pending.** No official timings are in this file yet.
-> - **Apple silicon (M1 MacBook Air):** to be run on that machine only after other apps are closed and the owner has
->   given a go-ahead (see "Running the official benchmark").
-> - **x86-64 Linux (shared Intel Xeon VM):** to be run on the VM with this harness and added below.
->
-> The informal #19 number (README "Speed", the removed `bench.json`) is **not** the #20 result (see the last section).
+> **Status (11 Nov 2026): official results are below**, in `cpp/bench_apple_m1.json` and
+> `cpp/bench_x86_64_linux.json`. The informal #19 number (README "Speed", the removed `bench.json`) is **not** the
+> #20 result (see the last section).
 
 | file | what |
 |---|---|
 | `bench.cpp` | the harness: includes `dk_core.h` unchanged, generates the test signal, times `Stage::process()`, prints JSON |
 | `bench.py` | the runner: builds `bench.cpp`, records host / build / power / thermal / load state, writes `bench_<machine>.json`, prints the tables below (standard library only, no numpy) |
 | `build.py` | the shared compile helper (also used by `validate_cpp.py` and the tests) |
-| `bench_<machine>.json` | committed results files, one per machine and build (none yet) |
+| `bench_apple_m1.json`, `bench_x86_64_linux.json` | committed official results, one file per machine |
 
 ## What is measured
 
@@ -55,7 +52,7 @@ near silence. It is still synthetic, not a recorded performance.
 
 ## Method
 
-* **Build** (`bench.py`, default `--flags -O3`): `$CXX -std=c++17 -Wall -Wextra -pedantic -pthread -O3`, without
+* **Build** (`bench.py`, default `-O3`): `$CXX -std=c++17 -Wall -Wextra -pedantic -pthread -O3`, without
   `-march`.
   - x86-64: the portable baseline (SSE2, no FMA). Pass `--flags "-O3 -march=x86-64-v3"` for an AVX2 / FMA build,
     as a separately named results file.
@@ -147,16 +144,18 @@ dirty records). Use the system Python 3; no packages are needed.
 2. Run:
    ```bash
    cd ~/Developer/ModellingAudioProcessors/prototypes/fullstage
-   python3 -m cpp.bench --flags -O3 --seconds 2 --reps 11 --out cpp/bench_apple_m1.json
+   python3 -m cpp.bench --flags=-O3 --seconds 2 --reps 11 --out cpp/bench_apple_m1.json
    python3 -m cpp.bench --table cpp/bench_apple_m1.json       # paste below, with the state_before / after summary
    ```
+   `--flags -O3` (unquoted) is also accepted; `--flags=-O3` and `--flags "-O3"` always were. The default is already
+   `-O3`.
 
 **x86-64 Linux, on the VM:**
 ```bash
 cd prototypes/fullstage
-taskset -c 2 python3 -m cpp.bench --flags -O3 --seconds 2 --reps 11 --out cpp/bench_x86_64_linux.json
+taskset -c 2 python3 -m cpp.bench --flags=-O3 --seconds 2 --reps 11 --out cpp/bench_x86_64_linux.json
 python3 -m cpp.bench --table cpp/bench_x86_64_linux.json
-# optional, as its own record: --flags "-O3 -march=x86-64-v3" --out cpp/bench_x86_64_linux_v3.json
+# optional, as its own record: --flags="-O3 -march=x86-64-v3" --out cpp/bench_x86_64_linux_v3.json
 ```
 
 **File names.** Results files are named `cpp/bench_<machine>[_<variant>].json`. `test_bench_records` checks every
@@ -168,15 +167,186 @@ deterministic. It never checks a timing.
 
 ## Results
 
-### Apple silicon — Apple M1 MacBook Air (MacBookAir10,1), macOS 15.6.1, Apple clang 17 — PENDING
+### Apple silicon — Apple M1 MacBook Air (MacBookAir10,1), macOS 15.6.1 (24G90), Apple clang 17.0.0
 
-_Not measured yet. To be filled from `cpp/bench_apple_m1.json` (`python3 -m cpp.bench --table ...`), together with
-the recorded power / thermal / load state, after the go-ahead._
+Recorded 11 Nov 2026, 21:20:49–21:27:07 CET (Europe/Amsterdam), from `cpp/bench_apple_m1.json`. Git `dbd6205`,
+`build.dirty` false.
 
-### x86-64 Linux — shared Intel Xeon VM — PENDING
+- **CPU:** Apple M1, 4 P-cores + 4 E-cores, 16 GB.
+- **Compiler:** Apple clang 17.0.0 (clang-1700.6.3.2) as `/usr/bin/g++`, `-std=c++17 -Wall -Wextra -pedantic -pthread -O3`.
+  The default target is already `apple-m1`.
+- **Harness:** 72 configurations, 11 timed passes after one warm-up, 1.99467 s (95 744 samples) per pass, round-robin,
+  `QOS_CLASS_USER_INTERACTIVE`. Counters: `proc_pid_rusage` RUSAGE_INFO_V6 (`ri_cycles` / `ri_instructions` /
+  `ri_pcycles`). All 72 outputs were bit-identical across passes.
+- **Power:** AC power, Low Power Mode off, no thermal warning recorded. Battery 69 % charging at the start, 74 %
+  charging at the end.
+- **Load:** 10.36, 5.09, 4.05 at the start (1 / 5 / 15 min); 2.88, 3.53, 3.64 at the end. The 1-minute load was
+  already high when the run began. Other user apps had been closed after a go-ahead at 21:19 CET, but WindowServer
+  and this Grok Bot session were still using CPU. Treat the wall-time figures, especially the per-block percentiles
+  and the two `x2` outliers below, with that in mind. Cycle counts exclude preemption and are the stabler figure
+  here.
+- **Clock and preemption:** `ghz_on_cpu` (cycles / thread CPU ns, median) ranged from 3.156 to 3.170
+  (P-core max is 3.2 GHz). `cpu_on_fraction` ranged from 0.9940 to 0.9977.
+- **P-cores:** `p_core_fraction_min` was 0.9673–0.9979. A cycle figure marked * had at least
+  one pass under 99 % of its cycles on P-cores.
+- **Spread to note:** the stereo-equivalent (`x2`) at eco / fast / 8 V was 17.04 % of a core at block 64 vs 14.62 %
+  at block 512; at hq / fast / 0.5 V it was 44.12 % vs 50.93 %. The matching `x1` rows do not show that gap. These
+  are reported as measured.
 
-_Not measured yet. To be filled from `cpp/bench_x86_64_linux.json` by the run on the VM, together with the CPU model,
-the governor, whether counters were available (`meta.counters`, `counter_error`) and the load state._
+**one mono instance** — % of one core at 48 kHz real time (median), ns per base-rate sample (median, min–max over passes), cycles per base-rate sample (median; * = not all on P-cores)
+
+| setting | math | peak | % core b64 | % core b512 | ns b64 | ns b512 | cycles b64 | cycles b512 | Newton it. |
+|---|---|---|---|---|---|---|---|---|---|
+| eco 4× | libm | 0.5 V | 6.53 | 6.51 | 1361 (1348–1374) | 1356 (1348–1364) | 4283 | 4275 | 2.22 |
+| eco 4× | libm | 2 V | 7.17 | 7.14 | 1493 (1487–1552) | 1488 (1480–1501) | 4709 | 4700 | 2.56 |
+| eco 4× | libm | 8 V | 7.91 | 7.92 | 1648 (1640–1672) | 1650 (1636–1655) | 5201 | 5195 | 2.97 |
+| eco 4× | fast | 0.5 V | 5.94 | 5.94 | 1237 (1234–1246) | 1237 (1225–1341) | 3907 | 3896* | 2.22 |
+| eco 4× | fast | 2 V | 6.56 | 6.55 | 1367 (1364–1387) | 1365 (1357–1381) | 4314 | 4312 | 2.56 |
+| eco 4× | fast | 8 V | 7.32 | 7.30 | 1526 (1520–1547) | 1521 (1516–1540) | 4810 | 4806 | 2.97 |
+| standard 8× | libm | 0.5 V | 12.26 | 12.22 | 2553 (2536–2581) | 2546 (2538–2574) | 8039 | 8030 | 2.04 |
+| standard 8× | libm | 2 V | 12.78 | 12.73 | 2663 (2634–2833) | 2652 (2632–2667) | 8394* | 8355 | 2.18 |
+| standard 8× | libm | 8 V | 14.26 | 14.33 | 2970 (2959–3385) | 2984 (2972–3017) | 9382* | 9404 | 2.60 |
+| standard 8× | fast | 0.5 V | 11.11 | 11.12 | 2315 (2292–2328) | 2317 (2291–2363) | 7307 | 7298* | 2.04 |
+| standard 8× | fast | 2 V | 11.68 | 11.65 | 2434 (2413–2470) | 2426 (2410–2811) | 7654 | 7634* | 2.18 |
+| standard 8× | fast | 8 V | 13.19 | 13.23 | 2748 (2726–3143) | 2756 (2729–2784) | 8657* | 8672 | 2.60 |
+| hq 16× | libm | 0.5 V | 24.26 | 24.26 | 5055 (5011–5110) | 5053 (5007–5365) | 15928 | 15896* | 2.00 |
+| hq 16× | libm | 2 V | 24.44 | 24.43 | 5092 (5083–5150) | 5090 (5049–5120) | 16046 | 16042 | 2.03 |
+| hq 16× | libm | 8 V | 25.95 | 25.95 | 5406 (5372–5459) | 5407 (5370–5777) | 17054 | 17018* | 2.25 |
+| hq 16× | fast | 0.5 V | 22.01 | 22.08 | 4586 (4572–4610) | 4599 (4551–5025) | 14478 | 14448* | 2.00 |
+| hq 16× | fast | 2 V | 22.77 | 22.24 | 4745 (4730–4799) | 4634 (4609–5062) | 14953 | 14624* | 2.03 |
+| hq 16× | fast | 8 V | 23.96 | 23.91 | 4991 (4929–5375) | 4981 (4942–5443) | 15685* | 15671 | 2.25 |
+
+**two mono instances, one after the other (stereo-equivalent)** — % of one core at 48 kHz real time (median), ns per base-rate sample (median, min–max over passes), cycles per base-rate sample (median; * = not all on P-cores)
+
+| setting | math | peak | % core b64 | % core b512 | ns b64 | ns b512 | cycles b64 | cycles b512 | Newton it. |
+|---|---|---|---|---|---|---|---|---|---|
+| eco 4× | libm | 0.5 V | 13.02 | 13.01 | 2713 (2698–2728) | 2711 (2684–3082) | 8556 | 8522* | 2.22 |
+| eco 4× | libm | 2 V | 14.31 | 14.30 | 2981 (2957–3474) | 2980 (2962–2991) | 9380* | 9384 | 2.56 |
+| eco 4× | libm | 8 V | 15.86 | 15.80 | 3303 (3277–3641) | 3291 (3269–3374) | 10386* | 10366 | 2.97 |
+| eco 4× | fast | 0.5 V | 11.86 | 11.83 | 2472 (2449–2726) | 2464 (2451–2814) | 7771* | 7765* | 2.22 |
+| eco 4× | fast | 2 V | 13.10 | 13.16 | 2730 (2715–3162) | 2741 (2700–3109) | 8612* | 8602* | 2.56 |
+| eco 4× | fast | 8 V | 17.04 | 14.62 | 3549 (3528–3871) | 3045 (3020–3072) | 11177* | 9591 | 2.97 |
+| standard 8× | libm | 0.5 V | 24.50 | 24.41 | 5105 (5075–5492) | 5086 (5059–5133) | 16063 | 16036 | 2.04 |
+| standard 8× | libm | 2 V | 25.50 | 25.53 | 5312 (5270–5847) | 5318 (5275–5682) | 16703* | 16717* | 2.18 |
+| standard 8× | libm | 8 V | 28.50 | 28.50 | 5938 (5879–5965) | 5937 (5892–5969) | 18685 | 18674 | 2.60 |
+| standard 8× | fast | 0.5 V | 22.26 | 22.16 | 4637 (4614–5005) | 4618 (4590–4634) | 14645* | 14558 | 2.04 |
+| standard 8× | fast | 2 V | 23.20 | 23.19 | 4832 (4810–5182) | 4830 (4799–5177) | 15231* | 15216* | 2.18 |
+| standard 8× | fast | 8 V | 26.26 | 26.21 | 5471 (5440–5841) | 5461 (5447–5490) | 17234* | 17231 | 2.60 |
+| hq 16× | libm | 0.5 V | 48.52 | 48.65 | 10109 (10060–10561) | 10136 (10070–10538) | 31855 | 31833 | 2.00 |
+| hq 16× | libm | 2 V | 49.52 | 48.72 | 10316 (10216–10728) | 10150 (10109–10599) | 32367 | 32024 | 2.03 |
+| hq 16× | libm | 8 V | 51.97 | 51.71 | 10826 (10740–11178) | 10774 (10697–11148) | 33997 | 33935 | 2.25 |
+| hq 16× | fast | 0.5 V | 44.12 | 50.93 | 9191 (9153–9546) | 10610 (10574–11064) | 28951 | 33441 | 2.00 |
+| hq 16× | fast | 2 V | 44.54 | 44.52 | 9279 (9250–9603) | 9276 (9223–9710) | 29229 | 29207* | 2.03 |
+| hq 16× | fast | 8 V | 47.57 | 47.56 | 9910 (9876–10076) | 9908 (9884–10300) | 31240 | 31213 | 2.25 |
+
+**one mono instance, per block** — block time as % of the block's real-time period (b64 = 1.33 ms, b512 = 10.67 ms), p50 / p99 over all blocks of all passes
+
+| setting | math | peak | b64 p50 | b64 p99 | b512 p50 | b512 p99 |
+|---|---|---|---|---|---|---|
+| eco | libm | 0.5 V | 6.2 | 8.8 | 6.3 | 8.1 |
+| eco | libm | 2 V | 7.3 | 9.7 | 7.2 | 8.8 |
+| eco | libm | 8 V | 7.8 | 10.7 | 7.8 | 10.0 |
+| eco | fast | 0.5 V | 5.7 | 7.9 | 5.7 | 7.8 |
+| eco | fast | 2 V | 6.6 | 8.5 | 6.6 | 8.2 |
+| eco | fast | 8 V | 7.2 | 9.9 | 7.2 | 9.3 |
+| standard | libm | 0.5 V | 11.9 | 15.8 | 12.0 | 14.6 |
+| standard | libm | 2 V | 12.2 | 16.8 | 12.3 | 16.0 |
+| standard | libm | 8 V | 14.3 | 18.8 | 14.4 | 17.3 |
+| standard | fast | 0.5 V | 10.7 | 14.1 | 10.9 | 13.3 |
+| standard | fast | 2 V | 11.2 | 15.4 | 11.2 | 15.0 |
+| standard | fast | 8 V | 13.2 | 17.5 | 13.3 | 16.1 |
+| hq | libm | 0.5 V | 23.8 | 29.9 | 23.9 | 26.8 |
+| hq | libm | 2 V | 23.8 | 30.4 | 24.0 | 28.7 |
+| hq | libm | 8 V | 25.2 | 33.0 | 25.4 | 31.6 |
+| hq | fast | 0.5 V | 21.6 | 26.3 | 21.7 | 24.6 |
+| hq | fast | 2 V | 22.2 | 27.9 | 21.9 | 26.1 |
+| hq | fast | 8 V | 23.1 | 31.5 | 23.2 | 29.4 |
+
+### x86-64 Linux — shared Intel Xeon VM, conda-forge gcc 14.4.0
+
+Recorded 11 Nov 2026, 20:52:33–20:59:07 CET (Europe/Amsterdam), from `cpp/bench_x86_64_linux.json`. Git `dbd6205`,
+`build.dirty` false. The machine is a shared KVM guest; the numbers are indicative, not a dedicated-host result.
+
+- **CPU:** `Intel(R) Xeon(R) Processor`, 8 cores, 1 thread per core, hypervisor KVM (full). `lscpu` does not expose
+  a clock or a more specific model. L1d 384 KiB (8 instances), L2 16 MiB (8 instances), L3 320 MiB. The cpufreq
+  governor and thermal zone were not exposed.
+- **Compiler:** conda-forge gcc 14.4.0-7 (`x86_64-conda-linux-gnu-g++`), `-std=c++17 -Wall -Wextra -pedantic -pthread -O3`,
+  no `-march` (portable SSE2 baseline, no FMA).
+- **Harness:** the same 72 configurations, 11 timed passes after one warm-up, 1.99467 s per pass, round-robin, pinned
+  with `taskset -c 2` (`meta.sched`: affinity mask has 1 CPU). All 72 outputs were bit-identical across passes.
+- **Counters:** unavailable (`meta.counter_error`: `No such file or directory` from `perf_event_open`). Cycle and
+  instruction counts are `null`; they were not estimated from time × a clock.
+- **Load:** 0.31, 0.45, 0.51 at the start (1 / 5 / 15 min); 1.21, 1.00, 0.76 at the end. `cpu_on_fraction` ranged
+  from 0.9999 to 1.0000.
+
+**one mono instance** — % of one core at 48 kHz real time (median), ns per base-rate sample (median, min–max over passes), cycles per base-rate sample (median; * = not all on P-cores)
+
+| setting | math | peak | % core b64 | % core b512 | ns b64 | ns b512 | cycles b64 | cycles b512 | Newton it. |
+|---|---|---|---|---|---|---|---|---|---|
+| eco 4× | libm | 0.5 V | 6.76 | 6.76 | 1408 (1402–1554) | 1408 (1397–1415) | — | — | 2.22 |
+| eco 4× | libm | 2 V | 7.42 | 7.40 | 1546 (1540–1615) | 1542 (1534–1586) | — | — | 2.56 |
+| eco 4× | libm | 8 V | 8.03 | 8.03 | 1673 (1662–1723) | 1674 (1663–1756) | — | — | 2.97 |
+| eco 4× | fast | 0.5 V | 6.21 | 6.26 | 1294 (1284–1363) | 1303 (1284–1333) | — | — | 2.22 |
+| eco 4× | fast | 2 V | 6.84 | 6.86 | 1424 (1412–1615) | 1430 (1415–1450) | — | — | 2.56 |
+| eco 4× | fast | 8 V | 7.62 | 7.58 | 1587 (1573–1684) | 1580 (1572–1662) | — | — | 2.97 |
+| standard 8× | libm | 0.5 V | 12.90 | 12.99 | 2687 (2677–2824) | 2706 (2670–3507) | — | — | 2.04 |
+| standard 8× | libm | 2 V | 13.53 | 13.36 | 2819 (2766–2952) | 2783 (2762–2943) | — | — | 2.18 |
+| standard 8× | libm | 8 V | 14.64 | 14.81 | 3049 (3020–3084) | 3085 (3023–3182) | — | — | 2.60 |
+| standard 8× | fast | 0.5 V | 11.88 | 11.88 | 2475 (2450–2542) | 2476 (2451–2549) | — | — | 2.04 |
+| standard 8× | fast | 2 V | 12.40 | 12.30 | 2584 (2566–2713) | 2562 (2550–2625) | — | — | 2.18 |
+| standard 8× | fast | 8 V | 13.81 | 13.82 | 2877 (2870–2989) | 2880 (2867–3006) | — | — | 2.60 |
+| hq 16× | libm | 0.5 V | 25.66 | 25.43 | 5346 (5260–5544) | 5299 (5252–5441) | — | — | 2.00 |
+| hq 16× | libm | 2 V | 25.88 | 25.45 | 5392 (5288–6126) | 5302 (5276–5373) | — | — | 2.03 |
+| hq 16× | libm | 8 V | 26.85 | 26.49 | 5593 (5486–6263) | 5519 (5468–6149) | — | — | 2.25 |
+| hq 16× | fast | 0.5 V | 23.41 | 23.33 | 4878 (4837–4971) | 4860 (4834–5070) | — | — | 2.00 |
+| hq 16× | fast | 2 V | 23.61 | 23.58 | 4919 (4896–5295) | 4913 (4900–5580) | — | — | 2.03 |
+| hq 16× | fast | 8 V | 25.02 | 24.98 | 5213 (5182–5410) | 5204 (5193–5942) | — | — | 2.25 |
+
+**two mono instances, one after the other (stereo-equivalent)** — % of one core at 48 kHz real time (median), ns per base-rate sample (median, min–max over passes), cycles per base-rate sample (median; * = not all on P-cores)
+
+| setting | math | peak | % core b64 | % core b512 | ns b64 | ns b512 | cycles b64 | cycles b512 | Newton it. |
+|---|---|---|---|---|---|---|---|---|---|
+| eco 4× | libm | 0.5 V | 13.45 | 13.47 | 2802 (2793–3035) | 2807 (2795–3450) | — | — | 2.22 |
+| eco 4× | libm | 2 V | 14.80 | 14.92 | 3083 (3070–3797) | 3108 (3070–3388) | — | — | 2.56 |
+| eco 4× | libm | 8 V | 16.06 | 16.09 | 3345 (3324–3615) | 3353 (3319–3739) | — | — | 2.97 |
+| eco 4× | fast | 0.5 V | 12.39 | 12.41 | 2582 (2556–2724) | 2586 (2563–3372) | — | — | 2.22 |
+| eco 4× | fast | 2 V | 13.93 | 13.61 | 2902 (2829–3158) | 2836 (2819–2970) | — | — | 2.56 |
+| eco 4× | fast | 8 V | 15.13 | 15.12 | 3152 (3138–3397) | 3150 (3129–3366) | — | — | 2.97 |
+| standard 8× | libm | 0.5 V | 25.87 | 25.77 | 5390 (5331–6006) | 5369 (5317–6597) | — | — | 2.04 |
+| standard 8× | libm | 2 V | 27.14 | 27.19 | 5653 (5527–6020) | 5665 (5518–5956) | — | — | 2.18 |
+| standard 8× | libm | 8 V | 29.34 | 29.27 | 6113 (6051–6905) | 6098 (6042–6312) | — | — | 2.60 |
+| standard 8× | fast | 0.5 V | 24.00 | 23.61 | 5001 (4908–5288) | 4919 (4900–5706) | — | — | 2.04 |
+| standard 8× | fast | 2 V | 24.72 | 24.58 | 5150 (5086–5226) | 5121 (5089–5442) | — | — | 2.18 |
+| standard 8× | fast | 8 V | 27.65 | 27.62 | 5761 (5737–5799) | 5754 (5722–5975) | — | — | 2.60 |
+| hq 16× | libm | 0.5 V | 51.05 | 50.95 | 10635 (10490–10927) | 10614 (10523–10858) | — | — | 2.00 |
+| hq 16× | libm | 2 V | 51.32 | 51.01 | 10692 (10612–11539) | 10627 (10574–10819) | — | — | 2.03 |
+| hq 16× | libm | 8 V | 52.86 | 52.67 | 11012 (10943–11482) | 10974 (10912–11393) | — | — | 2.25 |
+| hq 16× | fast | 0.5 V | 46.81 | 46.77 | 9753 (9668–10236) | 9744 (9661–10551) | — | — | 2.00 |
+| hq 16× | fast | 2 V | 46.84 | 46.95 | 9759 (9731–10184) | 9782 (9734–10251) | — | — | 2.03 |
+| hq 16× | fast | 8 V | 50.08 | 50.24 | 10434 (10364–11247) | 10467 (10344–11064) | — | — | 2.25 |
+
+**one mono instance, per block** — block time as % of the block's real-time period (b64 = 1.33 ms, b512 = 10.67 ms), p50 / p99 over all blocks of all passes
+
+| setting | math | peak | b64 p50 | b64 p99 | b512 p50 | b512 p99 |
+|---|---|---|---|---|---|---|
+| eco | libm | 0.5 V | 6.5 | 9.1 | 6.5 | 8.5 |
+| eco | libm | 2 V | 7.5 | 9.7 | 7.5 | 9.0 |
+| eco | libm | 8 V | 7.9 | 10.8 | 7.9 | 10.6 |
+| eco | fast | 0.5 V | 6.0 | 8.7 | 6.1 | 8.0 |
+| eco | fast | 2 V | 7.0 | 9.1 | 6.9 | 8.7 |
+| eco | fast | 8 V | 7.5 | 10.3 | 7.5 | 9.6 |
+| standard | libm | 0.5 V | 12.6 | 16.1 | 12.6 | 15.8 |
+| standard | libm | 2 V | 12.8 | 17.8 | 13.2 | 17.1 |
+| standard | libm | 8 V | 14.6 | 18.9 | 14.8 | 18.4 |
+| standard | fast | 0.5 V | 11.5 | 14.6 | 11.5 | 14.3 |
+| standard | fast | 2 V | 11.8 | 16.4 | 11.9 | 15.7 |
+| standard | fast | 8 V | 13.9 | 18.0 | 14.0 | 16.8 |
+| hq | libm | 0.5 V | 24.9 | 31.4 | 25.0 | 30.0 |
+| hq | libm | 2 V | 24.9 | 32.6 | 25.0 | 29.3 |
+| hq | libm | 8 V | 25.8 | 35.6 | 26.1 | 34.4 |
+| hq | fast | 0.5 V | 22.9 | 28.5 | 23.0 | 26.9 |
+| hq | fast | 2 V | 23.1 | 29.9 | 23.1 | 27.3 |
+| hq | fast | 8 V | 24.3 | 32.3 | 24.4 | 36.8 |
 
 ## The earlier informal number (#19) is not this benchmark
 
