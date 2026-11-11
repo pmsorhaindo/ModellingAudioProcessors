@@ -6,7 +6,6 @@
  *                                  stdin: float64 base-rate input; stdout: float64 output (then, with "vgk", the
  *                                  internal-rate Vgk); stderr: one JSON line (pack, op point, latency, stats).
  *                                  Used by cpp/tests/test_cpp_core.py to run dk.validate on the core.
- *   test_core bench                ns per base-rate sample of process() (cpp/README.md)
  *   test_core solve | triode       stdin rows -> stdout: solve() / the triode currents, for the bit-exact comparison
  *                                  with the live Python functions (cpp/tests/test_cpp_core.py)
  *   test_core swap                 the threaded coefficient-swap test alone (for a -fsanitize=thread build)
@@ -580,7 +579,7 @@ static void test_float_io() {
     delete a; delete b;
 }
 
-// ---- cli / bench ---------------------------------------------------------------------------------------------
+// ---- cli ---------------------------------------------------------------------------------------------------
 static void json_mat(std::FILE* f, const char* k, const double* a, int n) {
     std::fprintf(f, "\"%s\": [", k);
     for (int i = 0; i < n; ++i) std::fprintf(f, "%s%.17g", i ? ", " : "", a[i]);
@@ -665,39 +664,8 @@ static int cli(int argc, char** argv) {
     return 0;
 }
 
-static int bench() {
-    const int N = 48000, BLOCK = 64, REPEAT = 7;
-    std::vector<double> x(N), y(N);
-    std::printf("{\"method\": \"process() on 1 s of a 1 kHz sine at 48 kHz in blocks of %d, median of %d runs after one "
-                "warm-up, steady_clock; ns per base-rate sample\"", BLOCK, REPEAT);
-    const std::pair<const char*, Quality> qs[] = {{"hq", HQ}, {"standard", STANDARD}, {"eco", ECO}};
-    for (const auto& q : qs)
-        for (TriodeMath m : {TriodeMath::libm, TriodeMath::fast})
-            for (double a : {2.0, 8.0}) {
-                for (int i = 0; i < N; ++i) x[i] = a * std::sin(2 * PI * 1000.0 * i / 48000.0);
-                Stage* s = new Stage;
-                s->prepare(48000.0, q.second, 1.0, m);
-                std::vector<double> t;
-                for (int r = 0; r <= REPEAT; ++r) {
-                    s->reset();
-                    const auto t0 = std::chrono::steady_clock::now();
-                    for (int i = 0; i < N; i += BLOCK) s->process(&x[i], &y[i], BLOCK);
-                    const auto t1 = std::chrono::steady_clock::now();
-                    if (r) t.push_back(std::chrono::duration<double, std::nano>(t1 - t0).count() / N);
-                }
-                std::sort(t.begin(), t.end());
-                const double it = double(s->stats().iterations) / double(s->stats().samples);
-                std::printf(", \"%s_%s_%gV\": {\"ns_per_sample\": %.1f, \"realtime_x\": %.1f, \"newton_mean\": %.3f}",
-                            q.first, m == TriodeMath::fast ? "fast" : "libm", a, t[t.size() / 2], 1e9 / 48000.0 / t[t.size() / 2], it);
-                delete s;
-            }
-    std::printf("}\n");
-    return 0;
-}
-
 int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "cli") return cli(argc, argv);
-    if (argc > 1 && std::string(argv[1]) == "bench") return bench();
     if (argc > 1 && std::string(argv[1]) == "solve") return cli_solve();
     if (argc > 1 && std::string(argv[1]) == "triode") return cli_triode();
     if (argc > 1 && std::string(argv[1]) == "swap") {      // the threaded swap test alone (for -fsanitize=thread)

@@ -9,9 +9,12 @@ clang++): skipped without one, except under CI (CI set in the environment), wher
                            search) even where it converges to the same root
   test_vectors_are_fresh   the committed cpp/vectors.txt still matches what the Python stage produces now
   test_validate_reproduced dk.validate.run on the C++ core against dk/results.json, every setting (cpp/validate_cpp.py)
+  test_bench_smoke         cpp/bench.cpp (#20) builds and runs every configuration once on 512 samples, output
+                           deterministic; no timing is checked (cpp/BENCHMARK.md)
+  test_bench_records       the committed cpp/bench_*.json results files (if any yet) are complete and well formed
 Run from prototypes/fullstage:  python -m pytest -q cpp/tests   (~15 s)
 """
-import json, os, platform, signal, subprocess, sys
+import glob, json, os, platform, signal, subprocess, sys
 import numpy as np
 import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -25,12 +28,12 @@ VECTORS = os.path.join(ROOT, "cpp", "vectors.txt")
 X86 = platform.machine().lower() in ("x86_64", "amd64")
 
 
-def _exe(flags=("-O2",), defines=()):
+def _exe(flags=("-O2",), defines=(), name="test_core"):
     if VC.compiler() is None:
         if os.environ.get("CI"):
             pytest.fail("no C++ compiler on CI (g++ expected on the runner)")
         pytest.skip("no C++ compiler (set CXX)")
-    return VC.build(flags, defines)
+    return VC.build(flags, defines, name)
 
 
 def _run_vectors(exe):
@@ -143,3 +146,37 @@ def test_validate_reproduced(quality):
     d = VC.compare(r, _REF[quality])
     assert VC.check(d) == [], d
     assert all(r["pass_vs_dz"].values())
+
+
+BENCH_KEYS = {"name", "quality", "os", "math", "level_v", "block", "instances", "ns_per_sample", "ns_min", "ns_max",
+              "pct_core", "block_pct_p50", "block_pct_p99", "block_pct_max", "cpu_on_fraction", "cycles_per_sample",
+              "instr_per_sample", "ghz_on_cpu", "newton_mean", "nonconverged", "deterministic"}
+
+
+def _bench_rows_ok(rows, n_expected):
+    assert len(rows) == n_expected and len({r["name"] for r in rows}) == n_expected
+    for r in rows:
+        assert BENCH_KEYS <= set(r), r["name"]
+        assert r["deterministic"] and r["ns_per_sample"] > 0 and r["newton_mean"] >= 1.0, r
+
+
+def test_bench_smoke():
+    exe = _exe(name="bench")
+    names = subprocess.run([exe, "--list"], capture_output=True, text=True, check=True).stdout.split()
+    assert len(names) == 3 * 2 * 3 * 2 * 2          # quality x math x peak x block x instances
+    p = subprocess.run([exe, "--seconds", "0.011", "--reps", "1"], capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr[-2000:]      # 1: an output differed between passes
+    d = json.loads(p.stdout)
+    assert d["meta"]["samples_per_pass"] == 512
+    _bench_rows_ok(d["results"], len(names))
+
+
+def test_bench_records():
+    files = sorted(glob.glob(os.path.join(ROOT, "cpp", "bench_*.json")))
+    if not files:
+        pytest.skip("no cpp/bench_*.json committed yet (cpp/BENCHMARK.md, 'Running the official benchmark')")
+    for f in files:
+        d = json.load(open(f))
+        assert {"host", "build", "state_before", "state_after", "meta", "results"} <= set(d), f
+        assert d["meta"]["reps"] >= 5 and not d["build"]["dirty"], f
+        _bench_rows_ok(d["results"], 72)
