@@ -9,7 +9,7 @@ checked against Python's sample by sample in cpp/test_core.cpp). compare() lists
 dk/results.json; LIMITS are the tolerances cpp/tests/test_cpp_core.py asserts.
 Run from prototypes/fullstage:  python -m cpp.validate_cpp   (~10 s; builds test_core, writes cpp/results.json)
 """
-import json, os, platform, shutil, subprocess, sys, tempfile
+import json, os, subprocess, sys
 import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -18,35 +18,7 @@ from dk import circuit, validate
 from dk.resample import Resampler
 from dk.stage import QUALITY
 from dk.triode import DZ_12AX7_RSD1, EVAL
-
-CXXFLAGS = ["-std=c++17", "-Wall", "-Wextra", "-pedantic", "-pthread"]
-
-
-def compiler():
-    """$CXX, else g++ / c++ / clang++ on PATH, else None."""
-    for c in (os.environ.get("CXX"), "g++", "c++", "clang++"):
-        if c and shutil.which(c):
-            return shutil.which(c)
-    return None
-
-
-_BUILT = {}
-
-
-def build(flags=("-O2",), defines=(), name="test_core"):
-    """Compile cpp/test_core.cpp with flags (cached per flags); returns the executable's path."""
-    key = (tuple(flags), tuple(defines))
-    if key not in _BUILT:
-        cxx = compiler()
-        if cxx is None:
-            raise FileNotFoundError("no C++ compiler (set CXX)")
-        exe = os.path.join(tempfile.mkdtemp(prefix="dkcore_"), name)
-        link = ["-static-libstdc++", "-static-libgcc"] if platform.system() == "Linux" and "-fsanitize=thread" not in flags else []
-        cmd = [cxx, *CXXFLAGS, *flags, *(f"-D{d}" for d in defines), "-o", exe, os.path.join(HERE, "test_core.cpp"), *link]
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
-        _BUILT[key] = exe
-    return _BUILT[key]
-
+from cpp.build import CXXFLAGS, compiler, build  # noqa: F401 (re-exported for cpp/tests)
 
 EXE = None          # test_core used by CppStage (set by run(), or by the caller)
 

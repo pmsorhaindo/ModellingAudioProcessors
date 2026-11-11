@@ -7,13 +7,15 @@ stays the reference. Everything here is checked against it.
 | file | what |
 |---|---|
 | `dk_core.h` | the core: `dkcore::Stage`, `build_coeffs`, `solve`, `Triode`, `Resampler`, `ScopedFlushDenormals`, `TripleBuffer` |
-| `test_core.cpp` | test harness: vector tests, allocation counting, FTZ, threaded swap, #7 fallback; plus `cli` / `solve` / `triode` / `bench` modes |
+| `test_core.cpp` | test harness: vector tests, allocation counting, FTZ, threaded swap, #7 fallback; plus `cli` / `solve` / `triode` modes |
 | `export_vectors.py` | writes `vectors.txt` from the Python stage (`python -m cpp.export_vectors`, ~3 s) |
 | `vectors.txt` | the reference vectors (generated, exact shortest-repr floats, 365 kB) |
 | `validate_cpp.py` | runs `dk.validate.run` on the C++ core and compares it to `dk/results.json`; writes `results.json` |
 | `matrix_rounding.py` | the measurement behind the "built" tolerance below |
 | `tests/test_cpp_core.py` | the pytest that CI runs (part of `python -m pytest -q` in `prototypes/fullstage`) |
-| `results.json`, `bench.json` | committed runs of `validate_cpp` and `test_core bench` (6–7 Nov 2026, this lab VM) |
+| `results.json` | committed run of `validate_cpp` (6–7 Nov 2026, this lab VM) |
+| `bench.cpp`, `bench.py`, `BENCHMARK.md` | the #20 per-instance CPU benchmark: harness, runner, method and results |
+| `build.py` | the compile helper shared by `validate_cpp.py`, `bench.py` and the tests |
 
 ## What the core is
 
@@ -33,7 +35,7 @@ stays the reference. Everything here is checked against it.
 * **Math path.** The default is `TriodeMath::libm`, as in Python. `TriodeMath::fast` uses `../dk/fastmath.h` (#18).
   It is chosen per pack and dispatched once per block, so the libm path has no per-sample switch. The DC solve
   always uses libm. **The default stays libm**: in the full `process()` here, libm time / fast time is
-  0.94–1.21× (standard 0.96–1.06×, `bench.json` below). That is no measured justification to switch.
+  0.94–1.21× (standard 0.96–1.06×, the informal #19 run below). That is no measured justification to switch.
 * **Do not build with `-ffast-math`.** The header `#error`s, because the fallback compares NaN / inf.
 
 ### Realtime protocol
@@ -76,7 +78,7 @@ fails the build instead. The core adds one rule of its own: NaN / inf input samp
 
 ## Tests and tolerances
 
-`python -m pytest -q cpp/tests` (from `prototypes/fullstage`, ~20 s, 9 tests) compiles `test_core.cpp` with `$CXX`,
+`python -m pytest -q cpp/tests` (from `prototypes/fullstage`, ~20 s, 11 tests) compiles `test_core.cpp` with `$CXX`,
 else `g++` / `c++` / `clang++`. Without a compiler it skips, except under CI (`CI` set), where it fails. GitHub's
 ubuntu runners have g++, so the existing `test (fullstage)` job runs these tests with **no `ci.yml` change**.
 
@@ -88,6 +90,7 @@ ubuntu runners have g++, so the existing `test (fullstage)` job runs these tests
 | `test_bit_exact_solver` / `_triode` | `solve()` on the vector rows + 2000 random hard problems, and the currents (libm, currents_only, fast) on 3000 random points, equal **bit for bit** to the live Python functions on the same machine (`-O2 -ffp-contract=off`) |
 | `test_vectors_are_fresh` | the committed `vectors.txt` still matches what the Python stage produces now |
 | `test_validate_reproduced[hq/standard/eco]` | `dk.validate.run` on the C++ core reproduces `dk/results.json` within `validate_cpp.LIMITS`, and every `pass_vs_dz` criterion holds |
+| `test_bench_smoke` / `test_bench_records` | `bench.cpp` (#20) builds and runs all 72 configurations once on 512 samples with bit-identical output across passes (no timing checked); any committed `bench_*.json` is complete (skipped while there is none) |
 
 **Vectors** (`export_vectors.py`; tolerances in `test_core.cpp`). The tolerances were set from the worst error measured
 over four x86-64 builds: gcc 14 `-O0`, `-O2`, `-O2 -march=x86-64-v3` and `-O3 -march=native`. A fifth run nudged
@@ -167,9 +170,14 @@ Not caught, and harmless: the DC start Vak 200 → 150 V, which converges to the
 -pedantic` compiles clean for x86_64-linux, aarch64-linux, aarch64-macos and x86_64-windows. The AArch64 objects
 contain the FPCR read, set and restore. None of those targets were run.
 
-## Speed (informational; the product benchmark is #20)
+## Speed: the informal #19 run (not the #20 benchmark)
 
-`test_core bench` (`bench.json`): `process()` on 1 s of a 1 kHz sine at 48 kHz, blocks of 64, median of 7 runs.
+The per-instance benchmark of #20 is [`BENCHMARK.md`](BENCHMARK.md) (`bench.cpp`, `bench.py`). The numbers below
+are the earlier informal run, kept for history: the `test_core bench` mode, which #20 removed together with its
+`bench.json` (both in git at 70ceacc). They are not comparable with `BENCHMARK.md`, whose signal, flags and method
+differ.
+
+`test_core bench`: `process()` on 1 s of a 1 kHz sine at 48 kHz, blocks of 64, median of 7 runs.
 gcc 14.4 `-O2`, one core of the lab VM (Intel Xeon, shared; load average 0.3–0.8). The range is over three runs on
 6–7 Nov 2026; the committed JSON is the last run.
 
@@ -196,6 +204,9 @@ the C++ core takes 0.14–0.18 s (about 40× less).
 - No smoothing of drive / output / bias, as in Python. A bias swap jumps the matrices at a block boundary.
 - Allocation hooks are glibc-specific; elsewhere only `operator new` / `delete` are counted.
 - TSan, FMA and every run were on x86-64 Linux only. AArch64 / macOS / Windows were compile-checked, not run.
+  Since then (11 Nov 2026, #20) `pytest cpp/tests` was run once on an Apple M1, macOS 15.6.1, Apple clang 17. Every
+  test passed, including the bit-exact and TSan ones, except one check in `test_core_vectors`: "ScopedFlushDenormals
+  flushes in scope and restores". It fails the same way at 70ceacc (before #20) and is not investigated here.
 
 ## Build and run
 
@@ -207,7 +218,7 @@ python -m cpp.validate_cpp                        # dk.validate on the core -> c
 python -m cpp.matrix_rounding                     # the matrix-rounding measurement (~6 s)
 g++ -std=c++17 -O2 -Wall -Wextra -pedantic -pthread -o test_core cpp/test_core.cpp
 ./test_core cpp/vectors.txt                       # one JSON line of measured errors; exit 1 on any failure
-./test_core bench > cpp/bench.json
+python3 -m cpp.bench --help                       # the #20 CPU benchmark (BENCHMARK.md; official runs only as described there)
 ```
 Using the core: `#include "dk_core.h"` (it includes `../dk/fastmath.h`), then:
 ```cpp
