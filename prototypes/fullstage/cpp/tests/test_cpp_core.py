@@ -76,18 +76,16 @@ def test_swap_tsan():
 ARM64 = platform.machine().lower() in ("arm64", "aarch64")
 
 
-def _is_clang():
-    return "clang" in subprocess.run([VC.compiler(), "--version"], capture_output=True, text=True).stdout
-
-
-def _stereo_exact_expected(flags, scalar):
+def _stereo_exact_expected(flags, scalar, compiler, fma):
     """Bit-exact stereo vs mono is guaranteed when scalar and vector code are contracted (FMA) at the same places
-    (cpp/README.md, "Stereo"): no contraction at all (-ffp-contract=off; x86-64 without -march has no FMA), or clang's
-    per-expression contraction on the native NEON / SSE2 types. Not for the struct fallback with contraction, nor
-    GCC's -ffp-contract=fast with FMA (it fuses after optimisation, scalar and vector code differently)."""
-    if "-ffp-contract=off" in flags or (X86 and not any(f.startswith("-march") for f in flags)):
+    (cpp/README.md, "Stereo"):
+    - no contraction at all: -ffp-contract=off, or a build without FMA instructions (fma, as the binary reports it);
+    - clang's per-expression contraction on the native NEON / SSE2 types.
+    It is not guaranteed for the struct fallback with contraction, nor for GCC's -ffp-contract=fast with FMA, which
+    fuses after optimisation and so treats scalar and vector code differently."""
+    if "-ffp-contract=off" in flags or not fma:
         return True
-    return not scalar and _is_clang()
+    return not scalar and "clang" in compiler.lower()
 
 
 STEREO_BUILDS = [(("-O2",), False), (("-O3",), False), (("-O2", "-ffp-contract=off"), False),
@@ -108,8 +106,8 @@ def test_stereo_parity(flags, scalar):
     assert r["simd"] == ("scalar" if scalar else "neon" if ARM64 else "sse2" if X86 else r["simd"])
     assert r["alloc_hooks"] == 1 and r["stereo_process_allocations"] == 0
     assert r["stereo_runs"] == 43 and r["stereo_lanes_differ_runs"] >= 20 and r["stereo_capped_nonconv_l"] > 0
-    if _stereo_exact_expected(flags, scalar):
-        assert r["stereo_exact"] == 1, p.stderr[-3000:]
+    if _stereo_exact_expected(flags, scalar, r["compiler"], r["fma"]):
+        assert r["stereo_exact"] == 1, f"{r['compiler']} fma={r['fma']}\n" + p.stderr[-3000:]
 
 
 def _pipe(exe, mode, rows):
@@ -223,8 +221,9 @@ def test_bench_smoke():
     assert d["meta"]["samples_per_pass"] == 512
     assert d["meta"]["simd"] == ("neon" if ARM64 else "sse2" if X86 else d["meta"]["simd"])
     _bench_rows_ok(d["results"])
-    if _stereo_exact_expected(("-O2",), False):     # this -O2 build: the stereo path equals two mono instances
-        assert all(r["matches_x2"] for r in d["results"] if r["path"] == "stereo_simd")
+    m = d["meta"]
+    if _stereo_exact_expected(("-O2",), False, m["compiler"], m["fma"]):   # then s2 equals x2 bit for bit
+        assert all(r["matches_x2"] for r in d["results"] if r["path"] == "stereo_simd"), (m["compiler"], m["fma"])
 
 
 def test_bench_records():

@@ -812,7 +812,8 @@ static void run_stereo_tests(const std::map<std::string, Vec>& V) {
     test_stereo(V);
     test_stereo_solve(V);
     test_stereo_misc();
-    g_json << (g_json.tellp() > 0 ? ", " : "") << "\"simd\": \"" << simd::NAME << "\"";
+    g_json << (g_json.tellp() > 0 ? ", " : "") << "\"simd\": \"" << simd::NAME << "\", \"compiler\": \"" << __VERSION__ << "\"";
+    metric("fma", simd::FMA ? 1 : 0);
     metric("stereo_exact", g_stereo_exact ? 1 : 0);
 }
 

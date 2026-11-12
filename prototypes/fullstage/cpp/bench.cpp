@@ -346,8 +346,9 @@ int main(int argc, char** argv) {
 #else
     std::printf("\"counters\": \"%s\", ", have_counters ? COUNTER_SOURCE : "unavailable");
 #endif
-    std::printf("\"compiler\": \"%s\", \"sizeof_stage\": %zu, \"sizeof_stereo_stage\": %zu, \"simd\": \"%s\"}, "
-                "\"results\": [", __VERSION__, sizeof(Stage), sizeof(StereoStage), simd::NAME);
+    std::printf("\"compiler\": \"%s\", \"sizeof_stage\": %zu, \"sizeof_stereo_stage\": %zu, \"simd\": \"%s\", "
+                "\"fma\": %s}, \"results\": [", __VERSION__, sizeof(Stage), sizeof(StereoStage), simd::NAME,
+                simd::FMA ? "true" : "false");
     for (std::size_t i = 0; i < cfg.size(); ++i) {
         Config& c = cfg[i];
         all_det = all_det && c.deterministic;

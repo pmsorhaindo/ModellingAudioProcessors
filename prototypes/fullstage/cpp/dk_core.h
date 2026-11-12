@@ -164,6 +164,12 @@ inline M2 ne(V2 a, V2 b) { return M2{{a.v[0] != b.v[0], a.v[1] != b.v[1]}}; }
 inline V2 select(M2 m, V2 a, V2 b) { return V2{{m.m[0] ? a.v[0] : b.v[0], m.m[1] ? a.v[1] : b.v[1]}}; }
 inline int bits(M2 m) { return int(m.m[0]) | int(m.m[1]) << 1; }
 #endif
+// whether this build may contract a*b + c into an FMA instruction at all (it has FMA instructions)
+#if defined(__FMA__) || defined(__aarch64__) || defined(__ARM_FEATURE_FMA)
+inline constexpr bool FMA = true;
+#else
+inline constexpr bool FMA = false;
+#endif
 inline M2 all() { return ge(splat(0.0), splat(0.0)); }
 inline V2 pmax(V2 a, V2 b) { return select(gt(b, a), b, a); }       // detail::pmax per lane, NaN included
 template <class F> inline V2 per_lane(F f, V2 x) { return make(f(lane(x, 0)), f(lane(x, 1))); }
