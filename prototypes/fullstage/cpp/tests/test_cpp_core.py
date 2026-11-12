@@ -7,6 +7,9 @@ clang++): skipped without one, except under CI (CI set in the environment), wher
   test_bit_exact_*         solve() and the triode currents against the live Python functions on this machine (same
                            libm), bit for bit, in a -O2 -ffp-contract=off build: catches a changed path (pnjlim, line
                            search) even where it converges to the same root
+  test_stereo_parity       StereoStage (#21) against two independent mono Stages (test_core stereo), per build: SIMD
+                           and forced scalar fallback, with and without FP contraction; bit-exact where the build
+                           guarantees it (_stereo_exact_expected), else within the test_core.cpp tolerance
   test_vectors_are_fresh   the committed cpp/vectors.txt still matches what the Python stage produces now
   test_validate_reproduced dk.validate.run on the C++ core against dk/results.json, every setting (cpp/validate_cpp.py)
   test_bench_smoke         cpp/bench.cpp (#20) builds and runs every configuration once on 512 samples, output
@@ -47,7 +50,7 @@ def _run_vectors(exe):
 
 def test_core_vectors():
     r = _run_vectors(_exe())
-    assert r["alloc_hooks"] == 1 and r["process_allocations"] == 0
+    assert r["alloc_hooks"] == 1 and r["process_allocations"] == 0 and r["stereo_process_allocations"] == 0
     assert r["swap_adopted"] > 0
 
 
@@ -66,6 +69,45 @@ def test_swap_tsan():
     if p.returncode != 0 and "FATAL: ThreadSanitizer" in p.stderr:    # e.g. TSan vs the kernel's mmap layout
         pytest.skip("TSan cannot run here: " + p.stderr[-200:])
     assert p.returncode == 0 and json.loads(p.stdout.strip().splitlines()[-1])["failures"] == 0, p.stderr[-2000:]
+
+
+ARM64 = platform.machine().lower() in ("arm64", "aarch64")
+
+
+def _is_clang():
+    return "clang" in subprocess.run([VC.compiler(), "--version"], capture_output=True, text=True).stdout
+
+
+def _stereo_exact_expected(flags, scalar):
+    """Bit-exact stereo vs mono is guaranteed when scalar and vector code are contracted (FMA) at the same places
+    (cpp/README.md, "Stereo"): no contraction at all (-ffp-contract=off; x86-64 without -march has no FMA), or clang's
+    per-expression contraction on the native NEON / SSE2 types. Not for the struct fallback with contraction, nor
+    GCC's -ffp-contract=fast with FMA (it fuses after optimisation, scalar and vector code differently)."""
+    if "-ffp-contract=off" in flags or (X86 and not any(f.startswith("-march") for f in flags)):
+        return True
+    return not scalar and _is_clang()
+
+
+STEREO_BUILDS = [(("-O2",), False), (("-O3",), False), (("-O2", "-ffp-contract=off"), False),
+                 (("-O2",), True), (("-O2", "-ffp-contract=off"), True), (("-O2", "-march=x86-64-v3"), False)]
+
+
+@pytest.mark.parametrize("flags,scalar", STEREO_BUILDS, ids=lambda v: "scalar" if v is True else
+                         "simd" if v is False else " ".join(v))
+def test_stereo_parity(flags, scalar):
+    if "-march=x86-64-v3" in flags and not X86:
+        pytest.skip("x86-64 only")
+    exe = _exe(flags, ("DKCORE_SIMD_SCALAR",) if scalar else ())
+    p = subprocess.run([exe, "stereo", VECTORS], capture_output=True, text=True)
+    if p.returncode == -signal.SIGILL:
+        pytest.skip("this CPU cannot run the build")
+    r = json.loads(p.stdout.strip().splitlines()[-1])
+    assert p.returncode == 0 and r["failures"] == 0, p.stderr[-3000:]     # every check within tolerance
+    assert r["simd"] == ("scalar" if scalar else "neon" if ARM64 else "sse2" if X86 else r["simd"])
+    assert r["alloc_hooks"] == 1 and r["stereo_process_allocations"] == 0
+    assert r["stereo_runs"] == 43 and r["stereo_lanes_differ_runs"] >= 20 and r["stereo_capped_nonconv_l"] > 0
+    if _stereo_exact_expected(flags, scalar):
+        assert r["stereo_exact"] == 1, p.stderr[-3000:]
 
 
 def _pipe(exe, mode, rows):

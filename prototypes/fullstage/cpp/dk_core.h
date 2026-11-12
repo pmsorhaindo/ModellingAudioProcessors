@@ -31,6 +31,10 @@
  * Triode math: TriodeMath::libm (default, as in Python) or TriodeMath::fast (dk/fastmath.h, #18), per pack,
  * dispatched once per block.
  *
+ * Stereo (#21): StereoStage runs left and right as the two lanes of one 2 x double SIMD kernel (namespace simd:
+ * NEON, SSE2 or a portable struct) on one shared pack. Each lane does the mono operations in the mono order, so a
+ * StereoStage matches two independent mono Stages (cpp/README.md, "Stereo"). Threads and denormals as for Stage.
+ *
  * Do not build with -ffast-math: the fallback relies on NaN / inf comparisons.
  */
 #ifndef DK_CORE_H
@@ -48,6 +52,15 @@
 #if defined(__x86_64__) || defined(_M_X64) || (defined(__i386__) && defined(__SSE2__))
 #include <xmmintrin.h>
 #define DKCORE_X86_SSE 1
+#endif
+
+// the 2-lane SIMD of StereoStage (namespace simd below); -DDKCORE_SIMD_SCALAR forces the portable fallback
+#if !defined(DKCORE_SIMD_SCALAR) && defined(__aarch64__) && defined(__ARM_NEON) && (defined(__GNUC__) || defined(__clang__))
+#include <arm_neon.h>
+#define DKCORE_SIMD_NEON 1
+#elif !defined(DKCORE_SIMD_SCALAR) && defined(__SSE2__) && (defined(__GNUC__) || defined(__clang__))
+#include <emmintrin.h>
+#define DKCORE_SIMD_SSE2 1
 #endif
 
 #include "../dk/fastmath.h"
@@ -89,6 +102,76 @@ inline constexpr double FIR_BETA = 9.0;
 enum Node { SRC, IN1, GL, GRID, CATH, ANODE, OUT, HTN, NNODES };
 inline constexpr int NX = 6, NNL = 2, NU = 2, NOUT = 5, NS = NNODES + NU;
 
+// ---- 2 x double SIMD for StereoStage (#21) ----------------------------------------------------------------------
+/* V2 = (left, right), M2 = a per-lane mask. NEON and SSE2 use the compilers' native vector types, whose + - * / are
+ * built-in operators. With FP contraction on (clang's default), a vector expression is contracted exactly where the
+ * same scalar expression is, so each lane rounds as the mono code does. The fallback (any C++17 compiler, or
+ * -DDKCORE_SIMD_SCALAR) is a struct whose operators are functions: it matches mono bit for bit only where
+ * the build does not contract (cpp/README.md, "Stereo"). Masks use & | ~ (built in for the native mask types). */
+namespace simd {
+#if defined(DKCORE_SIMD_NEON)
+using V2 = float64x2_t;
+using M2 = uint64x2_t;
+inline constexpr const char* NAME = "neon";
+inline V2 splat(double a) { return vdupq_n_f64(a); }
+inline V2 make(double l, double r) { return V2{l, r}; }
+inline double lane(V2 v, int i) { return v[i]; }
+inline V2 vabs(V2 a) { return vabsq_f64(a); }
+inline M2 lt(V2 a, V2 b) { return vcltq_f64(a, b); }
+inline M2 gt(V2 a, V2 b) { return vcgtq_f64(a, b); }
+inline M2 ge(V2 a, V2 b) { return vcgeq_f64(a, b); }
+inline M2 ne(V2 a, V2 b) { return ~vceqq_f64(a, b); }
+inline V2 select(M2 m, V2 a, V2 b) { return vbslq_f64(m, a, b); }
+inline int bits(M2 m) { return int(vgetq_lane_u64(m, 0) & 1u) | int(vgetq_lane_u64(m, 1) & 1u) << 1; }
+#elif defined(DKCORE_SIMD_SSE2)
+using V2 = __m128d;
+using M2 = __m128i;
+inline constexpr const char* NAME = "sse2";
+inline V2 splat(double a) { return _mm_set1_pd(a); }
+inline V2 make(double l, double r) { return _mm_set_pd(r, l); }
+inline double lane(V2 v, int i) { return v[i]; }
+inline V2 vabs(V2 a) { return _mm_andnot_pd(_mm_set1_pd(-0.0), a); }
+inline M2 lt(V2 a, V2 b) { return _mm_castpd_si128(_mm_cmplt_pd(a, b)); }
+inline M2 gt(V2 a, V2 b) { return _mm_castpd_si128(_mm_cmpgt_pd(a, b)); }
+inline M2 ge(V2 a, V2 b) { return _mm_castpd_si128(_mm_cmpge_pd(a, b)); }
+inline M2 ne(V2 a, V2 b) { return _mm_castpd_si128(_mm_cmpneq_pd(a, b)); }   // true if unordered, as !=
+inline V2 select(M2 m, V2 a, V2 b) {
+    const V2 k = _mm_castsi128_pd(m);
+    return _mm_or_pd(_mm_and_pd(k, a), _mm_andnot_pd(k, b));
+}
+inline int bits(M2 m) { return _mm_movemask_pd(_mm_castsi128_pd(m)); }
+#else
+struct V2 { double v[2]; };
+struct M2 { bool m[2]; };
+inline constexpr const char* NAME = "scalar";
+inline V2 splat(double a) { return V2{{a, a}}; }
+inline V2 make(double l, double r) { return V2{{l, r}}; }
+inline double lane(V2 v, int i) { return v.v[i]; }
+inline V2 operator+(V2 a, V2 b) { return V2{{a.v[0] + b.v[0], a.v[1] + b.v[1]}}; }
+inline V2 operator-(V2 a, V2 b) { return V2{{a.v[0] - b.v[0], a.v[1] - b.v[1]}}; }
+inline V2 operator*(V2 a, V2 b) { return V2{{a.v[0] * b.v[0], a.v[1] * b.v[1]}}; }
+inline V2 operator/(V2 a, V2 b) { return V2{{a.v[0] / b.v[0], a.v[1] / b.v[1]}}; }
+inline V2 operator-(V2 a) { return V2{{-a.v[0], -a.v[1]}}; }
+inline M2 operator&(M2 a, M2 b) { return M2{{a.m[0] && b.m[0], a.m[1] && b.m[1]}}; }
+inline M2 operator|(M2 a, M2 b) { return M2{{a.m[0] || b.m[0], a.m[1] || b.m[1]}}; }
+inline M2 operator~(M2 a) { return M2{{!a.m[0], !a.m[1]}}; }
+inline V2 vabs(V2 a) { return V2{{std::fabs(a.v[0]), std::fabs(a.v[1])}}; }
+inline M2 lt(V2 a, V2 b) { return M2{{a.v[0] < b.v[0], a.v[1] < b.v[1]}}; }
+inline M2 gt(V2 a, V2 b) { return M2{{a.v[0] > b.v[0], a.v[1] > b.v[1]}}; }
+inline M2 ge(V2 a, V2 b) { return M2{{a.v[0] >= b.v[0], a.v[1] >= b.v[1]}}; }
+inline M2 ne(V2 a, V2 b) { return M2{{a.v[0] != b.v[0], a.v[1] != b.v[1]}}; }
+inline V2 select(M2 m, V2 a, V2 b) { return V2{{m.m[0] ? a.v[0] : b.v[0], m.m[1] ? a.v[1] : b.v[1]}}; }
+inline int bits(M2 m) { return int(m.m[0]) | int(m.m[1]) << 1; }
+#endif
+inline M2 all() { return ge(splat(0.0), splat(0.0)); }
+inline V2 pmax(V2 a, V2 b) { return select(gt(b, a), b, a); }       // detail::pmax per lane, NaN included
+template <class F> inline V2 per_lane(F f, V2 x) { return make(f(lane(x, 0)), f(lane(x, 1))); }
+// splat for V2, identity for double: lets the resampler template run on either
+template <class T> inline T bcast(double a);
+template <> inline double bcast<double>(double a) { return a; }
+template <> inline V2 bcast<V2>(double a) { return splat(a); }
+}  // namespace simd
+
 // ---- triode (dk/triode.py): same expressions, same order --------------------------------------------------------
 
 struct Currents { double ig, ia, j00, j01, j10, j11; };   // J = d(Ig, Ia)/d(Vgk, Vak)
@@ -128,6 +211,47 @@ template <class M> struct Triode {
     static void currents_only(double vgk, double vak, const TriodeParams& p, double& ig, double& ia) {
         const double ik = p.G * M::pow(softplus(p.C * (vak / p.mu + vgk)) / p.C, p.gamma);
         ig = p.Gg * M::pow(softplus(p.Cg * vgk) / p.Cg, p.xi) + p.Ig0;
+        ia = ik - ig;
+    }
+};
+
+/* Triode<M> on two lanes: the same expressions in the same order, branches as per-lane selects. exp / log1p / pow
+ * are M's scalar functions called per lane (bit-equal to mono, libm or fast). */
+struct Currents2 { simd::V2 ig, ia, j00, j01, j10, j11; };
+
+template <class M> struct Triode2 {
+    using V2 = simd::V2;
+    static V2 exp(V2 x) { return simd::per_lane([](double a) { return M::exp(a); }, x); }
+    static V2 log1p(V2 x) { return simd::per_lane([](double a) { return M::log1p(a); }, x); }
+    static V2 pow(V2 x, double y) { return simd::per_lane([y](double a) { return M::pow(a, y); }, x); }
+    static V2 softplus(V2 x) {
+        const V2 zero = simd::splat(0.0);
+        return simd::select(simd::gt(x, zero), x, zero) + log1p(exp(-simd::vabs(x)));
+    }
+    static void softplus_sigmoid(V2 x, V2& sp, V2& sg) {
+        const V2 e = exp(-simd::vabs(x)), l = log1p(e), one = simd::splat(1.0);
+        const simd::M2 pos = simd::ge(x, simd::splat(0.0));
+        sp = simd::select(pos, x + l, l);
+        sg = simd::select(pos, one / (one + e), e / (one + e));
+    }
+    static void currents(V2 vgk, V2 vak, const TriodeParams& p, Currents2& o) {
+        using simd::splat;
+        const V2 zero = splat(0.0);
+        const V2 zk = splat(p.C) * (vak / splat(p.mu) + vgk);
+        V2 spk, sigk; softplus_sigmoid(zk, spk, sigk);
+        const V2 sk = spk / splat(p.C), pk = pow(sk, p.gamma), ik = splat(p.G) * pk;
+        const V2 dik_dz = splat(p.G) * splat(p.gamma) * simd::select(simd::gt(sk, zero), pk / sk, zero) * sigk;
+        const V2 zg = splat(p.Cg) * vgk;
+        V2 spg, sigg; softplus_sigmoid(zg, spg, sigg);
+        const V2 sg = spg / splat(p.Cg), pg = pow(sg, p.xi), ig = splat(p.Gg) * pg + splat(p.Ig0);
+        const V2 dig = splat(p.Gg) * splat(p.xi) * simd::select(simd::gt(sg, zero), pg / sg, zero) * sigg;
+        o.ig = ig; o.ia = ik - ig;
+        o.j00 = dig; o.j01 = zero; o.j10 = dik_dz - dig; o.j11 = dik_dz / splat(p.mu);
+    }
+    static void currents_only(V2 vgk, V2 vak, const TriodeParams& p, V2& ig, V2& ia) {
+        using simd::splat;
+        const V2 ik = splat(p.G) * pow(softplus(splat(p.C) * (vak / splat(p.mu) + vgk)) / splat(p.C), p.gamma);
+        ig = splat(p.Gg) * pow(softplus(splat(p.Cg) * vgk) / splat(p.Cg), p.xi) + splat(p.Ig0);
         ia = ik - ig;
     }
 };
@@ -217,6 +341,103 @@ inline Solution solve(double p0, double p1, const double (&K)[2][2], double v0, 
     }
     best.it = nw.max_it; best.ok = false;
     return best;
+}
+
+/* solve() on two independent problems, one per lane (StereoStage). Each lane runs exactly solve()'s sequence of
+ * operations: both lanes iterate in lock step under an "active" mask; a lane that converges is recorded (its
+ * iteration count included) and frozen, i.e. every later update to it is select(active, new, old), until both lanes
+ * have converged or the cap is reached. The line search is masked the same way: a lane leaves the halving loop when
+ * its own trial is accepted. A lane still active at the cap returns its best iterate, flagged (#7). So each lane's
+ * result, iteration count and flag equal solve()'s on that lane's problem; the kernel costs max(itL, itR)
+ * iterations of both lanes. pnjlim and the transcendentals run per lane in scalar code (Triode2). */
+struct Solution2 { simd::V2 v0, v1, ig, ia; int it[2]; bool ok[2]; };
+
+namespace detail {
+inline simd::V2 pnjlim2(simd::V2 vnew, simd::V2 vold, double vt) {
+    return simd::make(pnjlim(simd::lane(vnew, 0), simd::lane(vold, 0), vt), pnjlim(simd::lane(vnew, 1), simd::lane(vold, 1), vt));
+}
+inline Currents2 select(simd::M2 m, const Currents2& a, const Currents2& b) {
+    using simd::select;
+    return Currents2{select(m, a.ig, b.ig), select(m, a.ia, b.ia), select(m, a.j00, b.j00), select(m, a.j01, b.j01),
+                     select(m, a.j10, b.j10), select(m, a.j11, b.j11)};
+}
+}  // namespace detail
+
+template <class M>
+inline Solution2 solve2(simd::V2 p0, simd::V2 p1, const double (&Km)[2][2], simd::V2 v0, simd::V2 v1,
+                        const TriodeParams& par, const Newton& nw) {
+    using namespace simd;
+    using T = Triode2<M>;
+    const double vt = 1.0 / par.Cg;
+    const V2 K00 = splat(Km[0][0]), K01 = splat(Km[0][1]), K10 = splat(Km[1][0]), K11 = splat(Km[1][1]);
+    const V2 zero = splat(0.0), one = splat(1.0), half = splat(0.5), tol_v = splat(nw.tol_v), tol_f = splat(nw.tol_f),
+             inf = splat(INFINITY);
+    Currents2 c;
+    T::currents(v0, v1, par, c);
+    V2 f0 = p0 - K00 * c.ig - K01 * c.ia - v0;
+    V2 f1 = p1 - K10 * c.ig - K11 * c.ia - v1;
+    V2 fb = pmax(vabs(f0), vabs(f1));
+    V2 b0 = v0, b1 = v1, big = c.ig, bia = c.ia;                // best iterate per lane
+    Solution2 out{};
+    out.it[0] = out.it[1] = nw.max_it;
+    M2 act = all();                                             // lanes still iterating
+    for (int it = 1; it <= nw.max_it; ++it) {
+        const V2 a = -(K00 * c.j00 + K01 * c.j10) - one;
+        const V2 b = -(K00 * c.j01 + K01 * c.j11);
+        const V2 cc = -(K10 * c.j00 + K11 * c.j10);
+        const V2 d = -(K10 * c.j01 + K11 * c.j11) - one;
+        const V2 det = a * d - b * cc;
+        const V2 d0 = -(d * f0 - b * f1) / det;
+        const V2 d1 = -(-cc * f0 + a * f1) / det;
+        const V2 n0 = detail::pnjlim2(v0 + d0, v0, vt);
+        const V2 s0 = n0 - v0, s1 = d1 * select(ne(d0, zero), (n0 - v0) / d0, one);
+        const V2 fn = pmax(vabs(f0), vabs(f1));
+        V2 lam = one;
+        Currents2 g;
+        T::currents(v0 + s0, v1 + s1, par, g);
+        V2 g0 = p0 - K00 * g.ig - K01 * g.ia - (v0 + s0);
+        V2 g1 = p1 - K10 * g.ig - K11 * g.ia - (v1 + s1);
+        const M2 search = act & ~(lt(pmax(vabs(g0), vabs(g1)), fn) | lt(fn, tol_f));
+        if (bits(search)) {
+            M2 ls = search;                                     // lanes still halving
+            for (int k = 0; k < LS_MAX - 1 && bits(ls); ++k) {
+                lam = select(ls, lam * half, lam);
+                const V2 t0 = v0 + lam * s0, t1 = v1 + lam * s1;
+                V2 ig, ia;
+                T::currents_only(t0, t1, par, ig, ia);
+                const V2 h0 = p0 - K00 * ig - K01 * ia - t0;
+                const V2 h1 = p1 - K10 * ig - K11 * ia - t1;
+                g.ig = select(ls, ig, g.ig); g.ia = select(ls, ia, g.ia);
+                g0 = select(ls, h0, g0); g1 = select(ls, h1, g1);
+                ls = ls & ~lt(pmax(vabs(h0), vabs(h1)), fn);
+            }
+            Currents2 gj;                                       // Jacobian at the accepted point
+            T::currents(v0 + lam * s0, v1 + lam * s1, par, gj);
+            g.j00 = select(search, gj.j00, g.j00); g.j01 = select(search, gj.j01, g.j01);
+            g.j10 = select(search, gj.j10, g.j10); g.j11 = select(search, gj.j11, g.j11);
+        }
+        const V2 dv = pmax(vabs(lam * s0), vabs(lam * s1));
+        v0 = select(act, v0 + lam * s0, v0); v1 = select(act, v1 + lam * s1, v1);
+        f0 = select(act, g0, f0); f1 = select(act, g1, f1);
+        c = detail::select(act, g, c);
+        const V2 fa = pmax(vabs(f0), vabs(f1));
+        const M2 conv = act & lt(dv, tol_v) & lt(fa, tol_f);
+        if (const int cb = bits(conv)) {
+            for (int l = 0; l < 2; ++l)
+                if (cb >> l & 1) { out.it[l] = it; out.ok[l] = true; }
+            act = act & ~conv;
+            if (!bits(act)) break;
+        }
+        // best is only read for lanes still active at the cap, so a frozen lane's needs no mask
+        const M2 better = (lt(fa, fb) | ~lt(fb, inf)) & lt(vabs(f0) + vabs(f1), inf);
+        fb = select(better, fa, fb);
+        b0 = select(better, v0, b0); b1 = select(better, v1, b1);
+        big = select(better, c.ig, big); bia = select(better, c.ia, bia);
+    }
+    // converged lanes were frozen at their solution; lanes still active hit the cap and return their best iterate
+    out.v0 = select(act, b0, v0); out.v1 = select(act, b1, v1);
+    out.ig = select(act, big, c.ig); out.ia = select(act, bia, c.ia);
+    return out;
 }
 
 // ---- the coefficient pack ------------------------------------------------------------------------------------
@@ -469,26 +690,29 @@ inline void firwin_halfband(int ntaps, double beta, double* h) {
 }
 
 /* scipy.signal.lfilter(b, [1.0], x, zi) with persistent state: the same transposed direct form II, so the same
- * operation order (y = z0 + b0 x; z[k] = z[k+1] + b[k+1] x). N = max taps. */
-template <int N> struct Fir {
+ * operation order (y = z0 + b0 x; z[k] = z[k+1] + b[k+1] x). N = max taps. T = double (mono) or simd::V2 (stereo:
+ * the same taps in both lanes, the same operations per lane). */
+template <int N, class T = double> struct Fir {
     int m = 0;                 // taps - 1 (state length)
-    double b[N]{}, z[N]{};
-    double dc = 0.0;           // b.sum()
+    T b[N]{}, z[N]{};
+    T dc{};                    // b.sum()
     void set(const double* taps, int ntaps) {
-        m = ntaps - 1; dc = 0.0;
-        for (int k = 0; k < ntaps; ++k) { b[k] = taps[k]; dc += taps[k]; }
+        m = ntaps - 1;
+        double s = 0.0;
+        for (int k = 0; k < ntaps; ++k) { b[k] = simd::bcast<T>(taps[k]); s += taps[k]; }
+        dc = simd::bcast<T>(s);
         clear();
     }
-    void clear() { for (int k = 0; k < N; ++k) z[k] = 0.0; }
+    void clear() { for (int k = 0; k < N; ++k) z[k] = T{}; }
     // steady state for a constant input c (lfilter_zi * c); returns the constant output
-    double prime(double c) {
-        double zi = 0.0;
-        for (int k = m - 1; k >= 0; --k) { zi += b[k + 1]; z[k] = zi * c; }
+    T prime(T c) {
+        T zi{};
+        for (int k = m - 1; k >= 0; --k) { zi = zi + b[k + 1]; z[k] = zi * c; }
         return dc * c;
     }
-    double tick(double x) {
+    T tick(T x) {
         if (m == 0) return b[0] * x;
-        const double y = z[0] + b[0] * x;
+        const T y = z[0] + b[0] * x;
         for (int k = 0; k < m - 1; ++k) z[k] = z[k + 1] + x * b[k + 1];
         z[m - 1] = x * b[m];
         return y;
@@ -498,8 +722,8 @@ template <int N> struct Fir {
 /* Streaming os-times up -> (stage at os*fs) -> down, as dk/resample.Resampler(fs, os, "fir"): a cascade of 2x
  * linear-phase half-band FIR stages (stage 0 next to the base rate: 127 taps, later ones 23), polyphase branches,
  * a pad delay so the latency is a whole number of base samples. up() starts from zero history; the first down()
- * after reset() primes the decimator with its first sample (the operating-point value). */
-class Resampler {
+ * after reset() primes the decimator with its first sample (the operating-point value). T: as for Fir. */
+template <class T> class ResamplerT {
 public:
     static constexpr int BR = (FIR_FIRST_TAPS + 1) / 2 + 1;     // branch taps: 64, +1 for the down odd branch
 
@@ -555,33 +779,33 @@ public:
     }
 
     // one base-rate sample in, os internal-rate samples out
-    void up(double x, double* y) {
-        double a[MAX_OS], b[MAX_OS];
+    void up(T x, T* y) {
+        T a[MAX_OS], b[MAX_OS];
         a[0] = x;
         int len = 1;
-        double* cur = a; double* nxt = b;
+        T* cur = a; T* nxt = b;
         for (int i = 0; i < nst_; ++i) {
-            for (int j = 0; j < len; ++j) { const double v = cur[j]; nxt[2 * j] = upe_[i].tick(v); nxt[2 * j + 1] = upo_[i].tick(v); }
+            for (int j = 0; j < len; ++j) { const T v = cur[j]; nxt[2 * j] = upe_[i].tick(v); nxt[2 * j + 1] = upo_[i].tick(v); }
             len *= 2;
-            double* t = cur; cur = nxt; nxt = t;
+            T* t = cur; cur = nxt; nxt = t;
         }
-        std::memcpy(y, cur, sizeof(double) * os_);
+        std::memcpy(y, cur, sizeof(T) * os_);
     }
     // os internal-rate samples in, one base-rate sample out
-    double down(const double* y) {
-        double a[MAX_OS], b[MAX_OS];
+    T down(const T* y) {
+        T a[MAX_OS], b[MAX_OS];
         if (!primed_) {
-            double c = delay_.prime(y[0]);
+            T c = delay_.prime(y[0]);
             for (int i = nst_ - 1; i >= 0; --i) c = dne_[i].prime(c) + dno_[i].prime(c);
             primed_ = true;
         }
         for (int j = 0; j < os_; ++j) a[j] = pad_ ? delay_.tick(y[j]) : y[j];
         int len = os_;
-        double* cur = a; double* nxt = b;
+        T* cur = a; T* nxt = b;
         for (int i = nst_ - 1; i >= 0; --i) {
             len /= 2;
             for (int j = 0; j < len; ++j) nxt[j] = dne_[i].tick(cur[2 * j]) + dno_[i].tick(cur[2 * j + 1]);
-            double* t = cur; cur = nxt; nxt = t;
+            T* t = cur; cur = nxt; nxt = t;
         }
         return cur[0];
     }
@@ -590,10 +814,11 @@ private:
     int os_ = 0, nst_ = 0, pad_ = 0, latency_ = 0, up_delay_ = 0;
     double taps_[4][FIR_FIRST_TAPS] = {};
     int ntaps_[4] = {};
-    Fir<BR> upe_[4], upo_[4], dne_[4], dno_[4];
-    Fir<MAX_OS + 1> delay_;
+    Fir<BR, T> upe_[4], upo_[4], dne_[4], dno_[4];
+    Fir<MAX_OS + 1, T> delay_;
     bool primed_ = false;
 };
+using Resampler = ResamplerT<double>;
 
 // ---- realtime plumbing ---------------------------------------------------------------------------------------
 
@@ -681,26 +906,11 @@ struct Stats {                         // audio-thread side; since reset()
 
 // ---- the stage -----------------------------------------------------------------------------------------------
 
-class Stage {
+namespace detail {
+/* The coefficient-pack side shared by Stage and StereoStage: the producer side (build, publish, latest) and the
+ * pack the audio thread adopts lock-free at block start. Thread rules: top of this file. */
+class StageBase {
 public:
-    static_assert(std::atomic<double>::is_always_lock_free, "lock-free drive / output");
-
-    // ---- non-RT, never concurrently with process() ------------------------------------------------------------
-    BuildStatus prepare(double fs_base, Quality q = STANDARD, double bias = 1.0, TriodeMath math = TriodeMath::libm,
-                        const Newton& nw = Newton{}, const TriodeParams& par = DZ_12AX7_RSD1) {
-        std::lock_guard<std::mutex> lk(producer_);
-        prepared_ = false;
-        if (!(fs_base > 0.0) || !rs_.prepare(q.os)) return BuildStatus::bad_argument;
-        Coeffs& c = latest_;
-        const BuildStatus st = build_coeffs(c, fs_base * q.os, bias, q.prewarp_hz, math, nw, par);
-        if (st != BuildStatus::ok) return st;
-        fs_base_ = fs_base;
-        coeffs_.reset(c);
-        prepared_ = true;
-        reset();
-        return st;
-    }
-
     // ---- producers: any non-RT thread -------------------------------------------------------------------------
     // Rebuild the matrices and the DC operating point for a new bias (Rk scale) and publish them. Nothing is
     // published if the build fails (the audio thread carries on with the old pack).
@@ -725,10 +935,58 @@ public:
         return latest_;
     }
 
+    std::uint64_t nonconverged_total() const { return nonconv_total_.load(std::memory_order_relaxed); }  // any thread
+    bool prepared() const { return prepared_; }
+    double fs_base() const { return fs_base_; }
+    const Coeffs& active() const { return coeffs_.front(); }        // audio thread
+
+protected:
+    // prepare()'s pack, with producer_ held: build it at the internal rate fs_base * q.os and make it the active one
+    BuildStatus install_locked(double fs_base, Quality q, double bias, TriodeMath math, const Newton& nw,
+                               const TriodeParams& par) {
+        Coeffs& c = latest_;
+        const BuildStatus st = build_coeffs(c, fs_base * q.os, bias, q.prewarp_hz, math, nw, par);
+        if (st != BuildStatus::ok) return st;
+        fs_base_ = fs_base;
+        coeffs_.reset(c);
+        prepared_ = true;
+        return st;
+    }
+    void publish_locked(const Coeffs& c) {
+        coeffs_.back() = c;
+        coeffs_.publish();
+        latest_ = c;
+    }
+
+    TripleBuffer<Coeffs> coeffs_;                   // the audio thread adopts packs from here
+    std::atomic<std::uint64_t> nonconv_total_{0};   // written by the audio thread at block end
+    // producer side
+    mutable std::mutex producer_;
+    Coeffs latest_{};
+    double fs_base_ = 0.0;
+    bool prepared_ = false;
+};
+}  // namespace detail
+
+class Stage : public detail::StageBase {
+public:
+    static_assert(std::atomic<double>::is_always_lock_free, "lock-free drive / output");
+
+    // ---- non-RT, never concurrently with process() ------------------------------------------------------------
+    BuildStatus prepare(double fs_base, Quality q = STANDARD, double bias = 1.0, TriodeMath math = TriodeMath::libm,
+                        const Newton& nw = Newton{}, const TriodeParams& par = DZ_12AX7_RSD1) {
+        std::lock_guard<std::mutex> lk(producer_);
+        prepared_ = false;
+        if (!(fs_base > 0.0) || !rs_.prepare(q.os)) return BuildStatus::bad_argument;
+        const BuildStatus st = install_locked(fs_base, q, bias, math, nw, par);
+        if (st == BuildStatus::ok) reset();
+        return st;
+    }
+    // request_bias(), publish(), latest(), nonconverged_total(), prepared(), fs_base(), active(): StageBase
+
     // ---- any thread ---------------------------------------------------------------------------------------------
     void set_drive(double g) { drive_.store(g, std::memory_order_relaxed); }     // linear gain before the stage
     void set_output(double g) { output_.store(g, std::memory_order_relaxed); }   // linear gain after it
-    std::uint64_t nonconverged_total() const { return nonconv_total_.load(std::memory_order_relaxed); }
 
     // ---- audio thread -------------------------------------------------------------------------------------------
     void reset() noexcept {                // state to the active pack's operating point; clears the stats
@@ -766,23 +1024,15 @@ public:
         end_block();
     }
 
-    bool prepared() const { return prepared_; }
     int oversampling() const { return rs_.os(); }
     int latency_samples() const { return rs_.latency_samples(); }
     int up_delay_internal() const { return rs_.up_delay_internal(); }
-    double fs_base() const { return fs_base_; }
     const Resampler& resampler() const { return rs_; }
-    const Coeffs& active() const { return coeffs_.front(); }        // audio thread
     const Stats& stats() const { return stats_; }                   // audio thread, or while stopped
     const double* state_x() const { return x_; }
     const double* state_v() const { return v_; }
 
 private:
-    void publish_locked(const Coeffs& c) {
-        coeffs_.back() = c;
-        coeffs_.publish();
-        latest_ = c;
-    }
     void begin_block() {
         if (coeffs_.acquire()) ++stats_.swaps;
         stats_.nonconv_block = 0;
@@ -849,15 +1099,134 @@ private:
     double x_[NX] = {}, v_[2] = {}, q_[2] = {};       // capacitor states, (Vgk, Vak), previous (Vgk, Vak)
     Resampler rs_;
     Stats stats_;
-    TripleBuffer<Coeffs> coeffs_;
     // shared
     std::atomic<double> drive_{1.0}, output_{1.0};
-    std::atomic<std::uint64_t> nonconv_total_{0};
-    // producer side
-    mutable std::mutex producer_;
-    Coeffs latest_{};
-    double fs_base_ = 0.0;
-    bool prepared_ = false;
+};
+
+/* Stereo (#21): left and right as the two lanes of one simd::V2 kernel, on one shared pack (the matrices are the
+ * same for both channels), so prepare / request_bias / publish / reset act on both. Drive and output gain are per
+ * channel. Every per-sample step is Stage's with V2 for double: tick, solve2 (per-lane Newton, see there), Triode2,
+ * ResamplerT<V2>. So channel k equals a mono Stage given the same input, gains and packs (cpp/README.md, "Stereo";
+ * test_core.cpp test_stereo). Threads, realtime rules (no allocation, locks or syscalls in process()), denormal
+ * handling, the #7 fallback and the NaN-input rule are Stage's, per channel. */
+class StereoStage : public detail::StageBase {
+public:
+    using V2 = simd::V2;
+
+    // ---- non-RT, never concurrently with process() ------------------------------------------------------------
+    BuildStatus prepare(double fs_base, Quality q = STANDARD, double bias = 1.0, TriodeMath math = TriodeMath::libm,
+                        const Newton& nw = Newton{}, const TriodeParams& par = DZ_12AX7_RSD1) {
+        std::lock_guard<std::mutex> lk(producer_);
+        prepared_ = false;
+        if (!(fs_base > 0.0) || !rs_.prepare(q.os)) return BuildStatus::bad_argument;
+        const BuildStatus st = install_locked(fs_base, q, bias, math, nw, par);
+        if (st == BuildStatus::ok) reset();
+        return st;
+    }
+
+    // ---- any thread ---------------------------------------------------------------------------------------------
+    void set_drive(double l, double r) { drive_[0].store(l, std::memory_order_relaxed); drive_[1].store(r, std::memory_order_relaxed); }
+    void set_drive(double g) { set_drive(g, g); }
+    void set_output(double l, double r) { output_[0].store(l, std::memory_order_relaxed); output_[1].store(r, std::memory_order_relaxed); }
+    void set_output(double g) { set_output(g, g); }
+
+    // ---- audio thread -------------------------------------------------------------------------------------------
+    void reset() noexcept {                // both channels to the active pack's operating point; clears the stats
+        if (coeffs_.acquire()) {}
+        const Coeffs& c = coeffs_.front();
+        for (int i = 0; i < NX; ++i) x_[i] = simd::splat(c.x0[i]);
+        v_[0] = q_[0] = simd::splat(c.op.vgk);
+        v_[1] = q_[1] = simd::splat(c.op.vak);
+        stats_[0] = stats_[1] = Stats{};
+        nonconv_total_.store(0, std::memory_order_relaxed);
+        rs_.reset();
+    }
+    // As Stage::process, per channel. inL may equal outL, and inR outR. nonconverged_total() counts both channels.
+    void process(const double* inL, const double* inR, double* outL, double* outR, std::size_t n) noexcept {
+        process_t(inL, inR, outL, outR, n);
+    }
+    void process(const float* inL, const float* inR, float* outL, float* outR, std::size_t n) noexcept {
+        process_t(inL, inR, outL, outR, n);
+    }
+
+    int oversampling() const { return rs_.os(); }
+    int latency_samples() const { return rs_.latency_samples(); }
+    const Stats& stats(int ch) const { return stats_[ch]; }          // ch 0 = left, 1 = right
+    double state_x(int ch, int i) const { return simd::lane(x_[i], ch); }
+    double state_v(int ch, int i) const { return simd::lane(v_[i], ch); }
+
+private:
+    void begin_block() {
+        if (coeffs_.acquire()) { ++stats_[0].swaps; ++stats_[1].swaps; }
+        stats_[0].nonconv_block = stats_[1].nonconv_block = 0;
+    }
+    void end_block() { nonconv_total_.store(stats_[0].nonconverged + stats_[1].nonconverged, std::memory_order_relaxed); }
+
+    // Stage::tick on both lanes, the same expressions with V2 for double (so the same contraction per lane)
+    template <class M> V2 tick(const Coeffs& c, V2 s) {
+        using simd::splat;
+        const V2 HT = splat(c.HT);
+        V2 p0 = splat(c.H[0][0]) * s + splat(c.H[0][1]) * HT, p1 = splat(c.H[1][0]) * s + splat(c.H[1][1]) * HT;
+        for (int j = 0; j < NX; ++j) { p0 = p0 + splat(c.G[0][j]) * x_[j]; p1 = p1 + splat(c.G[1][j]) * x_[j]; }
+        const V2 e0 = splat(2.0) * v_[0] - q_[0], e1 = splat(2.0) * v_[1] - q_[1];
+        q_[0] = v_[0]; q_[1] = v_[1];
+        const Solution2 r = solve2<M>(p0, p1, c.K, e0, e1, c.par, c.newton);
+        v_[0] = r.v0; v_[1] = r.v1;                     // kept even when not ok: the best finite iterate (#7)
+        for (int k = 0; k < 2; ++k) {
+            Stats& st = stats_[k];
+            const int it = r.it[k];
+            ++st.samples;
+            st.iterations += std::uint64_t(it);
+            ++st.histogram[it < Stats::HIST ? it : Stats::HIST - 1];
+            if (it > st.max_iterations) st.max_iterations = it;
+            if (!r.ok[k]) { ++st.nonconverged; ++st.nonconv_block; }
+        }
+        V2 y = splat(c.E[0][0]) * s + splat(c.E[0][1]) * HT + splat(c.F[0][0]) * r.ig + splat(c.F[0][1]) * r.ia;
+        for (int j = 0; j < NX; ++j) y = y + splat(c.D[0][j]) * x_[j];
+        V2 xn[NX];
+        for (int i = 0; i < NX; ++i) {
+            V2 a = splat(c.B[i][0]) * s + splat(c.B[i][1]) * HT + splat(c.C[i][0]) * r.ig + splat(c.C[i][1]) * r.ia;
+            for (int j = 0; j < NX; ++j) a = a + splat(c.A[i][j]) * x_[j];
+            xn[i] = a;
+        }
+        for (int i = 0; i < NX; ++i) x_[i] = xn[i];
+        return y;
+    }
+
+    template <class M, class S>
+    void run(const Coeffs& c, const S* inL, const S* inR, S* outL, S* outR, std::size_t n, V2 drive, V2 og) {
+        V2 u[MAX_OS], y[MAX_OS];
+        const int os = rs_.os();
+        for (std::size_t i = 0; i < n; ++i) {
+            double xl = double(inL[i]), xr = double(inR[i]);
+            if (!std::isfinite(xl)) { xl = 0.0; ++stats_[0].nonfinite_inputs; }
+            if (!std::isfinite(xr)) { xr = 0.0; ++stats_[1].nonfinite_inputs; }
+            rs_.up(drive * simd::make(xl, xr), u);
+            for (int j = 0; j < os; ++j) y[j] = tick<M>(c, u[j]);
+            const V2 o = og * rs_.down(y);
+            outL[i] = S(simd::lane(o, 0));
+            outR[i] = S(simd::lane(o, 1));
+        }
+    }
+
+    template <class S> void process_t(const S* inL, const S* inR, S* outL, S* outR, std::size_t n) noexcept {
+        ScopedFlushDenormals ftz;
+        begin_block();
+        if (!prepared_) { for (std::size_t i = 0; i < n; ++i) outL[i] = outR[i] = S(0); return; }
+        const Coeffs& c = coeffs_.front();
+        const V2 drive = simd::make(drive_[0].load(std::memory_order_relaxed), drive_[1].load(std::memory_order_relaxed));
+        const V2 og = simd::make(output_[0].load(std::memory_order_relaxed), output_[1].load(std::memory_order_relaxed));
+        if (c.math == TriodeMath::fast) run<FastMath>(c, inL, inR, outL, outR, n, drive, og);
+        else run<LibmMath>(c, inL, inR, outL, outR, n, drive, og);
+        end_block();
+    }
+
+    // audio-thread state: lane 0 = left, lane 1 = right
+    V2 x_[NX]{}, v_[2]{}, q_[2]{};
+    ResamplerT<V2> rs_;
+    Stats stats_[2];
+    // shared
+    std::atomic<double> drive_[2] = {{1.0}, {1.0}}, output_[2] = {{1.0}, {1.0}};
 };
 
 }  // namespace dkcore

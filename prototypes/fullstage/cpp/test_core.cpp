@@ -354,36 +354,41 @@ static CaseCfg parse_cfg(const Vec& c) {
                    Newton{int(c[11]), c[12], c[13]}};
 }
 
-// Runs one case on a set-up stage: the cfg's runtime Newton settings and the optional swap go through publish /
-// request_bias, as a host would (pinned: the swap publishes the Python pack for the new bias). Returns allocations
-// counted inside process().
-static long run_case(Stage& s, const std::map<std::string, Vec>& V, const CaseCfg& k, bool pinned, const Vec& x,
-                     Vec& y, size_t block) {
+// Runs one case of n samples on a set-up stage (Stage or StereoStage), process(i, m) doing samples [i, i + m): the
+// cfg's runtime Newton settings and the optional swap go through publish / request_bias, as a host would (pinned:
+// the swap publishes the Python pack for the new bias). Returns allocations counted inside process().
+template <class S, class P>
+static long run_blocks(S& s, const std::map<std::string, Vec>& V, const CaseCfg& k, bool pinned, size_t n,
+                       size_t block, P process) {
     Coeffs c = s.latest();
     c.newton = k.nw;
     s.publish(c);
-    s.set_drive(k.drive); s.set_output(k.output);
     long allocs = 0;
-    y.assign(x.size(), 0.0);
-    const size_t at = k.swap_at >= 0 ? size_t(k.swap_at) : x.size();
+    const size_t at = k.swap_at >= 0 ? size_t(k.swap_at) : n;
     auto blocks = [&](size_t a, size_t b) {
         for (size_t i = a; i < b; i += block) {
             const size_t m = std::min(block, b - i);
             CountAllocs ca;
-            s.process(x.data() + i, y.data() + i, m);
+            process(i, m);
             allocs += ca.n();
         }
     };
     blocks(0, at);
-    if (at < x.size()) {
+    if (at < n) {
         Coeffs c2;
         if (pinned) c2 = pinned_pack(V, coef_name(k.os, k.swap_bias), c.math);
         else { if (k.swap_bias != s.latest().bias) s.request_bias(k.swap_bias); c2 = s.latest(); }
         c2.newton = k.nw2;
         s.publish(c2);
-        blocks(at, x.size());
+        blocks(at, n);
     }
     return allocs;
+}
+static long run_case(Stage& s, const std::map<std::string, Vec>& V, const CaseCfg& k, bool pinned, const Vec& x,
+                     Vec& y, size_t block) {
+    s.set_drive(k.drive); s.set_output(k.output);
+    y.assign(x.size(), 0.0);
+    return run_blocks(s, V, k, pinned, x.size(), block, [&](size_t i, size_t m) { s.process(x.data() + i, y.data() + i, m); });
 }
 
 static void test_cases(const std::map<std::string, Vec>& V) {
@@ -579,6 +584,238 @@ static void test_float_io() {
     delete a; delete b;
 }
 
+// ---- stereo (#21): StereoStage against two independent mono Stages ------------------------------------------------
+/* Each lane of the stereo kernel does the mono operations in the mono order. So the outputs, the per-channel Stats and
+ * the final states are bit-equal to two mono Stages wherever the build contracts (FMA) scalar and vector code at the
+ * same places:
+ *   - no contraction: -ffp-contract=off, or x86-64 without -march (SSE2 has no FMA);
+ *   - clang's per-expression contraction with the native NEON / SSE2 vector types.
+ * g_stereo_exact reports whether every comparison was bit-equal; cpp/tests asserts it for those builds. Where the
+ * two codes may contract differently (the struct fallback with contraction on; GCC's -ffp-contract=fast with FMA,
+ * -march=x86-64-v3), the arithmetic is the same and only the rounding differs. That is what TOL_PINNED_ABS bounds
+ * between builds (same pack, same per-sample code; measured 2.7e-11 V over the FMA / non-FMA builds), so the stereo
+ * tolerance is the same, with TOL_ITER_FRAC for the Newton statistics. */
+static const double TOL_STEREO_ABS = TOL_PINNED_ABS;
+static bool g_stereo_exact = true;
+static double g_stereo_worst = 0.0;
+static long g_stereo_runs = 0, g_stereo_allocs = 0, g_stereo_lanes_differ = 0;
+
+static bool same_stats(const Stats& a, const Stats& b) {
+    return a.samples == b.samples && a.iterations == b.iterations && a.nonconverged == b.nonconverged &&
+           a.nonfinite_inputs == b.nonfinite_inputs && a.swaps == b.swaps && a.max_iterations == b.max_iterations &&
+           std::equal(a.histogram, a.histogram + Stats::HIST, b.histogram);
+}
+
+// channel ch of a stereo run against its mono reference: output, Stats, final state
+static void compare_channel(const std::string& what, const Vec& ys, const Vec& ym, const StereoStage& s, int ch, const Stage& m) {
+    const Stats &a = s.stats(ch), &b = m.stats();
+    bool state_eq = true;
+    double ds = 0;
+    for (int i = 0; i < NX; ++i) { state_eq = state_eq && s.state_x(ch, i) == m.state_x()[i]; ds = std::max(ds, std::fabs(s.state_x(ch, i) - m.state_x()[i])); }
+    for (int i = 0; i < 2; ++i) { state_eq = state_eq && s.state_v(ch, i) == m.state_v()[i]; ds = std::max(ds, std::fabs(s.state_v(ch, i) - m.state_v()[i])); }
+    const double e = maxdiff(ys.data(), ym.data(), ym.size());
+    const bool exact = ys == ym && same_stats(a, b) && state_eq;
+    g_stereo_exact = g_stereo_exact && exact;
+    g_stereo_worst = std::max(g_stereo_worst, e);
+    const double di = std::fabs(double(a.iterations) - double(b.iterations)) / double(b.iterations);
+    const double dn = std::fabs(double(a.nonconverged) - double(b.nonconverged));
+    check(e <= TOL_STEREO_ABS && ds <= TOL_STEREO_ABS, what + " output / state abs " + std::to_string(e));
+    check(a.samples == b.samples && a.nonfinite_inputs == b.nonfinite_inputs && a.swaps == b.swaps &&
+          di <= TOL_ITER_FRAC && dn <= TOL_ITER_FRAC * double(b.samples), what + " stats");
+    if (!exact) std::fprintf(stderr, "note: %s not bit-equal to mono (abs %.3g, iterations %" PRIu64 " vs %" PRIu64 ")\n",
+                             what.c_str(), e, a.iterations, b.iterations);
+}
+
+// a right-channel input unlike the left one: the left reversed, plus a tone that is loud in the second half, and
+// some NaN / inf samples (replaced by 0 and counted per channel)
+static Vec other_signal(const Vec& x) {
+    const size_t n = x.size();
+    Vec r(n);
+    for (size_t i = 0; i < n; ++i) {
+        r[i] = 0.6 * x[n - 1 - i] + (i < n / 2 ? 0.2 : 5.0) * std::sin(2 * PI * 1370.0 * double(i) / 48000.0);
+        if (i % 97 == 13) r[i] = NAN;
+        if (i % 211 == 50) r[i] = -INFINITY;
+    }
+    return r;
+}
+
+// One stereo run of case k against two mono runs: L gets x with k's gains, R gets xr with its gains scaled by
+// (dr, orr). Mono runs in blocks of 64, stereo in blocks of sblock (mono is block-size invariant, test_cases).
+static void stereo_case(const std::map<std::string, Vec>& V, const std::string& what, const CaseCfg& k, const Vec& x,
+                        const Vec& xr, double dr, double orr, size_t sblock) {
+    const TriodeMath math = k.fast ? TriodeMath::fast : TriodeMath::libm;
+    CaseCfg kr = k;
+    kr.drive *= dr; kr.output *= orr;
+    Stage* ml = new Stage; Stage* mr = new Stage; StereoStage* s = new StereoStage;
+    for (Stage* m : {ml, mr}) check(m->prepare(48000.0, Quality{k.os, k.prewarp}, k.bias, math) == BuildStatus::ok, "prepare");
+    check(s->prepare(48000.0, Quality{k.os, k.prewarp}, k.bias, math) == BuildStatus::ok, "stereo prepare");
+    Vec yml, ymr;
+    run_case(*ml, V, k, false, x, yml, 64);
+    run_case(*mr, V, kr, false, xr, ymr, 64);
+    Vec yl(x.size()), yr(x.size());
+    s->set_drive(k.drive, kr.drive); s->set_output(k.output, kr.output);
+    g_stereo_allocs += run_blocks(*s, V, k, false, x.size(), sblock, [&](size_t i, size_t m) {
+        s->process(x.data() + i, xr.data() + i, yl.data() + i, yr.data() + i, m);
+    });
+    compare_channel(what + " L", yl, yml, *s, 0, *ml);
+    compare_channel(what + " R", yr, ymr, *s, 1, *mr);
+    check(s->nonconverged_total() == s->stats(0).nonconverged + s->stats(1).nonconverged, what + " nonconverged_total");
+    // different iteration-count multisets: some sample had a different count per lane, so the masking was exercised
+    g_stereo_lanes_differ += !std::equal(ml->stats().histogram, ml->stats().histogram + Stats::HIST, mr->stats().histogram);
+    ++g_stereo_runs;
+    delete ml; delete mr; delete s;
+}
+
+static void test_stereo(const std::map<std::string, Vec>& V) {
+    // every vectors case (all settings, libm and fast, bias, live swap, forced non-convergence), three ways
+    for (const auto& kv : V) {
+        const std::string& key = kv.first;
+        if (key.rfind("case.", 0) != 0 || key.size() < 4 || key.compare(key.size() - 4, 4, ".cfg") != 0) continue;
+        const std::string p = key.substr(0, key.size() - 3), name = p.substr(5, p.size() - 6);
+        const CaseCfg k = parse_cfg(kv.second);
+        const Vec x = need(V, p + "in"), xr = other_signal(x);
+        stereo_case(V, "stereo " + name + " same", k, x, x, 1.0, 1.0, 64);
+        stereo_case(V, "stereo " + name + " diff", k, x, xr, 1.0, 1.0, 64);
+        stereo_case(V, "stereo " + name + " gains", k, x, xr, 2.5, 0.4, 37);   // + ragged blocks
+    }
+    // capped Newton (3 iterations): the loud lane hits the cap and falls back (#7) while the quiet one converges
+    {
+        Vec x(960), xr(960);
+        for (size_t i = 0; i < x.size(); ++i) {
+            x[i] = 8.0 * std::sin(2 * PI * 1000.0 * double(i) / 48000.0);
+            xr[i] = 0.05 * std::sin(2 * PI * 700.0 * double(i) / 48000.0);
+        }
+        const CaseCfg k{8, 0.0, 1.0, 1.0, 1.0, false, Newton{3, 1e-6, 1e-6}, -1, 1.0, Newton{}};
+        stereo_case(V, "stereo capped", k, x, xr, 1.0, 1.0, 64);
+        StereoStage* s = new StereoStage;          // the fallback split per lane, checked on a fresh run
+        s->prepare(48000.0);
+        Coeffs c = s->latest(); c.newton = k.nw; s->publish(c);
+        Vec yl(x.size()), yr(x.size());
+        s->process(x.data(), xr.data(), yl.data(), yr.data(), x.size());
+        check(s->stats(0).nonconverged > 0 && s->stats(1).nonconverged == 0 && allfinite(yl.data(), yl.size()),
+              "capped Newton: one lane falls back, the other converges");
+        metric("stereo_capped_nonconv_l", double(s->stats(0).nonconverged));
+        delete s;
+    }
+    check(g_stereo_lanes_differ >= g_stereo_runs / 2, "the lanes ran different Newton iteration counts");
+    metric("stereo_runs", double(g_stereo_runs));
+    metric("stereo_lanes_differ_runs", double(g_stereo_lanes_differ));
+    metric("stereo_abs_worst", g_stereo_worst);
+    metric("stereo_process_allocations", double(g_stereo_allocs));
+    check(g_stereo_allocs == 0, "StereoStage::process allocates nothing (" + std::to_string(g_stereo_allocs) + ")");
+}
+
+// solve2 against solve on two different problems per call: the vectors' hard problems (pnjlim, line search, caps)
+// and random ones, each lane bit for bit (exact builds) or within TOL_SOLVE with the same iteration count
+static void test_stereo_solve(const std::map<std::string, Vec>& V) {
+    const Vec in = need(V, "solve.in"), Kv = need(V, "coef.standard.K");
+    const double K[2][2] = {{Kv[0], Kv[1]}, {Kv[2], Kv[3]}};
+    struct P { double p0, p1, v0, v1; Newton nw; };
+    std::vector<P> rows;
+    for (size_t i = 0; i + 7 <= in.size(); i += 7)
+        rows.push_back(P{in[i], in[i + 1], in[i + 2], in[i + 3], Newton{int(in[i + 4]), in[i + 5], in[i + 6]}});
+    const size_t nvec = rows.size();
+    Coeffs c;
+    build_coeffs(c, 384000.0);
+    double pr0 = c.H[0][1] * c.HT, pr1 = c.H[1][1] * c.HT;           // p at rest: G x0 + H (0, HT)
+    for (int j = 0; j < NX; ++j) { pr0 += c.G[0][j] * c.x0[j]; pr1 += c.G[1][j] * c.x0[j]; }
+    std::uint32_t r = 21;
+    auto uni = [&r](double a, double b) { r = r * 1664525u + 1013904223u; return a + (b - a) * double(r >> 8) / 16777216.0; };
+    for (int i = 0; i < 4000; ++i)
+        rows.push_back(P{pr0 + uni(-12, 3), pr1 + uni(-80, 80), uni(-3, 3), uni(0, 450), Newton{}});
+    long pairs = 0, exact = 0, it_mismatch = 0;
+    double ev = 0;
+    for (size_t i = 0; i < rows.size(); ++i) {
+        const P& a = rows[i];
+        size_t j = (i * 37 + 11) % rows.size();                          // a partner with the same Newton settings
+        while (rows[j].nw.max_it != a.nw.max_it || rows[j].nw.tol_v != a.nw.tol_v || rows[j].nw.tol_f != a.nw.tol_f) j = (j + 1) % rows.size();
+        const P& b = rows[j];
+        const Solution2 s = solve2<LibmMath>(simd::make(a.p0, b.p0), simd::make(a.p1, b.p1), K, simd::make(a.v0, b.v0),
+                                             simd::make(a.v1, b.v1), DZ_12AX7_RSD1, a.nw);
+        for (int l = 0; l < 2; ++l) {
+            const P& q = l ? b : a;
+            const Solution m = solve<LibmMath>(q.p0, q.p1, K, q.v0, q.v1, DZ_12AX7_RSD1, q.nw);
+            const double g[4] = {simd::lane(s.v0, l), simd::lane(s.v1, l), simd::lane(s.ig, l), simd::lane(s.ia, l)};
+            const bool same_it = s.it[l] == m.it && s.ok[l] == m.ok;
+            exact += same_it && g[0] == m.v0 && g[1] == m.v1 && g[2] == m.ig && g[3] == m.ia;
+            it_mismatch += !same_it;
+            if (same_it && m.ok)
+                ev = std::max({ev, std::fabs(g[0] - m.v0), std::fabs(g[1] - m.v1) / std::max(1.0, std::fabs(m.v1))});
+            ++pairs;
+        }
+    }
+    // the fast-math triode in the same kernel, on the random problems
+    long fexact = 0, fn = 0;
+    for (size_t i = nvec; i + 1 < rows.size(); i += 2) {
+        const P &a = rows[i], &b = rows[i + 1];
+        const Solution2 s = solve2<FastMath>(simd::make(a.p0, b.p0), simd::make(a.p1, b.p1), K, simd::make(a.v0, b.v0),
+                                             simd::make(a.v1, b.v1), DZ_12AX7_RSD1, a.nw);
+        for (int l = 0; l < 2; ++l) {
+            const P& q = l ? b : a;
+            const Solution m = solve<FastMath>(q.p0, q.p1, K, q.v0, q.v1, DZ_12AX7_RSD1, q.nw);
+            fexact += s.it[l] == m.it && s.ok[l] == m.ok && simd::lane(s.v0, l) == m.v0 && simd::lane(s.v1, l) == m.v1 &&
+                      simd::lane(s.ig, l) == m.ig && simd::lane(s.ia, l) == m.ia;
+            ++fn;
+        }
+    }
+    g_stereo_exact = g_stereo_exact && exact == pairs && fexact == fn;
+    metric("stereo_solve_lanes", double(pairs));
+    metric("stereo_solve_bit_equal_frac", double(exact) / double(pairs));
+    metric("stereo_solve_fast_bit_equal_frac", double(fexact) / double(fn));
+    metric("stereo_solve_it_mismatch", double(it_mismatch));
+    metric("stereo_solve_v_err", ev);
+    check(ev <= TOL_SOLVE && double(it_mismatch) <= TOL_ITER_FRAC * double(pairs), "solve2 lanes = solve");
+}
+
+static void test_stereo_misc() {
+    // float I/O = the double path rounded to float; NaN input; an unprepared stage outputs zeros
+    StereoStage* a = new StereoStage; StereoStage* b = new StereoStage;
+    a->prepare(48000.0); b->prepare(48000.0);
+    a->set_drive(1.0, 3.0); b->set_drive(1.0, 3.0);
+    double xl[480], xr[480], yl[480], yr[480];
+    float fl[480], fr[480], gl[480], gr[480];
+    for (int i = 0; i < 480; ++i) {
+        fl[i] = float(2.0 * std::sin(2 * PI * 1000.0 * i / 48000.0)); fr[i] = float(0.5 * std::sin(2 * PI * 300.0 * i / 48000.0));
+        xl[i] = fl[i]; xr[i] = fr[i];
+    }
+    long allocs;
+    { CountAllocs ca; a->process(xl, xr, yl, yr, 480); b->process(fl, fr, gl, gr, 480); allocs = ca.n(); }
+    double e = 0;
+    for (int i = 0; i < 480; ++i) e = std::max({e, std::fabs(double(gl[i]) - float(yl[i])), std::fabs(double(gr[i]) - float(yr[i]))});
+    check(allocs == 0 && e == 0.0, "stereo float I/O = double path rounded to float, no allocation");
+    // in place
+    a->reset(); b->reset();
+    double il[480], ir[480];
+    std::copy(xl, xl + 480, il); std::copy(xr, xr + 480, ir);
+    a->process(il, ir, il, ir, 480);
+    b->process(xl, xr, yl, yr, 480);
+    check(std::equal(il, il + 480, yl) && std::equal(ir, ir + 480, yr), "stereo in place");
+    delete a; delete b;
+    StereoStage* s = new StereoStage;
+    check(s->prepare(48000.0, STANDARD, 1.0, TriodeMath::libm, Newton{1, 1e-6, 1e-6}) == BuildStatus::dc_nonconvergence &&
+          !s->prepared(), "stereo prepare reports DC non-convergence");
+    for (int i = 0; i < 480; ++i) yl[i] = yr[i] = 1.0;
+    s->process(xl, xr, yl, yr, 480);
+    check(maxabs(yl, 480) == 0.0 && maxabs(yr, 480) == 0.0, "an unprepared stereo stage outputs zeros");
+    delete s;
+#if defined(DKCORE_X86_SSE)
+    const unsigned csr = _mm_getcsr();
+    s = new StereoStage;
+    s->prepare(48000.0);
+    s->process(xl, xr, yl, yr, 16);
+    check(_mm_getcsr() == csr, "StereoStage::process restores the caller's MXCSR");
+    delete s;
+#endif
+}
+
+static void run_stereo_tests(const std::map<std::string, Vec>& V) {
+    test_stereo(V);
+    test_stereo_solve(V);
+    test_stereo_misc();
+    g_json << (g_json.tellp() > 0 ? ", " : "") << "\"simd\": \"" << simd::NAME << "\"";
+    metric("stereo_exact", g_stereo_exact ? 1 : 0);
+}
+
 // ---- cli ---------------------------------------------------------------------------------------------------
 static void json_mat(std::FILE* f, const char* k, const double* a, int n) {
     std::fprintf(f, "\"%s\": [", k);
@@ -673,6 +910,12 @@ int main(int argc, char** argv) {
         std::printf("{%s, \"failures\": %d}\n", g_json.str().c_str(), g_fail);
         return g_fail ? 1 : 0;
     }
+    if (argc > 1 && std::string(argv[1]) == "stereo") {    // the stereo parity tests alone (cpp/tests, several builds)
+        run_stereo_tests(load(argc > 2 ? argv[2] : "vectors.txt"));
+        metric("alloc_hooks", ALLOC_HOOKS ? 1 : 0);
+        std::printf("{%s, \"failures\": %d}\n", g_json.str().c_str(), g_fail);
+        return g_fail ? 1 : 0;
+    }
     const std::string path = argc > 1 ? argv[1] : "vectors.txt";
     const auto V = load(path);
     test_taps(V);
@@ -686,6 +929,7 @@ int main(int argc, char** argv) {
     test_denormals();
     test_swap_threads();
     test_float_io();
+    run_stereo_tests(V);
     metric("alloc_hooks", ALLOC_HOOKS ? 1 : 0);
     metric("failures", g_fail);
     std::printf("{%s}\n", g_json.str().c_str());
