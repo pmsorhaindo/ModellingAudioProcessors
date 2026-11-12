@@ -118,8 +118,10 @@ iterate in lock step under an "active" mask:
 
 So each lane's result, iteration count and flag are mono's, and the per-channel `Stats` are identical. The price
 is that a sample costs max(itL, itR) iterations of both lanes. Freezing was chosen over running each lane to its own
-count in scalar code because it keeps one code path and no per-lane branches. What it costs is for the benchmark to
-say (BENCHMARK.md, PENDING).
+count in scalar code because it keeps one code path and no per-lane branches. On the M1 (BENCHMARK.md, "Stereo SIMD
+results") one StereoStage costs 1.25–1.35 × one mono Stage with fast math and 1.57–1.67 × with libm, i.e.
+0.63–0.83 × two mono Stages. That run cannot separate the max(itL, itR) share; the per-lane scalar libm calls are
+the larger visible cost.
 
 **Exactness.** Stereo equals two mono `Stage`s bit for bit wherever the build contracts (FMA) the scalar and the
 vector code at the same places:
@@ -306,7 +308,8 @@ the C++ core takes 0.14–0.18 s (about 40× less).
 - One triode parameter set, one circuit (`Values` = `circuit.VALUES`). pnjlim's VT is `1/par.Cg`. Python uses the
   module constant, which is the same for that set.
 - Double precision inside. The float overloads convert per sample. Stereo is `StereoStage` (#21): 2 lanes, with
-  per-lane scalar transcendentals. Its cost is not measured yet (BENCHMARK.md, PENDING). No plugin wrapper (#22).
+  per-lane scalar transcendentals. On the M1 it costs 1.25–1.35 × mono (fast) and
+  1.57–1.67 × (libm) (BENCHMARK.md, "Stereo SIMD results"); x86 not measured yet. No plugin wrapper (#22).
 - The NEON path was run only with Apple clang, and SSE2 only with Apple clang under Rosetta 2 here, plus GCC on CI.
   GCC on AArch64 and MSVC (which gets the struct fallback) were not built.
 - No smoothing of drive / output / bias, as in Python. A bias swap jumps the matrices at a block boundary.
