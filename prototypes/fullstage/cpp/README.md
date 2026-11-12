@@ -6,8 +6,8 @@ stays the reference. Everything here is checked against it.
 
 | file | what |
 |---|---|
-| `dk_core.h` | the core: `dkcore::Stage`, `build_coeffs`, `solve`, `Triode`, `Resampler`, `ScopedFlushDenormals`, `TripleBuffer` |
-| `test_core.cpp` | test harness: vector tests, allocation counting, FTZ, threaded swap, #7 fallback; plus `cli` / `solve` / `triode` modes |
+| `dk_core.h` | the core: `dkcore::Stage`, `StereoStage` (#21), `build_coeffs`, `solve` / `solve2`, `Triode` / `Triode2`, `Resampler`, `simd`, `ScopedFlushDenormals`, `TripleBuffer` |
+| `test_core.cpp` | test harness: vector tests, allocation counting, FTZ, threaded swap, #7 fallback, stereo parity; plus `cli` / `solve` / `triode` / `swap` / `stereo` modes |
 | `export_vectors.py` | writes `vectors.txt` from the Python stage (`python -m cpp.export_vectors`, ~3 s) |
 | `vectors.txt` | the reference vectors (generated, exact shortest-repr floats, 365 kB) |
 | `validate_cpp.py` | runs `dk.validate.run` on the C++ core and compares it to `dk/results.json`; writes `results.json` |
@@ -76,9 +76,116 @@ call; the C++ core only counts, and the host polls the counters. The DC solve ha
 fails the build instead. The core adds one rule of its own: NaN / inf input samples are replaced by 0 and counted
 (`nonfinite_inputs`). Python has no such guard.
 
+## Stereo (#21)
+
+`dkcore::StereoStage` processes left and right as the two lanes of one 2 × double SIMD kernel. Both channels use
+one shared coefficient pack, since the matrices are the same for both. Drive and output gain are per channel
+(`set_drive(l, r)`, `set_output(l, r)`; the one-argument forms set both). The API, threads and realtime rules are
+`Stage`'s:
+- `prepare` / `request_bias` / `publish` / `latest` act on both channels. That plumbing now lives in
+  `detail::StageBase`, shared by both classes.
+- `process(inL, inR, outL, outR, n)`, double or float. No allocation, locks or syscalls.
+- The same `ScopedFlushDenormals`.
+- NaN / inf inputs are replaced and counted per channel.
+- `stats(ch)` gives the per-channel `Stats`. `nonconverged_total()` counts both channels.
+- `sizeof(StereoStage)` is 45 kB; two `Stage`s take 55 kB.
+
+**The wrapper (`dkcore::simd`).** `V2` holds the values and `M2` the per-lane masks. There are three versions:
+- **AArch64:** NEON `float64x2_t`.
+- **x86 (GCC / clang):** SSE2 `__m128d`. No AVX: two lanes are all the problem has, and AVX's 4 lanes would need
+  two stereo pairs.
+- **Elsewhere, or with `-DDKCORE_SIMD_SCALAR`:** a struct of two doubles, which any C++17 compiler builds.
+
+The native types keep `+ - * /` as built-in operators. Only the masks, select, abs and compares are wrapper
+functions over intrinsics.
+
+**Each lane does exactly the mono operations, in the mono order.** `Triode2`, `solve2` and `StereoStage::tick` are
+`Triode`, `solve` and `Stage::tick` written with `V2` for `double`: the same expression trees, with branches turned
+into per-lane selects. The FIR resampler is the same template (`ResamplerT<double>` is the mono `Resampler`,
+`ResamplerT<V2>` the stereo one).
+- exp / log1p / pow (libm or `dk/fastmath.h`) and pnjlim run per lane, as scalar calls to the very same functions.
+  No vector libm gives libm's bits, and fastmath stays untouched.
+- The SIMD work is therefore everything else: the matrices, the Jacobian and Newton step, the residuals, the line
+  search arithmetic and the resampler.
+
+**Per-lane Newton.** The lanes may need different iteration counts, and each must stop where mono stops. Both lanes
+iterate in lock step under an "active" mask:
+- When a lane converges, its iteration count is recorded and the lane is **frozen**: every later update to it is
+  `select(active, new, old)`.
+- The line search is masked the same way: a lane leaves the halving loop when its own trial is accepted.
+- The loop ends when both lanes have converged, or at the cap. A lane still active at the cap returns its best
+  iterate, flagged (#7), as mono does.
+
+So each lane's result, iteration count and flag are mono's, and the per-channel `Stats` are identical. The price
+is that a sample costs max(itL, itR) iterations of both lanes. Freezing was chosen over running each lane to its own
+count in scalar code because it keeps one code path and no per-lane branches. On the M1 (BENCHMARK.md, "Stereo SIMD
+results") one StereoStage costs 1.25–1.35 × one mono Stage with fast math and 1.57–1.67 × with libm, i.e.
+0.63–0.83 × two mono Stages. That run cannot separate the max(itL, itR) share; the per-lane scalar libm calls are
+the larger visible cost.
+
+**Exactness.** Stereo equals two mono `Stage`s bit for bit wherever the build contracts (FMA) the scalar and the
+vector code at the same places:
+- **No contraction at all:** `-ffp-contract=off`, or a build without FMA instructions. `test_core` and `bench`
+  report `fma` from `__FMA__` / AArch64, and the tests decide from that report, not from the flags. CI's ubuntu
+  GCC contracts at plain `-O2`, below.
+- **clang's per-expression contraction on the native types.** It fuses `a*b + c` in a vector expression exactly
+  where it fuses it in the same scalar expression. Checked on Apple clang 17: scalar `fmul`+`fmadd`, vector
+  `fmul.2d`+`fmla.2d`.
+
+It is not guaranteed in two cases:
+- **The struct fallback with contraction on.** Its operators are functions, so nothing is fused, while mono is.
+- **GCC's default `-ffp-contract=fast` with FMA available** (e.g. `-march=x86-64-v3`). GCC fuses after
+  optimisation, and the scalar and vector code can come out differently.
+
+Then the arithmetic is the same and only the rounding differs. That is the situation `TOL_PINNED_ABS` already
+bounds between builds (same pack, same per-sample code: 1e-9 V, measured 2.7e-11 V), so it is the stereo
+tolerance too, with `TOL_ITER_FRAC` for the Newton statistics.
+
+| build (measured 12 Nov 2026) | SIMD | stereo vs 2 × mono |
+|---|---|---|
+| Apple clang 17, M1: `-O2`, `-O3`, `-O2 -ffp-contract=off` | neon | bit-exact |
+| Apple clang 17, M1: `-O2 -ffp-contract=off -DDKCORE_SIMD_SCALAR` | scalar | bit-exact |
+| Apple clang 17, M1: `-O2 -DDKCORE_SIMD_SCALAR` (contraction on) | scalar | 3.6e-12 V worst; solver lanes 69 % bit-equal, 8.9e-16 worst, iteration counts all equal |
+| Apple clang 17, `-arch x86_64` under Rosetta 2: `-O2`, `-O2 -DDKCORE_SIMD_SCALAR`, `-O2 -march=x86-64-v3` | sse2 / scalar / sse2 | bit-exact |
+| GCC on ubuntu x86-64 (CI): `-O2 -ffp-contract=off`, SIMD and scalar | sse2 / scalar | bit-exact (asserted) |
+| GCC on ubuntu x86-64 (CI): `-O2`, `-O3`, scalar `-O2` | sse2 / scalar | within tolerance: 1.3e-13–4.8e-13 V, iteration counts identical (first CI run; that toolchain contracts at plain `-O2`) |
+| GCC on ubuntu x86-64 (CI): `-O2 -march=x86-64-v3` | sse2 | within tolerance |
+
+Mono output is unchanged by #21. A bit hash of mono `process()` output, internal Vgk, float I/O, state and stats
+over 60 configurations, plus the resampler alone, is identical to main at `-O0`, `-O2`, `-O3` and
+`-O2 -ffp-contract=off` (scratch check, not committed).
+
+**Parity tests** (`test_core stereo`, also part of the full `test_core` run). Each check compares one `StereoStage`
+with two independent mono `Stage`s: output, per-channel `Stats` (iterations, histogram, non-converged, swaps,
+non-finite inputs) and final state.
+- Every vectors case (all three settings, libm and fast, bias 1.5, the live bias swap, forced non-convergence, drive
+  and output) runs three ways:
+  - L = R;
+  - L ≠ R: R is the left input reversed, plus a tone that gets loud halfway, with NaN / inf samples;
+  - L ≠ R with R's drive × 2.5 and output × 0.4, in ragged blocks of 37.
+
+  That is 42 runs. In 29 of them the two lanes' iteration histograms differ, so the masking is exercised.
+- A capped Newton (3 iterations): the loud lane falls back (#7) while the quiet one converges.
+- `solve2` against `solve`, lane by lane: the 146 vector problems (pnjlim, line search, caps) plus 4000 random hard
+  problems, paired, 8292 lanes in total. libm and fast math.
+- Float I/O, in place, an unprepared stage, DC non-convergence, MXCSR restore (x86), and 0 allocations.
+
+The output prints `stereo_exact`. `test_stereo_parity` (pytest) runs it in six builds:
+- SIMD and forced scalar, with and without `-ffp-contract=off`;
+- `-O3`, the bench flags;
+- `-march=x86-64-v3` on x86.
+
+It asserts the SIMD path in use (neon / sse2 / scalar), and `stereo_exact == 1` wherever exactness is guaranteed
+(above). Mutation check (by hand, 12 Nov 2026):
+- Caught: halving lanes that never leave the line search, and converged lanes that stay active. Both fail the
+  tolerance.
+- Caught by `stereo_exact` only: no freeze of a converged lane's v. The lane moves by less than tol_v.
+- Not caught, and removed: an `act &` mask on the best-iterate update. Dead logic: best is only read for lanes that
+  are still active at the cap.
+
 ## Tests and tolerances
 
-`python -m pytest -q cpp/tests` (from `prototypes/fullstage`, ~20 s, 11 tests) compiles `test_core.cpp` with `$CXX`,
+`python -m pytest -q cpp/tests` (from `prototypes/fullstage`, ~40 s, 18 tests) compiles `test_core.cpp` with `$CXX`,
 else `g++` / `c++` / `clang++`. Without a compiler it skips, except under CI (`CI` set), where it fails. GitHub's
 ubuntu runners have g++, so the existing `test (fullstage)` job runs these tests with **no `ci.yml` change**.
 
@@ -90,7 +197,8 @@ ubuntu runners have g++, so the existing `test (fullstage)` job runs these tests
 | `test_bit_exact_solver` / `_triode` | `solve()` on the vector rows + 2000 random hard problems, and the currents (libm, currents_only, fast) on 3000 random points, equal **bit for bit** to the live Python functions on the same machine (`-O2 -ffp-contract=off`) |
 | `test_vectors_are_fresh` | the committed `vectors.txt` still matches what the Python stage produces now |
 | `test_validate_reproduced[hq/standard/eco]` | `dk.validate.run` on the C++ core reproduces `dk/results.json` within `validate_cpp.LIMITS`, and every `pass_vs_dz` criterion holds |
-| `test_bench_smoke` / `test_bench_records` | `bench.cpp` (#20) builds and runs all 72 configurations once on 512 samples with bit-identical output across passes (no timing checked); any committed `bench_*.json` is complete (skipped while there is none) |
+| `test_stereo_parity[...]` | `StereoStage` = two mono `Stage`s (section "Stereo"), six builds; bit-exact where guaranteed |
+| `test_bench_smoke` / `test_bench_records` | `bench.cpp` (#20, #21) builds and runs all 108 configurations once on 512 samples, with bit-identical output across passes and s2 = x2 on exact builds (no timing checked); every committed `bench_*.json` is complete (the #20 72-row or the #21 108-row schema) |
 
 **Vectors** (`export_vectors.py`; tolerances in `test_core.cpp`). The tolerances were set from the worst error measured
 over four x86-64 builds: gcc 14 `-O0`, `-O2`, `-O2 -march=x86-64-v3` and `-O3 -march=native`. A fifth run nudged
@@ -199,8 +307,11 @@ the C++ core takes 0.14–0.18 s (about 40× less).
   only 48 kHz is tested.
 - One triode parameter set, one circuit (`Values` = `circuit.VALUES`). pnjlim's VT is `1/par.Cg`. Python uses the
   module constant, which is the same for that set.
-- Mono, double precision inside. The float overload converts per sample. No SIMD, no stereo (#21), no plugin wrapper
-  (#22).
+- Double precision inside. The float overloads convert per sample. Stereo is `StereoStage` (#21): 2 lanes, with
+  per-lane scalar transcendentals. On the M1 it costs 1.25–1.35 × mono (fast) and
+  1.57–1.67 × (libm) (BENCHMARK.md, "Stereo SIMD results"); x86 not measured yet. No plugin wrapper (#22).
+- The NEON path was run only with Apple clang, and SSE2 only with Apple clang under Rosetta 2 here, plus GCC on CI.
+  GCC on AArch64 and MSVC (which gets the struct fallback) were not built.
 - No smoothing of drive / output / bias, as in Python. A bias swap jumps the matrices at a block boundary.
 - Allocation hooks are glibc-specific; elsewhere only `operator new` / `delete` are counted.
 - TSan, FMA and every run were on x86-64 Linux only. AArch64 / macOS / Windows were compile-checked, not run.
@@ -226,4 +337,9 @@ dkcore::Stage s;
 s.prepare(48000.0);           // standard 8x, bias 1, libm
 s.process(in, out, n);        // audio thread
 s.request_bias(1.5);          // any non-RT thread
+
+dkcore::StereoStage st;       // #21: L and R in one SIMD kernel, the same results as two Stages
+st.prepare(48000.0);
+st.set_drive(1.0, 1.0);       // per channel (or set_drive(g) for both)
+st.process(inL, inR, outL, outR, n);
 ```

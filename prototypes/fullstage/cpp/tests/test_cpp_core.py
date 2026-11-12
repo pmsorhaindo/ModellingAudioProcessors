@@ -7,11 +7,16 @@ clang++): skipped without one, except under CI (CI set in the environment), wher
   test_bit_exact_*         solve() and the triode currents against the live Python functions on this machine (same
                            libm), bit for bit, in a -O2 -ffp-contract=off build: catches a changed path (pnjlim, line
                            search) even where it converges to the same root
+  test_stereo_parity       StereoStage (#21) against two independent mono Stages (test_core stereo), per build: SIMD
+                           and forced scalar fallback, with and without FP contraction; bit-exact where the build
+                           guarantees it (_stereo_exact_expected), else within the test_core.cpp tolerance
   test_vectors_are_fresh   the committed cpp/vectors.txt still matches what the Python stage produces now
   test_validate_reproduced dk.validate.run on the C++ core against dk/results.json, every setting (cpp/validate_cpp.py)
-  test_bench_smoke         cpp/bench.cpp (#20) builds and runs every configuration once on 512 samples, output
-                           deterministic; no timing is checked (cpp/BENCHMARK.md)
-  test_bench_records       the committed cpp/bench_*.json results files (if any yet) are complete and well formed
+  test_bench_smoke         cpp/bench.cpp (#20, #21) builds and runs every configuration once on 512 samples, output
+                           deterministic, stereo SIMD rows bit-identical to their two-mono twins; no timing is
+                           checked (cpp/BENCHMARK.md)
+  test_bench_records       the committed cpp/bench_*.json results files are complete and well formed (#20 72-row
+                           and #21 108-row schemas)
 Run from prototypes/fullstage:  python -m pytest -q cpp/tests   (~15 s)
 """
 import glob, json, os, platform, signal, subprocess, sys
@@ -47,7 +52,7 @@ def _run_vectors(exe):
 
 def test_core_vectors():
     r = _run_vectors(_exe())
-    assert r["alloc_hooks"] == 1 and r["process_allocations"] == 0
+    assert r["alloc_hooks"] == 1 and r["process_allocations"] == 0 and r["stereo_process_allocations"] == 0
     assert r["swap_adopted"] > 0
 
 
@@ -66,6 +71,43 @@ def test_swap_tsan():
     if p.returncode != 0 and "FATAL: ThreadSanitizer" in p.stderr:    # e.g. TSan vs the kernel's mmap layout
         pytest.skip("TSan cannot run here: " + p.stderr[-200:])
     assert p.returncode == 0 and json.loads(p.stdout.strip().splitlines()[-1])["failures"] == 0, p.stderr[-2000:]
+
+
+ARM64 = platform.machine().lower() in ("arm64", "aarch64")
+
+
+def _stereo_exact_expected(flags, scalar, compiler, fma):
+    """Bit-exact stereo vs mono is guaranteed when scalar and vector code are contracted (FMA) at the same places
+    (cpp/README.md, "Stereo"):
+    - no contraction at all: -ffp-contract=off, or a build without FMA instructions (fma, as the binary reports it);
+    - clang's per-expression contraction on the native NEON / SSE2 types.
+    It is not guaranteed for the struct fallback with contraction, nor for GCC's -ffp-contract=fast with FMA, which
+    fuses after optimisation and so treats scalar and vector code differently."""
+    if "-ffp-contract=off" in flags or not fma:
+        return True
+    return not scalar and "clang" in compiler.lower()
+
+
+STEREO_BUILDS = [(("-O2",), False), (("-O3",), False), (("-O2", "-ffp-contract=off"), False),
+                 (("-O2",), True), (("-O2", "-ffp-contract=off"), True), (("-O2", "-march=x86-64-v3"), False)]
+
+
+@pytest.mark.parametrize("flags,scalar", STEREO_BUILDS, ids=lambda v: "scalar" if v is True else
+                         "simd" if v is False else " ".join(v))
+def test_stereo_parity(flags, scalar):
+    if "-march=x86-64-v3" in flags and not X86:
+        pytest.skip("x86-64 only")
+    exe = _exe(flags, ("DKCORE_SIMD_SCALAR",) if scalar else ())
+    p = subprocess.run([exe, "stereo", VECTORS], capture_output=True, text=True)
+    if p.returncode == -signal.SIGILL:
+        pytest.skip("this CPU cannot run the build")
+    r = json.loads(p.stdout.strip().splitlines()[-1])
+    assert p.returncode == 0 and r["failures"] == 0, p.stderr[-3000:]     # every check within tolerance
+    assert r["simd"] == ("scalar" if scalar else "neon" if ARM64 else "sse2" if X86 else r["simd"])
+    assert r["alloc_hooks"] == 1 and r["stereo_process_allocations"] == 0
+    assert r["stereo_runs"] == 43 and r["stereo_lanes_differ_runs"] >= 20 and r["stereo_capped_nonconv_l"] > 0
+    if _stereo_exact_expected(flags, scalar, r["compiler"], r["fma"]):
+        assert r["stereo_exact"] == 1, f"{r['compiler']} fma={r['fma']}\n" + p.stderr[-3000:]
 
 
 def _pipe(exe, mode, rows):
@@ -153,22 +195,35 @@ BENCH_KEYS = {"name", "quality", "os", "math", "level_v", "block", "instances", 
               "instr_per_sample", "ghz_on_cpu", "newton_mean", "nonconverged", "deterministic"}
 
 
-def _bench_rows_ok(rows, n_expected):
+def _bench_rows_ok(rows):
+    """#20 records: 72 rows, mono only (x1, x2), no "path". #21 records: 108 rows, x1 / x2 / s2, with "path", and every
+    s2 row says whether it is bit-identical to its x2 twin (only reported, not required here: see test_bench_smoke)."""
+    stereo = any("path" in r for r in rows)
+    n_expected = 108 if stereo else 72
     assert len(rows) == n_expected and len({r["name"] for r in rows}) == n_expected
     for r in rows:
         assert BENCH_KEYS <= set(r), r["name"]
         assert r["deterministic"] and r["ns_per_sample"] > 0 and r["newton_mean"] >= 1.0, r
+    if stereo:
+        s2 = [r for r in rows if r["path"] == "stereo_simd"]
+        assert len(s2) == 36 and all(r["name"].endswith("_s2") and r["instances"] == 2 for r in s2)
+        assert all(r["matches_x2"] in (True, False) for r in s2)      # the full matrix: every twin is in the run
+        assert {r["path"] for r in rows} == {"mono", "stereo_simd"}
 
 
 def test_bench_smoke():
     exe = _exe(name="bench")
     names = subprocess.run([exe, "--list"], capture_output=True, text=True, check=True).stdout.split()
-    assert len(names) == 3 * 2 * 3 * 2 * 2          # quality x math x peak x block x instances
+    assert len(names) == 3 * 2 * 3 * 2 * 3          # quality x math x peak x block x mode (x1, x2, s2)
     p = subprocess.run([exe, "--seconds", "0.011", "--reps", "1"], capture_output=True, text=True)
     assert p.returncode == 0, p.stderr[-2000:]      # 1: an output differed between passes
     d = json.loads(p.stdout)
     assert d["meta"]["samples_per_pass"] == 512
-    _bench_rows_ok(d["results"], len(names))
+    assert d["meta"]["simd"] == ("neon" if ARM64 else "sse2" if X86 else d["meta"]["simd"])
+    _bench_rows_ok(d["results"])
+    m = d["meta"]
+    if _stereo_exact_expected(("-O2",), False, m["compiler"], m["fma"]):   # then s2 equals x2 bit for bit
+        assert all(r["matches_x2"] for r in d["results"] if r["path"] == "stereo_simd"), (m["compiler"], m["fma"])
 
 
 def test_bench_records():
@@ -179,7 +234,7 @@ def test_bench_records():
         d = json.load(open(f))
         assert {"host", "build", "state_before", "state_after", "meta", "results"} <= set(d), f
         assert d["meta"]["reps"] >= 5 and not d["build"]["dirty"], f
-        _bench_rows_ok(d["results"], 72)
+        _bench_rows_ok(d["results"])
 
 
 def test_bench_flags_argv():

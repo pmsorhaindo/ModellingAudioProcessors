@@ -1,7 +1,8 @@
-"""Per-instance CPU benchmark of the C++ core (#20): builds cpp/bench.cpp, runs it, and writes one results file with
-the host, build and power / thermal / load state next to the measurements. Method and results: cpp/BENCHMARK.md.
-Run from prototypes/fullstage:
-  python -m cpp.bench --out cpp/bench_<machine>.json      # the official run: 72 configurations, -O3, 2 s x 11 passes
+"""Per-instance CPU benchmark of the C++ core (#20; stereo SIMD rows #21): builds cpp/bench.cpp, runs it, and writes
+one results file with the host, build and power / thermal / load state next to the measurements. Method and results:
+cpp/BENCHMARK.md. Run from prototypes/fullstage:
+  python -m cpp.bench --out cpp/bench_<machine>_stereo.json   # the official run: 108 configurations (x1, x2, s2),
+                                                               # -O3, 2 s x 11 passes
   python -m cpp.bench --only standard_libm --reps 5        # a subset (bench.cpp --only), not for the record
   python -m cpp.bench --seconds 0.011 --reps 1             # a functional smoke (512 samples); its numbers mean nothing
   python -m cpp.bench --table cpp/bench_<machine>.json     # the BENCHMARK.md tables from a results file
@@ -104,15 +105,27 @@ def _cycles(r):
     return c + ("*" if pf is not None and pf < 0.99 else "")
 
 
+def _mode(r):
+    """x1 / x2 / s2 (#21). The #20 records have no "path": mono only."""
+    return "s2" if r.get("path") == "stereo_simd" else f"x{r['instances']}"
+
+
+def _ratio(a, b, key):
+    va, vb = (a or {}).get(key), (b or {}).get(key)
+    return "—" if va is None or vb is None else f"{va / vb:.2f}"
+
+
 def table(rec):
-    """The BENCHMARK.md tables: mono per instance; two mono instances; per-block p99."""
-    R = {(r["quality"], r["math"], r["level_v"], r["block"], r["instances"]): r for r in rec["results"]}
+    """The BENCHMARK.md tables: mono per instance; two mono instances; stereo SIMD and its cost ratios (if in the
+    record); per-block p99."""
+    R = {(r["quality"], r["math"], r["level_v"], r["block"], _mode(r)): r for r in rec["results"]}
     qs = [q for q in ("eco", "standard", "hq") if any(k[0] == q for k in R)]
     ms = [m for m in ("libm", "fast") if any(k[1] == m for k in R)]
     lv = sorted({k[2] for k in R})
     os_ = {k[0]: R[k]["os"] for k in R}
     lines = []
-    for inst, title in ((1, "one mono instance"), (2, "two mono instances, one after the other (stereo-equivalent)")):
+    for inst, title in (("x1", "one mono instance"), ("x2", "two mono instances, one after the other (stereo-equivalent)"),
+                        ("s2", "stereo SIMD: one StereoStage, the x2 signals as two lanes of one kernel (#21)")):
         if not any(k[4] == inst for k in R):
             continue
         lines += [f"**{title}** — % of one core at 48 kHz real time (median), ns per base-rate sample "
@@ -130,13 +143,34 @@ def table(rec):
                                  f"{_cell(b, 'pct_core', '.2f')} | {ns(a)} | {ns(b)} | {_cycles(a)} | {_cycles(b)} | "
                                  f"{_cell(a or b, 'newton_mean', '.2f')} |")
         lines.append("")
+    if any(k[4] == "s2" for k in R):
+        lines += ["**stereo SIMD cost** — s2 / x1 and s2 / x2 from the same run: median ns per base-rate sample, and "
+                  "cycles where counted (2.00 = two mono instances, 1.00 = one); matches x2 = s2 output bit-identical "
+                  "to x2's", "",
+                  "| setting | math | peak | ns s2/x1 b64 | ns s2/x1 b512 | ns s2/x2 b64 | ns s2/x2 b512 | "
+                  "cycles s2/x1 b64 | cycles s2/x2 b64 | matches x2 |", "|---|---|---|---|---|---|---|---|---|---|"]
+        for q in qs:
+            for m in ms:
+                for v in lv:
+                    s = {b: R.get((q, m, v, b, "s2")) for b in (64, 512)}
+                    if not any(s.values()):
+                        continue
+                    one = {b: R.get((q, m, v, b, "x1")) for b in (64, 512)}
+                    two = {b: R.get((q, m, v, b, "x2")) for b in (64, 512)}
+                    match = {r.get("matches_x2") for r in s.values() if r}
+                    lines.append(f"| {q} {os_[q]}× | {m} | {v:g} V | {_ratio(s[64], one[64], 'ns_per_sample')} | "
+                                 f"{_ratio(s[512], one[512], 'ns_per_sample')} | {_ratio(s[64], two[64], 'ns_per_sample')} | "
+                                 f"{_ratio(s[512], two[512], 'ns_per_sample')} | {_ratio(s[64], one[64], 'cycles_per_sample')} | "
+                                 f"{_ratio(s[64], two[64], 'cycles_per_sample')} | "
+                                 f"{'yes' if match == {True} else 'NO' if False in match else '—'} |")
+        lines.append("")
     lines += ["**one mono instance, per block** — block time as % of the block's real-time period "
               "(b64 = 1.33 ms, b512 = 10.67 ms), p50 / p99 over all blocks of all passes", "",
               "| setting | math | peak | b64 p50 | b64 p99 | b512 p50 | b512 p99 |", "|---|---|---|---|---|---|---|"]
     for q in qs:
         for m in ms:
             for v in lv:
-                a, b = R.get((q, m, v, 64, 1)), R.get((q, m, v, 512, 1))
+                a, b = R.get((q, m, v, 64, "x1")), R.get((q, m, v, 512, "x1"))
                 if a or b:
                     lines.append(f"| {q} | {m} | {v:g} V | {_cell(a, 'block_pct_p50', '.1f')} | {_cell(a, 'block_pct_p99', '.1f')} | "
                                  f"{_cell(b, 'block_pct_p50', '.1f')} | {_cell(b, 'block_pct_p99', '.1f')} |")
