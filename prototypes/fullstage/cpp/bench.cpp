@@ -1,5 +1,6 @@
-/* bench.cpp -- per-instance CPU benchmark of cpp/dk_core.h (#20). Method, signal and results: cpp/BENCHMARK.md.
- * Normally built and run by cpp/bench.py, which adds the host description and writes the results file.
+/* bench.cpp -- per-instance CPU benchmark of cpp/dk_core.h (#20, stereo SIMD #21). Method, signal and results:
+ * cpp/BENCHMARK.md. Normally built and run by cpp/bench.py, which adds the host description and writes the results
+ * file.
  *
  *   bench [--seconds S] [--reps R] [--only A,B,...] [--list]
  *     --seconds  length of the test signal per pass (default 2; rounded down to a multiple of 512 samples)
@@ -8,11 +9,14 @@
  *   stdout: one JSON object (meta + one row per configuration); stderr: progress and a short table.
  *
  * A configuration is quality (eco / standard / hq) x math (libm / fast) x input peak (0.5 / 2 / 8 V) x block
- * (64 / 512) x instances (1 = one mono Stage; 2 = two independent mono Stages on one thread, left then right in each
- * block: a stereo-equivalent, not a SIMD stereo path, which does not exist yet, #21). Each pass resets the
- * instances and runs the whole signal through Stage::process() block by block; passes of all configurations are
- * interleaved round-robin so that drift (thermal, background load) spreads over all of them. Output is checked
- * bit-identical across passes (process() is deterministic from reset()).
+ * (64 / 512) x mode:
+ *   x1  one mono Stage;
+ *   x2  two independent mono Stages on one thread, left then right in each block (the stereo-equivalent of #20);
+ *   s2  one StereoStage (#21): the same left and right signals as x2, as the two SIMD lanes of one kernel.
+ * Each pass resets the instances and runs the whole signal through process() block by block; passes of all
+ * configurations are interleaved round-robin so that drift (thermal, background load) spreads over all of them.
+ * Output is checked bit-identical across passes (process() is deterministic from reset()). Each s2 row also reports
+ * whether its output is bit-identical to its x2 twin's (matches_x2; null if the twin is not in the run).
  *
  * Counters, where they exist (else null in the JSON):
  *   macOS:  proc_pid_rusage(RUSAGE_INFO_V6) ri_cycles / ri_instructions / ri_pcycles: the kernel's per-thread
@@ -155,7 +159,10 @@ struct Config {
     TriodeMath math;
     double level;
     int block, inst;
+    bool stereo = false;                       // s2: one StereoStage (inst == 2) instead of inst mono Stages
     Stage* s[2] = {nullptr, nullptr};
+    StereoStage* st = nullptr;
+    const Config* twin = nullptr;              // s2: the x2 configuration with the same settings, if in the run
     const std::vector<double>* x[2] = {nullptr, nullptr};
     std::vector<double> y[2];
     std::uint64_t checksum = 0;
@@ -173,7 +180,8 @@ static std::uint64_t bits_sum(const std::vector<double>& a, std::uint64_t h) {
 
 // one pass: reset, then the whole signal block by block; timed passes append their measurements to c
 static void pass(Config& c, std::size_t n, std::vector<std::chrono::steady_clock::time_point>& tp, bool timed) {
-    for (int k = 0; k < c.inst; ++k) c.s[k]->reset();
+    if (c.stereo) c.st->reset();
+    else for (int k = 0; k < c.inst; ++k) c.s[k]->reset();
     const std::size_t nb = n / std::size_t(c.block);
     const double cpu0 = thread_cpu_ns();
     const Cnt k0 = counters_read();
@@ -183,7 +191,10 @@ static void pass(Config& c, std::size_t n, std::vector<std::chrono::steady_clock
     tp[0] = std::chrono::steady_clock::now();
     for (std::size_t b = 0; b < nb; ++b) {
         const std::size_t o = b * std::size_t(c.block);
-        for (int k = 0; k < c.inst; ++k) c.s[k]->process(c.x[k]->data() + o, c.y[k].data() + o, std::size_t(c.block));
+        if (c.stereo)
+            c.st->process(c.x[0]->data() + o, c.x[1]->data() + o, c.y[0].data() + o, c.y[1].data() + o, std::size_t(c.block));
+        else
+            for (int k = 0; k < c.inst; ++k) c.s[k]->process(c.x[k]->data() + o, c.y[k].data() + o, std::size_t(c.block));
         tp[b + 1] = std::chrono::steady_clock::now();
     }
     const Cnt k1 = counters_read();
@@ -192,8 +203,9 @@ static void pass(Config& c, std::size_t n, std::vector<std::chrono::steady_clock
     for (int k = 0; k < c.inst; ++k) h = bits_sum(c.y[k], h);
     if (!timed) {
         c.checksum = h;
-        c.newton_mean = double(c.s[0]->stats().iterations) / double(c.s[0]->stats().samples);
-        for (int k = 0; k < c.inst; ++k) c.nonconverged += c.s[k]->stats().nonconverged;
+        const Stats& left = c.stereo ? c.st->stats(0) : c.s[0]->stats();
+        c.newton_mean = double(left.iterations) / double(left.samples);
+        for (int k = 0; k < c.inst; ++k) c.nonconverged += (c.stereo ? c.st->stats(k) : c.s[k]->stats()).nonconverged;
         return;
     }
     if (h != c.checksum) c.deterministic = false;
@@ -251,19 +263,25 @@ int main(int argc, char** argv) {
         for (TriodeMath m : {TriodeMath::libm, TriodeMath::fast})
             for (double lv : levels)
                 for (int blk : {64, 512})
-                    for (int inst : {1, 2}) {
+                    for (const char* mode : {"x1", "x2", "s2"}) {
                         char nm[64];
-                        std::snprintf(nm, sizeof nm, "%s_%s_%gV_b%d_x%d", q.first, m == TriodeMath::fast ? "fast" : "libm",
-                                      lv, blk, inst);
+                        std::snprintf(nm, sizeof nm, "%s_%s_%gV_b%d_%s", q.first, m == TriodeMath::fast ? "fast" : "libm",
+                                      lv, blk, mode);
                         bool keep = only.empty();
                         for (const auto& o : only) keep = keep || std::string(nm).find(o) != std::string::npos;
                         if (!keep) continue;
                         Config c;
-                        c.name = nm; c.quality = q.first; c.q = q.second; c.math = m; c.level = lv; c.block = blk; c.inst = inst;
+                        c.name = nm; c.quality = q.first; c.q = q.second; c.math = m; c.level = lv; c.block = blk;
+                        c.inst = mode[1] - '0'; c.stereo = mode[0] == 's';
                         cfg.push_back(std::move(c));
                     }
     if (list) { for (const auto& c : cfg) std::printf("%s\n", c.name.c_str()); return 0; }
     if (cfg.empty()) { std::fprintf(stderr, "no configuration matches --only\n"); return 2; }
+    for (auto& c : cfg)
+        if (c.stereo)
+            for (const auto& t : cfg)
+                if (!t.stereo && t.inst == 2 && t.quality == c.quality && t.math == c.math && t.level == c.level && t.block == c.block)
+                    c.twin = &t;
 
 #if defined(__APPLE__)
     // The QoS class a host's audio thread does not use, but the strongest hint available without a realtime
@@ -292,9 +310,15 @@ int main(int argc, char** argv) {
 
     for (auto& c : cfg) {
         const int l = int(std::find(levels, levels + 3, c.level) - levels);
+        if (c.stereo) {
+            c.st = new StereoStage;
+            if (c.st->prepare(FS, c.q, 1.0, c.math) != BuildStatus::ok) { std::fprintf(stderr, "prepare failed\n"); return 3; }
+        }
         for (int k = 0; k < c.inst; ++k) {
-            c.s[k] = new Stage;
-            if (c.s[k]->prepare(FS, c.q, 1.0, c.math) != BuildStatus::ok) { std::fprintf(stderr, "prepare failed\n"); return 3; }
+            if (!c.stereo) {
+                c.s[k] = new Stage;
+                if (c.s[k]->prepare(FS, c.q, 1.0, c.math) != BuildStatus::ok) { std::fprintf(stderr, "prepare failed\n"); return 3; }
+            }
             c.x[k] = &sig[l][k];
             c.y[k].assign(n, 0.0);
         }
@@ -322,7 +346,8 @@ int main(int argc, char** argv) {
 #else
     std::printf("\"counters\": \"%s\", ", have_counters ? COUNTER_SOURCE : "unavailable");
 #endif
-    std::printf("\"compiler\": \"%s\", \"sizeof_stage\": %zu}, \"results\": [", __VERSION__, sizeof(Stage));
+    std::printf("\"compiler\": \"%s\", \"sizeof_stage\": %zu, \"sizeof_stereo_stage\": %zu, \"simd\": \"%s\"}, "
+                "\"results\": [", __VERSION__, sizeof(Stage), sizeof(StereoStage), simd::NAME);
     for (std::size_t i = 0; i < cfg.size(); ++i) {
         Config& c = cfg[i];
         all_det = all_det && c.deterministic;
@@ -330,8 +355,10 @@ int main(int argc, char** argv) {
         const bool cy = have_counters && c.cyc_ok && !c.cyc.empty();
         const double nan = std::nan("");
         std::printf("%s\n{\"name\": \"%s\", \"quality\": \"%s\", \"os\": %d, \"math\": \"%s\", \"level_v\": %g, "
-                    "\"block\": %d, \"instances\": %d, ", i ? "," : "", c.name.c_str(), c.quality.c_str(), c.q.os,
-                    c.math == TriodeMath::fast ? "fast" : "libm", c.level, c.block, c.inst);
+                    "\"block\": %d, \"instances\": %d, \"path\": \"%s\", ", i ? "," : "", c.name.c_str(), c.quality.c_str(),
+                    c.q.os, c.math == TriodeMath::fast ? "fast" : "libm", c.level, c.block, c.inst,
+                    c.stereo ? "stereo_simd" : "mono");
+        if (c.stereo) std::printf("\"matches_x2\": %s, ", !c.twin ? "null" : c.twin->checksum == c.checksum ? "true" : "false");
         jnum("ns_per_sample", med, "%.1f"); std::printf(", ");
         jnum("ns_min", pct(c.ns, 0.0), "%.1f"); std::printf(", ");
         jnum("ns_max", pct(c.ns, 100.0), "%.1f"); std::printf(", ");
@@ -353,6 +380,6 @@ int main(int argc, char** argv) {
                      100.0 * med * FS / 1e9, pct(c.blocks, 99.0), cy ? std::to_string(long(median(c.cyc))).c_str() : "-");
     }
     std::printf("]}\n");
-    for (auto& c : cfg) for (int k = 0; k < c.inst; ++k) delete c.s[k];
+    for (auto& c : cfg) { for (int k = 0; k < c.inst; ++k) delete c.s[k]; delete c.st; }
     return all_det ? 0 : 1;
 }

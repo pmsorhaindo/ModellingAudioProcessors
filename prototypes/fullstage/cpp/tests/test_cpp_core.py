@@ -12,9 +12,11 @@ clang++): skipped without one, except under CI (CI set in the environment), wher
                            guarantees it (_stereo_exact_expected), else within the test_core.cpp tolerance
   test_vectors_are_fresh   the committed cpp/vectors.txt still matches what the Python stage produces now
   test_validate_reproduced dk.validate.run on the C++ core against dk/results.json, every setting (cpp/validate_cpp.py)
-  test_bench_smoke         cpp/bench.cpp (#20) builds and runs every configuration once on 512 samples, output
-                           deterministic; no timing is checked (cpp/BENCHMARK.md)
-  test_bench_records       the committed cpp/bench_*.json results files (if any yet) are complete and well formed
+  test_bench_smoke         cpp/bench.cpp (#20, #21) builds and runs every configuration once on 512 samples, output
+                           deterministic, stereo SIMD rows bit-identical to their two-mono twins; no timing is
+                           checked (cpp/BENCHMARK.md)
+  test_bench_records       the committed cpp/bench_*.json results files are complete and well formed (#20 72-row
+                           and #21 108-row schemas)
 Run from prototypes/fullstage:  python -m pytest -q cpp/tests   (~15 s)
 """
 import glob, json, os, platform, signal, subprocess, sys
@@ -195,22 +197,34 @@ BENCH_KEYS = {"name", "quality", "os", "math", "level_v", "block", "instances", 
               "instr_per_sample", "ghz_on_cpu", "newton_mean", "nonconverged", "deterministic"}
 
 
-def _bench_rows_ok(rows, n_expected):
+def _bench_rows_ok(rows):
+    """#20 records: 72 rows, mono only (x1, x2), no "path". #21 records: 108 rows, x1 / x2 / s2, with "path", and every
+    s2 row says whether it is bit-identical to its x2 twin (only reported, not required here: see test_bench_smoke)."""
+    stereo = any("path" in r for r in rows)
+    n_expected = 108 if stereo else 72
     assert len(rows) == n_expected and len({r["name"] for r in rows}) == n_expected
     for r in rows:
         assert BENCH_KEYS <= set(r), r["name"]
         assert r["deterministic"] and r["ns_per_sample"] > 0 and r["newton_mean"] >= 1.0, r
+    if stereo:
+        s2 = [r for r in rows if r["path"] == "stereo_simd"]
+        assert len(s2) == 36 and all(r["name"].endswith("_s2") and r["instances"] == 2 for r in s2)
+        assert all(r["matches_x2"] in (True, False) for r in s2)      # the full matrix: every twin is in the run
+        assert {r["path"] for r in rows} == {"mono", "stereo_simd"}
 
 
 def test_bench_smoke():
     exe = _exe(name="bench")
     names = subprocess.run([exe, "--list"], capture_output=True, text=True, check=True).stdout.split()
-    assert len(names) == 3 * 2 * 3 * 2 * 2          # quality x math x peak x block x instances
+    assert len(names) == 3 * 2 * 3 * 2 * 3          # quality x math x peak x block x mode (x1, x2, s2)
     p = subprocess.run([exe, "--seconds", "0.011", "--reps", "1"], capture_output=True, text=True)
     assert p.returncode == 0, p.stderr[-2000:]      # 1: an output differed between passes
     d = json.loads(p.stdout)
     assert d["meta"]["samples_per_pass"] == 512
-    _bench_rows_ok(d["results"], len(names))
+    assert d["meta"]["simd"] == ("neon" if ARM64 else "sse2" if X86 else d["meta"]["simd"])
+    _bench_rows_ok(d["results"])
+    if _stereo_exact_expected(("-O2",), False):     # this -O2 build: the stereo path equals two mono instances
+        assert all(r["matches_x2"] for r in d["results"] if r["path"] == "stereo_simd")
 
 
 def test_bench_records():
@@ -221,7 +235,7 @@ def test_bench_records():
         d = json.load(open(f))
         assert {"host", "build", "state_before", "state_after", "meta", "results"} <= set(d), f
         assert d["meta"]["reps"] >= 5 and not d["build"]["dirty"], f
-        _bench_rows_ok(d["results"], 72)
+        _bench_rows_ok(d["results"])
 
 
 def test_bench_flags_argv():
