@@ -1,8 +1,11 @@
 # cpp/ — per-instance CPU benchmark of the C++ core (#20)
 
-> **Status (11 Nov 2026): official results are below**, in `cpp/bench_apple_m1.json` and
+> **Status (11 Nov 2026): official #20 results are below**, in `cpp/bench_apple_m1.json` and
 > `cpp/bench_x86_64_linux.json`. The informal #19 number (README "Speed", the removed `bench.json`) is **not** the
 > #20 result (see the last section).
+>
+> **#21 (12 Nov 2026): the stereo SIMD rows (`s2`) are PENDING.** The harness can time them, but no timed run has
+> been made yet ("Stereo SIMD results — PENDING" below).
 
 | file | what |
 |---|---|
@@ -13,16 +16,22 @@
 
 ## What is measured
 
-**The unit is one mono instance.** The issue asks for "per stereo instance", but the core is mono today: one
-`dkcore::Stage`, double precision, one channel. Stereo SIMD is #21 and does not exist. So each configuration runs
-both ways:
-- `x1`: one mono `Stage`, the real unit today.
+**The unit is one mono instance.** The issue asks for "per stereo instance", but the #20 core is mono: one
+`dkcore::Stage`, double precision, one channel. Stereo SIMD came later, with #21 (`dkcore::StereoStage`). So each
+configuration runs three ways:
+- `x1`: one mono `Stage`.
 - `x2`, the **stereo-equivalent**: two independent mono `Stage`s on one thread. In each block the harness processes
   the left one, then the right one, as a host would. The right channel gets a differently plucked copy of the
-  signal. This is measured, not 2 × `x1`. It shows what a stereo track costs with today's core, and whether two
+  signal. This is measured, not 2 × `x1`. It shows what a stereo track costs with the mono core, and whether two
   instances' state (2 × 27 kB) changes the per-instance cost on a given cache. It is not a stereo code path.
+- `s2` (#21), the **stereo SIMD path**: one `StereoStage` (45 kB), the same left and right signals as `x2`, as the
+  two lanes of one kernel. Its output must equal `x2`'s bit for bit on the exact builds (cpp/README.md, "Stereo").
+  The row's `matches_x2` records whether it did in that run. The question it answers is #21's: s2 / x2 (2 × mono
+  costs 1.00 here), and s2 / x1 (the budget note's estimate is 1.1–1.3; an estimate to test, not a result).
+  Both ratios come from the same run.
 
-**Matrix: 72 configurations**, all at 48 kHz, bias 1, drive 1, output 1, default Newton settings:
+**Matrix: 108 configurations** (#20 records: 72, without `s2`), all at 48 kHz, bias 1, drive 1, output 1, default
+Newton settings:
 
 | axis | values | why |
 |---|---|---|
@@ -30,7 +39,7 @@ both ways:
 | math | `libm` (default), `fast` (`dk/fastmath.h`, #18) | the two triode math paths |
 | input peak | 0.5 V, 2 V, 8 V | clean / edge of breakup / driven; cost follows the Newton iteration count, which follows the level |
 | block | 64, 512 samples (1.33 ms, 10.67 ms) | 64: a common low-latency tracking buffer, where the deadline is tightest. 512: a common mixing default. Per-block work in `process()` is constant (FTZ set and restore, the triple-buffer check, two relaxed atomic loads, the math dispatch), so two sizes bracket that overhead. The per-sample work does not depend on the block size. |
-| instances | 1, 2 | above |
+| mode | `x1`, `x2`, `s2` | above |
 
 ## Signal
 
@@ -66,7 +75,7 @@ near silence. It is still synthetic, not a recorded performance.
   down to a multiple of 512, so both block sizes have whole blocks).
 * **Warm-up.** One untimed pass of every configuration. It warms the caches, the branch predictors and the clocks,
   and gives the reference output checksum and the Newton statistics.
-* **Repetitions.** 11 timed passes per configuration (`--reps`). They run **round-robin over all 72 configurations**:
+* **Repetitions.** 11 timed passes per configuration (`--reps`). They run **round-robin over all configurations**:
   pass 1 of each, then pass 2 of each, and so on. Slow drift (thermal, background load) therefore spreads over all
   configurations instead of biasing the last ones.
 * **Determinism check.** Every timed pass's output must be bit-identical to the warm-up's. If one is not, the harness
@@ -102,14 +111,16 @@ near silence. It is still synthetic, not a recorded performance.
 
 | field | meaning |
 |---|---|
-| `ns_per_sample`, `ns_min`, `ns_max` | wall ns per base-rate sample frame (for `x2`, both instances), median / min / max over the passes |
+| `instances`, `path` | 1 or 2 channels; `mono` (x1, x2) or `stereo_simd` (s2). The #20 records have no `path`: mono |
+| `matches_x2` | s2 only: output bit-identical to the x2 row with the same settings (`null` if that row is not in the run) |
+| `ns_per_sample`, `ns_min`, `ns_max` | wall ns per base-rate sample frame (for `x2` and `s2`, both channels), median / min / max over the passes |
 | `pct_core` | `ns_per_sample` × 48 000 / 10⁹ × 100: **% of one core at real time** (median) |
 | `block_pct_p50`, `_p99`, `_max` | one block's wall time as % of its real-time period, over all blocks of all passes |
 | `cpu_on_fraction` | thread CPU time / wall time per pass (median); below 1 means the thread was preempted |
 | `cycles_per_sample`, `instr_per_sample` | counter deltas per base-rate sample frame (median); `null` without counters |
 | `ghz_on_cpu` | cycles / thread CPU ns (median): a clock sanity check (P-core max on the M1 is 3.2 GHz) |
 | `p_core_fraction`, `_min` | macOS: the share of the cycles counted on P-cores (median, worst pass) |
-| `newton_mean`, `nonconverged` | the mean Newton iterations per internal sample (left instance), and the non-converged samples (warm-up pass) |
+| `newton_mean`, `nonconverged` | the mean Newton iterations per internal sample (left instance / channel), and the non-converged samples (warm-up pass) |
 | `deterministic` | always true in a written file |
 
 ## Caveats
@@ -158,8 +169,27 @@ python3 -m cpp.bench --table cpp/bench_x86_64_linux.json
 # optional, as its own record: --flags="-O3 -march=x86-64-v3" --out cpp/bench_x86_64_linux_v3.json
 ```
 
+**#21 stereo run (108 configurations, x1 + x2 + s2).** The same commands, into new files, so that the #20 records
+and their tables below stay as they are. The `s2` ratios must come from one run (round-robin), never from s2 of one
+run divided by x1 / x2 of another.
+
+Apple silicon, on the M1 Air, only after the go-ahead (same preparation as above):
+```bash
+cd ~/Developer/ModellingAudioProcessors/prototypes/fullstage
+python3 -m cpp.bench --flags=-O3 --seconds 2 --reps 11 --out cpp/bench_apple_m1_stereo.json
+python3 -m cpp.bench --table cpp/bench_apple_m1_stereo.json
+```
+Expected duration: about 9–11 minutes. The #20 run (72 configurations) took 6 min 18 s on this machine, and the sum
+of its own medians gives the same (31.2 s per round × 12 passes). The 36 `s2` rows add 0.55–1.0 × the `x2` time,
+20.9 s per round. That range is an assumption for the duration only, not a result.
+
+x86-64 Linux, on the VM: `taskset -c 2 python3 -m cpp.bench --flags=-O3 --seconds 2 --reps 11 --out
+cpp/bench_x86_64_linux_stereo.json`, then `--table`. Expect about 9–11 minutes by the same arithmetic; #20 took
+6 min 34 s there.
+
 **File names.** Results files are named `cpp/bench_<machine>[_<variant>].json`. `test_bench_records` checks every
-`cpp/bench_*.json`: all 72 rows, deterministic, at least 5 repetitions, not dirty.
+`cpp/bench_*.json`: all 72 rows (#20 schema, no `path`) or all 108 rows (#21 schema, every `s2` row with a
+`matches_x2`), deterministic, at least 5 repetitions, not dirty.
 
 **Not for the record.** `--only` subsets and the functional smoke (`--seconds 0.011 --reps 1`, which is what
 `test_bench_smoke` runs in CI) produce numbers that mean nothing. CI checks that the harness builds and is
@@ -347,6 +377,30 @@ Recorded 11 Nov 2026, 20:52:33–20:59:07 CET (Europe/Amsterdam), from `cpp/benc
 | hq | fast | 0.5 V | 22.9 | 28.5 | 23.0 | 26.9 |
 | hq | fast | 2 V | 23.1 | 29.9 | 23.1 | 27.3 |
 | hq | fast | 8 V | 24.3 | 32.3 | 24.4 | 36.8 |
+
+### Stereo SIMD results (#21) — PENDING
+
+> **PENDING: no timed run has been made.** Nothing in this section is a measurement yet. The official runs above
+> ("#21 stereo run") are waiting for the go-ahead on the M1 Air, and for the VM. When they are done, paste here per
+> machine:
+> - the `--table` output: the s2 table and "stereo SIMD cost", with the s2 / x1 and s2 / x2 ratios;
+> - the host, power, load and P-core summary, as for #20;
+> - whether every `s2` row had `matches_x2: true`.
+>
+> Then state whether the budget note's estimate (stereo ≈ 1.1–1.3 × mono) holds. It is an estimate to test, not a
+> target.
+
+What to expect from the design, as reasons and not numbers (cpp/README.md, "Stereo"):
+- The matrices, the Newton linear algebra, the residuals and the resampler run on both lanes at once.
+- exp / log1p / pow (libm or fast) and pnjlim stay scalar per lane. They are a large part of the mono cost, so they
+  still cost about 2 × in s2.
+- A sample costs max(itL, itR) Newton iterations for both lanes. With different signals per channel, that adds
+  work over x2, which runs each channel's own count.
+
+| machine | file | status |
+|---|---|---|
+| Apple M1 MacBook Air | `cpp/bench_apple_m1_stereo.json` | PENDING (go-ahead) |
+| x86-64 Linux VM | `cpp/bench_x86_64_linux_stereo.json` | PENDING |
 
 ## The earlier informal number (#19) is not this benchmark
 

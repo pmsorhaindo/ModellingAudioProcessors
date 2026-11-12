@@ -124,8 +124,9 @@ inline M2 ne(V2 a, V2 b) { return ~vceqq_f64(a, b); }
 inline V2 select(M2 m, V2 a, V2 b) { return vbslq_f64(m, a, b); }
 inline int bits(M2 m) { return int(vgetq_lane_u64(m, 0) & 1u) | int(vgetq_lane_u64(m, 1) & 1u) << 1; }
 #elif defined(DKCORE_SIMD_SSE2)
-using V2 = __m128d;
-using M2 = __m128i;
+// __m128d / __m128i without their may_alias attribute (GCC warns when that is dropped on a template argument)
+typedef double V2 __attribute__((vector_size(16)));
+typedef long long M2 __attribute__((vector_size(16)));
 inline constexpr const char* NAME = "sse2";
 inline V2 splat(double a) { return _mm_set1_pd(a); }
 inline V2 make(double l, double r) { return _mm_set_pd(r, l); }
