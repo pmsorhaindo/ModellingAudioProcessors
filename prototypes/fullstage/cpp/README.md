@@ -123,7 +123,9 @@ say (BENCHMARK.md, PENDING).
 
 **Exactness.** Stereo equals two mono `Stage`s bit for bit wherever the build contracts (FMA) the scalar and the
 vector code at the same places:
-- **No contraction at all:** `-ffp-contract=off`, or x86-64 without `-march`, where SSE2 has no FMA.
+- **No contraction at all:** `-ffp-contract=off`, or a build without FMA instructions. `test_core` and `bench`
+  report `fma` from `__FMA__` / AArch64, and the tests decide from that report, not from the flags. CI's ubuntu
+  GCC contracts at plain `-O2`, below.
 - **clang's per-expression contraction on the native types.** It fuses `a*b + c` in a vector expression exactly
   where it fuses it in the same scalar expression. Checked on Apple clang 17: scalar `fmul`+`fmadd`, vector
   `fmul.2d`+`fmla.2d`.
@@ -143,7 +145,9 @@ tolerance too, with `TOL_ITER_FRAC` for the Newton statistics.
 | Apple clang 17, M1: `-O2 -ffp-contract=off -DDKCORE_SIMD_SCALAR` | scalar | bit-exact |
 | Apple clang 17, M1: `-O2 -DDKCORE_SIMD_SCALAR` (contraction on) | scalar | 3.6e-12 V worst; solver lanes 69 % bit-equal, 8.9e-16 worst, iteration counts all equal |
 | Apple clang 17, `-arch x86_64` under Rosetta 2: `-O2`, `-O2 -DDKCORE_SIMD_SCALAR`, `-O2 -march=x86-64-v3` | sse2 / scalar / sse2 | bit-exact |
-| GCC on ubuntu x86-64 (CI) | sse2 / scalar | asserted bit-exact except `-march=x86-64-v3` (tolerance) |
+| GCC on ubuntu x86-64 (CI): `-O2 -ffp-contract=off`, SIMD and scalar | sse2 / scalar | bit-exact (asserted) |
+| GCC on ubuntu x86-64 (CI): `-O2`, `-O3`, scalar `-O2` | sse2 / scalar | within tolerance: 1.3e-13–4.8e-13 V, iteration counts identical (first CI run; that toolchain contracts at plain `-O2`) |
+| GCC on ubuntu x86-64 (CI): `-O2 -march=x86-64-v3` | sse2 | within tolerance |
 
 Mono output is unchanged by #21. A bit hash of mono `process()` output, internal Vgk, float I/O, state and stats
 over 60 configurations, plus the resampler alone, is identical to main at `-O0`, `-O2`, `-O3` and
