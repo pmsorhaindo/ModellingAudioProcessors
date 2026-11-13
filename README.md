@@ -1,18 +1,57 @@
 # ModellingAudioProcessors
-Research and C/C++ AU/VST3 implementations of analog audio processor models, starting with a Thermionic Culture Vulture-inspired saturator.
+Research and C/C++ implementations of analog audio processor models. The first target is a fast valve saturator
+plugin (AU / VST3) *inspired by* the Thermionic Culture Vulture.
+
+It is not an emulation of that unit, and nothing here is measured from one. No schematic is public, so the circuit
+values are example values (`prototypes/fullstage/dk/circuit.py` says where each one comes from). The product name
+will not use a brand or device name.
 
 ## Structure
 | path | what |
 |---|---|
-| `references/` | schematics, datasheets and modelling papers (links; free author copies where found) |
-| `prototypes/valvelab/` | static valve-stage lab: Koren/Dempwolf models, bias vs harmonics, ADAA vs oversampling, C benchmark |
-| `prototypes/fit6as6/` | our 6AS6 model fitted to the GE datasheet (dual-control g3 extension is our own empirical model), verified in ngspice |
-| `prototypes/research/` | research notes: grid-current models, Culture Vulture panel controls, 6AS6/5725 datasheet survey |
-| `prototypes/fullstage/` | one 12AX7 common-cathode stage with its reactive parts: ngspice references, nodal DK prototype, (next) WDF |
+| `references/` | manuals, datasheets and modelling papers (links; free author copies where found) |
+| `prototypes/valvelab/` | static valve-stage lab: Koren / Dempwolf models, bias vs harmonics, ADAA vs oversampling, C benchmark |
+| `prototypes/fit6as6/` | our 6AS6 pentode model, fitted to the Raytheon 1960 datasheet curves (the dual-control g3 law is our own empirical model), verified in ngspice |
+| `prototypes/research/` | research notes: grid-current models, the panel controls of the unit that inspires the project, 6AS6 / 5725 datasheet survey |
+| `prototypes/fullstage/` | one valve gain stage with its reactive parts: ngspice references, the nodal DK model in Python (`dk/`, `dk6as6/`), demo renders (`demo/`) |
+| `prototypes/fullstage/cpp/` | **the realtime core**: header-only C++17 port of the 12AX7 stage (`dk_core.h`), its tests and CPU benchmark |
 
-## Status (4 Nov 2026)
-- DK prototype of one 12AX7 stage passes all first-pass criteria against the same-model ngspice reference at 8x oversampling (default since 4 Nov): operating point, small-signal response (0.05 dB worst, at 20 kHz), H2-H5 (worst 0.65 dB) and tone-burst bias recovery. At plain 4x the small-signal check missed by 0.21 dB at 20 kHz (trapezoidal warping). Quality settings (#17): hq 16x, standard 8x, and eco 4x with the valve capacitances pre-warped (0.054 dB); all pass - see `prototypes/fullstage/dk/RESULTS.md`.
-- Research notes (`prototypes/research/`): [grid current](prototypes/research/grid-current.md) (Dempwolf-Zolzer chosen for the DK stage; no 6AS6 positive-grid data exists), [Culture Vulture controls](prototypes/research/culture-vulture-controls.md) (Bias works by changing the 6AS6 cathode voltage), [6AS6 datasheets](prototypes/research/6as6-datasheets.md) (the unit biases the 6AS6 at ~0.1-0.6 mA, near cut-off, so the fit needs a low-current refit from the Raytheon 1960 sheet).
-- Next: WDF version for comparison, the 6AS6 low-current refit, then a 6AS6 stage.
+## Status (14 Nov 2026)
+**Done**
+- **Model.** One 12AX7 common-cathode stage (nodal DK method, Dempwolf–Zölzer triode with grid current), checked
+  against an ngspice reference that runs the same valve equations. Three quality settings: hq 16×, standard 8×
+  (default) and eco 4× with pre-warped valve capacitances. All three pass every criterion; the worst small-signal
+  error over 20 Hz–20 kHz is 0.013 / 0.052 / 0.054 dB (`prototypes/fullstage/dk/RESULTS.md`).
+- **Aliasing.** A pass criterion against a 64× ground truth, enforced by a blocking CI job with a baseline ratchet.
+- **C++ core** (`prototypes/fullstage/cpp/README.md`). No allocation or locks in `process()`, lock-free coefficient
+  swap, denormal guard, reported latency. It reproduces the Python stage's validation results in every setting.
+- **CPU** (`prototypes/fullstage/cpp/BENCHMARK.md`, Apple M1, 48 kHz). One mono instance at standard 8× takes
+  11.1–14.3 % of one core, depending on level and math path. A stereo instance (`StereoStage`, two SIMD lanes) costs
+  1.25–1.35 × one mono instance with fast math and 1.57–1.67 × with libm, over the three quality settings.
+- **6AS6.** A datasheet fit that covers the low-current region (`prototypes/fit6as6/README.md`), and a Python DK
+  stage that passes the 12AX7 stage's criteria at standard and hq (`prototypes/fullstage/dk6as6/RESULTS.md`). Its
+  aliasing is not assessed, and it is not ported to C++.
+- Research notes: [grid current](prototypes/research/grid-current.md),
+  [panel controls](prototypes/research/culture-vulture-controls.md),
+  [6AS6 datasheets](prototypes/research/6as6-datasheets.md).
 
-Circuit values in the prototypes are example values, not Culture Vulture values. Third-party valve models and datasheets are fetched by scripts, not redistributed.
+**Not done** (see the issues)
+- **There is no plugin yet.** The AU / VST3 wrapper and its licensing note are #22. Before it can be called done:
+  the v1 scope and a working name (#75), parameter smoothing (#73), host sample rates other than 48 kHz (#74).
+- Stereo vector maths (#67, draft PR #68) and the x86-64 stereo benchmark (#76).
+- Octatrack effect-slot port: a cut-down table model (#23) and a DSP56300 cycle count (#24). Nothing has run on
+  that hardware; by the estimate in `prototypes/fullstage/research/octatrack-budget.md` the full model does not fit
+  a slot at any oversampling factor.
+- WDF version of the stage, for comparison (#12). An exploration; the plugin does not wait for it.
+
+**Known problems**
+- CI runs on x86-64 Linux only; Apple silicon, the first target, is tested by hand (#72).
+- On Apple silicon a silent input settles to a small DC offset at the output: 1.6 µV at hq in the Python stage,
+  less at standard and eco. The hq silence test (limit 1 µV) fails on it (#70).
+
+Nothing is signed, notarised, published or released.
+
+## Rules
+- Circuit values in the prototypes are example values, not values from any commercial unit.
+- No code, impulse responses or presets from commercial plugins.
+- Third-party valve models and datasheets are fetched by scripts, not redistributed.
