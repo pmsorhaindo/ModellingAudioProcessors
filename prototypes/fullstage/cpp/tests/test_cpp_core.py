@@ -9,7 +9,9 @@ clang++): skipped without one, except under CI (CI set in the environment), wher
                            search) even where it converges to the same root
   test_stereo_parity       StereoStage (#21) against two independent mono Stages (test_core stereo), per build: SIMD
                            and forced scalar fallback, with and without FP contraction; bit-exact where the build
-                           guarantees it (_stereo_exact_expected), else within the test_core.cpp tolerance
+                           guarantees it (_stereo_exact_expected), else within the test_core.cpp tolerance. Also the
+                           vector maths (#67, VecFastMath, LaneMath::vector) against two mono fast Stages, the same
+                           rule, and its accuracy against libm on grids that cover dk/fastmath_domain.json
   test_vectors_are_fresh   the committed cpp/vectors.txt still matches what the Python stage produces now
   test_validate_reproduced dk.validate.run on the C++ core against dk/results.json, every setting (cpp/validate_cpp.py)
   test_bench_smoke         cpp/bench.cpp (#20, #21) builds and runs every configuration once on 512 samples, output
@@ -106,8 +108,32 @@ def test_stereo_parity(flags, scalar):
     assert r["simd"] == ("scalar" if scalar else "neon" if ARM64 else "sse2" if X86 else r["simd"])
     assert r["alloc_hooks"] == 1 and r["stereo_process_allocations"] == 0
     assert r["stereo_runs"] == 43 and r["stereo_lanes_differ_runs"] >= 20 and r["stereo_capped_nonconv_l"] > 0
+    assert r["vector_runs"] == 43 and r["vector_lanes_differ_runs"] >= 20 and r["vector_solve_lanes"] == 8292
+    _vecmath_ok(r)
     if _stereo_exact_expected(flags, scalar, r["compiler"], r["fma"]):
         assert r["stereo_exact"] == 1, f"{r['compiler']} fma={r['fma']}\n" + p.stderr[-3000:]
+        assert r["vector_exact"] == 1, f"{r['compiler']} fma={r['fma']}\n" + p.stderr[-3000:]
+
+
+# VecFastMath (#67) error bounds against libm, relative: dk/fastmath.py BOUND (the scalar kernels' tested bounds;
+# test_core.cpp asserts them too). ulp: measured 3474 (exp), 800 (log1p), 3531 (pow g=1.26), 3588 (pow g=1.314) on
+# Apple clang 17 / macOS libm, 13 Nov 2026; asserted with the margin below.
+VECMATH_ULP = 8000
+
+
+def _vecmath_ok(r):
+    from dk import fastmath as fm
+    rng = json.load(open(os.path.join(ROOT, "dk", "fastmath_domain.json")))["ranges"]
+    cover = {"exp": ("exp_x",), "log1p": ("log1p_e_pos",), "pow_g1_26": ("pow_s_pos_g1.26",),
+             "pow_g1_314": ("pow_s_pos_g1.314",)}
+    bound = {"exp": fm.BOUND["exp"], "exp_full": fm.BOUND["exp"], "log1p": fm.BOUND["log1p"],
+             "pow_g1_26": fm.BOUND["pow_g1_26"], "pow_g1_314": fm.BOUND["pow_g1_314"]}
+    for k, b in bound.items():
+        assert r[f"vecmath_{k}_max_rel"] <= b and r[f"vecmath_{k}_max_ulp"] <= VECMATH_ULP, (k, r[f"vecmath_{k}_max_rel"])
+        for d in cover.get(k, ()):          # the grid covers every argument the stage passed (dk.fastmath_domain)
+            assert r[f"vecmath_{k}_lo"] <= rng[d]["min"] and r[f"vecmath_{k}_hi"] >= rng[d]["max"], (k, d)
+    assert r["vecmath_exp_full_lo"] == fm.EXP_LO and r["vecmath_exp_full_hi"] == fm.EXP_HI
+    assert r["vecmath_edge_cases"] > 10000 and r["vecmath_pnjlim_limited"] > 1000
 
 
 def _pipe(exe, mode, rows):

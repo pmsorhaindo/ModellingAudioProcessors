@@ -6,7 +6,7 @@ stays the reference. Everything here is checked against it.
 
 | file | what |
 |---|---|
-| `dk_core.h` | the core: `dkcore::Stage`, `StereoStage` (#21), `build_coeffs`, `solve` / `solve2`, `Triode` / `Triode2`, `Resampler`, `simd`, `ScopedFlushDenormals`, `TripleBuffer` |
+| `dk_core.h` | the core: `dkcore::Stage`, `StereoStage` (#21), `build_coeffs`, `solve` / `solve2`, `Triode` / `Triode2`, `PerLane` / `VecFastMath` (#67), `Resampler`, `simd`, `ScopedFlushDenormals`, `TripleBuffer` |
 | `test_core.cpp` | test harness: vector tests, allocation counting, FTZ, threaded swap, #7 fallback, stereo parity; plus `cli` / `solve` / `triode` / `swap` / `stereo` modes |
 | `export_vectors.py` | writes `vectors.txt` from the Python stage (`python -m cpp.export_vectors`, ~3 s) |
 | `vectors.txt` | the reference vectors (generated, exact shortest-repr floats, 365 kB) |
@@ -103,8 +103,9 @@ functions over intrinsics.
 `Triode`, `solve` and `Stage::tick` written with `V2` for `double`: the same expression trees, with branches turned
 into per-lane selects. The FIR resampler is the same template (`ResamplerT<double>` is the mono `Resampler`,
 `ResamplerT<V2>` the stereo one).
-- exp / log1p / pow (libm or `dk/fastmath.h`) and pnjlim run per lane, as scalar calls to the very same functions.
-  No vector libm gives libm's bits, and fastmath stays untouched.
+- exp / log1p / pow (libm or `dk/fastmath.h`) and pnjlim run per lane, as scalar calls to the very same functions
+  (`PerLane<M>`, the default). No vector libm gives libm's bits, and fastmath stays untouched. #67 adds an opt-in
+  vector path for fast math ("Vector maths (#67)" below).
 - The SIMD work is therefore everything else: the matrices, the Jacobian and Newton step, the residuals, the line
   search arithmetic and the resampler.
 
@@ -183,6 +184,97 @@ It asserts the SIMD path in use (neon / sse2 / scalar), and `stereo_exact == 1` 
 - Not caught, and removed: an `act &` mask on the best-iterate update. Dead logic: best is only read for lanes that
   are still active at the cap.
 
+## Vector maths (#67)
+
+`StereoStage::set_lane_math(LaneMath::vector)` (any thread, read once per block like the gains) makes the stereo
+kernel evaluate the fast triode maths on both lanes at once (`VecFastMath`) instead of per lane. The default stays
+`LaneMath::per_lane`, the #21 path above, which is also the bit-exact reference. With `TriodeMath::libm` the setting
+changes nothing: there is no vector libm, so libm keeps the per-lane calls. Mono `Stage` is not touched (its output
+hashes are identical to main at `-O0`, `-O2`, `-O3`, `-O2 -ffp-contract=off` and x86-64 `-O2`, 13 Nov 2026, scratch
+check, not committed; the same hash covers the per-lane stereo path).
+
+**What it is.** `dk/fastmath.h` (#18) vectorised lane-wise: the same algorithm, tables, constants and expressions
+as `fm_exp`, `fm_log1p` and `fm_pow`, with `V2` for `double` and a 2 × 64-bit integer vector for the bit tricks
+(GNU vector extensions on both NEON and SSE2). The table lookups are two scalar loads per table (neither NEON nor
+SSE2 has a gather). Nothing new was fitted and nothing third-party is used. This was chosen over new vector
+polynomials because the fastmath kernels already have tested bounds against libm (#18, #60 / #61) and a Python
+twin, and because each lane then performs `FastMath`'s operations in `FastMath`'s order: the vector path gives the
+scalar fast path's bits wherever the build contracts the two alike (the rule of "Stereo" above), so the stereo
+output can equal two mono fast `Stage`s exactly.
+- **Outside the fast domain** (any lane: NaN, ±inf, ≤ 0, subnormal, exp's x outside [EXP_LO, EXP_HI] =
+  [−708.39, 709], log1p's e outside (0, 1], pow's s not a positive normal) the call goes to the scalar `fm_*` on each
+  lane, which is libm there, exactly as mono. That fallback is out of line and marked cold, so the fast path is small
+  enough to be inlined. The stage never reaches it (`dk/fastmath_domain.json`).
+- **The step limiter (pnjlim)** is compares and selects on both lanes. Its log is needed only for a limited step;
+  then `std::log` runs per lane on the lanes that use it, mono's call and mono's bits.
+- **The scalar fallback** (`-DDKCORE_SIMD_SCALAR`, or no NEON / SSE2) has no vector unit, so there `VecFastMath`
+  is `fm_*` per lane; pnjlim is still the select form.
+- Realtime: no allocation, locks or syscalls (counted in the parity runs: 0), the same `ScopedFlushDenormals`. Inside
+  the fast domain every result is a normal double, as in the scalar fast path.
+
+**Measured error against libm** (`test_core vecmath`, part of `test_core` and `test_core stereo`; Apple clang 17,
+macOS 15.6.1 libm, M1, 13 Nov 2026). Grids of 400 000 points (half regular, half pseudo-random; geometric for
+log1p / pow), both lanes carrying different points. They cover the arguments the stage actually passed in every
+`dk.validate` run of every setting and drive (`dk/fastmath_domain.json` "ranges", rounded outwards; pytest checks
+the cover), and exp also over its whole fast domain. ulp = the distance in representable doubles to libm's result
+(libm is not exactly rounded either, so this is against libm, not against the true value).
+
+| function | grid | stage's recorded range (`fastmath_domain.json`) | max relative error | max ulp | asserted |
+|---|---|---|---|---|---|
+| exp(x) | x ∈ [−200, 1] | −183.49 … 0.0417 | 3.87e-13 | 3474 | ≤ 1e-12 rel, ≤ 8000 ulp |
+| exp(x), full fast domain | x ∈ [−708.39, 709] | — | 3.87e-13 | 3474 | same |
+| log1p(e) | e ∈ [1e-70, 1] | 2.24e-60 … 0.99999598 | 9.23e-14 | 800 | ≤ 3e-13 rel, ≤ 8000 ulp |
+| pow(s, 1.26) | s ∈ [1e-20, 2] | 1.45e-17 … 1.0336 | 3.97e-13 | 3531 | ≤ 1e-12 rel, ≤ 8000 ulp |
+| pow(s, 1.314) | s ∈ [1e-70, 1] | 2.26e-61 … 0.216 | 4.18e-13 | 3588 | ≤ 1e-12 rel, ≤ 8000 ulp |
+
+These are the scalar kernels' figures (dk/fastmath.py `BOUND`: measured 3.87e-13, 9.21e-14, 3.97e-13, 4.21e-13
+against glibc). The relative bounds asserted are that `BOUND`; the ulp bound is the measured worst with about
+2.2 × margin. Each lane was also bit-equal to the scalar `fm_*` on every grid point in the exact builds below. CI
+asserts the same bounds against glibc's libm on x86-64 (it does not print the values). They are measured bounds,
+not proofs.
+
+**Edges** (`test_core vecmath`): 33 special and boundary values (NaN, −NaN, ±inf, ±0, ±subnormal, ±DBL_MIN and its
+neighbour, ±DBL_MAX, 1 and its neighbours, EXP_LO / EXP_HI and their neighbours, 709.8, 710, −745, −746, −1e4, ...),
+every pair of them in the two lanes, all four functions (pow with both exponents), with and without FTZ / DAZ:
+17 424 lane results. A lane whose call left the fast path must give the scalar `fm_*`'s bits (NaN for NaN), and
+outside the fast domain that equals libm's (checked without FTZ). An in-domain pair is bit-equal in the exact builds
+and within 2 × the bound otherwise. pnjlim: 22 898 lane pairs on a grid of steps (10 374 of them limited, both
+branches, NaN / inf), bit-equal to the scalar `detail::pnjlim` in the exact builds, within 1e-14 relative otherwise.
+
+**Parity** (`test_core stereo`): the 14 vectors cases (eco / standard / hq; 0.05, 2 and 8 V sines, the 4 V burst,
+noise, drive / output gains, bias 1.5, the live bias swap, forced non-convergence), each run with fast math as
+L = R, L ≠ R, and L ≠ R with other gains in ragged blocks, plus the capped-Newton case: 43 `StereoStage`
+(`LaneMath::vector`) runs against two mono fast `Stage`s, comparing output, per-channel `Stats` and final state
+(in 29 of them the lanes' iteration histograms differ). Also `solve2<VecFastMath>` against `solve<FastMath>` lane by
+lane on 8292 lanes (the hard vector problems and 4000 random ones). Tolerance where not bit-exact: `TOL_STEREO_ABS`
+(1e-9 V) and `TOL_ITER_FRAC`, as for the reference, for the same reason (the same arithmetic, other rounding).
+`vector_exact` reports whether every comparison of the vector path (maths grids, edges, pnjlim, solver, stage) was
+bit-equal; `test_stereo_parity` asserts it on the same builds as `stereo_exact`.
+
+| build (measured 13 Nov 2026) | SIMD | vector path vs 2 × mono fast |
+|---|---|---|
+| Apple clang 17, M1: `-O2`, `-O3`, `-O2 -ffp-contract=off` | neon | bit-exact |
+| Apple clang 17, M1: `-O2 -ffp-contract=off -DDKCORE_SIMD_SCALAR` | scalar | bit-exact |
+| Apple clang 17, M1: `-O2 -DDKCORE_SIMD_SCALAR` (contraction on) | scalar | 8.2e-12 V worst; solver lanes 67.7 % bit-equal; iteration counts equal |
+| Apple clang 17, `-arch x86_64` under Rosetta 2: `-O2`, `-O2 -DDKCORE_SIMD_SCALAR`, `-O2` and `-O3 -march=x86-64-v3` | sse2 / scalar / sse2 | bit-exact |
+| GCC on ubuntu x86-64 (CI) | sse2 / scalar | see the PR's CI run (asserted: exact with `-ffp-contract=off`, else within tolerance) |
+
+**Kernel iterations.** `StereoStage::kernel_iterations()` counts what the 2-lane kernel actually ran: per internal
+sample max(itL, itR), summed since `reset()`. The parity runs check it lies between max(iterations L, R) and their
+sum, and equals them when both lanes get the same signal. The bench reports it as `newton_mean_max`, next to both
+channels' means (BENCHMARK.md).
+
+**The #21 "libm spill" hypothesis** (static disassembly, Apple clang 17 `-O3`, M1; not a counter measurement). In
+`solve2<PerLane<LibmMath>>` everything is inlined into one 909-instruction function with 48 libm call sites (16 exp,
+16 log1p, 16 pow) plus 4 log. It stores 76 and reloads 149 128-bit q registers to the stack: AAPCS64 preserves only
+the low 64 bits of v8–v15 across a call, so live 2-lane values are spilled around the calls. Mono
+`solve<LibmMath>` (469 instructions, 20 exp / log1p / pow call sites plus 2 log) spills 35 / reloads 46 64-bit d registers and no q
+registers. So the static code agrees with the hypothesis; how many of those spills execute per sample, and what they
+cost, was not measured. `solve2<VecFastMath>` has no libm call on its fast path (only the cold fallback and pnjlim's
+rare log); it still stores 45 / reloads 83 q registers, around its out-of-line calls to `Triode2::currents`, which
+clang does not inline (as it does not inline `Triode<FastMath>::currents` into mono `solve`). Forcing that inline was
+tried: −0.6 % cycles for the vector path in an informal run, so it was not kept.
+
 ## Tests and tolerances
 
 `python -m pytest -q cpp/tests` (from `prototypes/fullstage`, ~40 s, 18 tests) compiles `test_core.cpp` with `$CXX`,
@@ -197,7 +289,7 @@ ubuntu runners have g++, so the existing `test (fullstage)` job runs these tests
 | `test_bit_exact_solver` / `_triode` | `solve()` on the vector rows + 2000 random hard problems, and the currents (libm, currents_only, fast) on 3000 random points, equal **bit for bit** to the live Python functions on the same machine (`-O2 -ffp-contract=off`) |
 | `test_vectors_are_fresh` | the committed `vectors.txt` still matches what the Python stage produces now |
 | `test_validate_reproduced[hq/standard/eco]` | `dk.validate.run` on the C++ core reproduces `dk/results.json` within `validate_cpp.LIMITS`, and every `pass_vs_dz` criterion holds |
-| `test_stereo_parity[...]` | `StereoStage` = two mono `Stage`s (section "Stereo"), six builds; bit-exact where guaranteed |
+| `test_stereo_parity[...]` | `StereoStage` = two mono `Stage`s (section "Stereo"), six builds; bit-exact where guaranteed. The same for the vector maths (#67), plus its error bounds against libm on grids covering `dk/fastmath_domain.json` |
 | `test_bench_smoke` / `test_bench_records` | `bench.cpp` (#20, #21) builds and runs all 108 configurations once on 512 samples, with bit-identical output across passes and s2 = x2 on exact builds (no timing checked); every committed `bench_*.json` is complete (the #20 72-row or the #21 108-row schema) |
 
 **Vectors** (`export_vectors.py`; tolerances in `test_core.cpp`). The tolerances were set from the worst error measured
@@ -341,5 +433,7 @@ s.request_bias(1.5);          // any non-RT thread
 dkcore::StereoStage st;       // #21: L and R in one SIMD kernel, the same results as two Stages
 st.prepare(48000.0);
 st.set_drive(1.0, 1.0);       // per channel (or set_drive(g) for both)
+// #67, optional: with TriodeMath::fast (prepare's 4th argument), the fast maths on both lanes at once
+// st.set_lane_math(dkcore::LaneMath::vector);
 st.process(inL, inR, outL, outR, n);
 ```

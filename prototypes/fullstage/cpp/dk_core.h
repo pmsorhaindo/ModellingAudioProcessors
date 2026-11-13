@@ -34,6 +34,8 @@
  * Stereo (#21): StereoStage runs left and right as the two lanes of one 2 x double SIMD kernel (namespace simd:
  * NEON, SSE2 or a portable struct) on one shared pack. Each lane does the mono operations in the mono order, so a
  * StereoStage matches two independent mono Stages (cpp/README.md, "Stereo"). Threads and denormals as for Stage.
+ * Its lane maths (#67): LaneMath::per_lane (default: exp / log1p / pow and pnjlim as scalar calls per lane) or
+ * LaneMath::vector (with TriodeMath::fast: dk/fastmath.h on both lanes at once, VecFastMath).
  *
  * Do not build with -ffast-math: the fallback relies on NaN / inf comparisons.
  */
@@ -90,6 +92,9 @@ inline constexpr int LS_MAX = 10;
 inline constexpr double VCRIT = 0.0;
 
 enum class TriodeMath : std::uint8_t { libm, fast };
+// StereoStage only (#67): how the two lanes evaluate the triode maths. vector applies to TriodeMath::fast; there is
+// no vector libm, so with TriodeMath::libm both run the per-lane reference.
+enum class LaneMath : std::uint8_t { per_lane, vector };
 
 struct Quality { int os; double prewarp_hz; };          // prewarp_hz <= 0: plain trapezoidal
 inline constexpr Quality HQ{16, 0.0}, STANDARD{8, 0.0}, ECO{4, 17300.0};   // stage.QUALITY, PREWARP_HZ
@@ -173,6 +178,17 @@ inline constexpr bool FMA = false;
 inline M2 all() { return ge(splat(0.0), splat(0.0)); }
 inline V2 pmax(V2 a, V2 b) { return select(gt(b, a), b, a); }       // detail::pmax per lane, NaN included
 template <class F> inline V2 per_lane(F f, V2 x) { return make(f(lane(x, 0)), f(lane(x, 1))); }
+#if defined(DKCORE_SIMD_NEON) || defined(DKCORE_SIMD_SSE2)
+// 2 x 64-bit integers for VecFastMath's bit tricks (GNU vector extensions, as V2 on both): U2 = the uint64_t of
+// dk/fastmath.h, S2 its int64_t; casts between them reinterpret the bits
+typedef unsigned long long U2 __attribute__((vector_size(16)));
+typedef long long S2 __attribute__((vector_size(16)));
+inline U2 ubits(V2 a) { U2 r; std::memcpy(&r, &a, sizeof r); return r; }
+inline V2 dbits(U2 a) { V2 r; std::memcpy(&r, &a, sizeof r); return r; }
+inline U2 usplat(unsigned long long a) { return U2{a, a}; }
+inline V2 gather(const double* t, U2 i) { return make(t[i[0]], t[i[1]]); }   // t[i] per lane
+inline V2 to_double(S2 a) { return __builtin_convertvector(a, V2); }
+#endif
 // splat for V2, identity for double: lets the resampler template run on either
 template <class T> inline T bcast(double a);
 template <> inline double bcast<double>(double a) { return a; }
@@ -222,15 +238,139 @@ template <class M> struct Triode {
     }
 };
 
-/* Triode<M> on two lanes: the same expressions in the same order, branches as per-lane selects. exp / log1p / pow
- * are M's scalar functions called per lane (bit-equal to mono, libm or fast). */
-struct Currents2 { simd::V2 ig, ia, j00, j01, j10, j11; };
+// ---- per-sample Newton-Raphson (dk/solver.py) -----------------------------------------------------------------
 
-template <class M> struct Triode2 {
+struct Solution { double v0, v1, ig, ia; int it; bool ok; };
+
+namespace detail {
+inline double pmax(double a, double b) { return b > a ? b : a; }   // Python's max(a, b), NaN included
+
+// SPICE pnjlim on Vgk (Nagel 1975). vt = 1/Cg. (Python uses the module constant 1/DZ_12AX7_RSD1["Cg"]; equal for
+// the one parameter set the stage uses.)
+inline double pnjlim(double vnew, double vold, double vt) {
+    if (vnew > VCRIT && std::fabs(vnew - vold) > 2.0 * vt) {
+        if (vold > 0.0) {
+            const double arg = 1.0 + (vnew - vold) / vt;
+            return arg > 0.0 ? vold + vt * std::log(arg) : VCRIT;
+        }
+        return vnew > vt ? vt * std::log(vnew / vt) : vnew;
+    }
+    return vnew;
+}
+}  // namespace detail
+
+// ---- lane maths of the stereo kernel: exp / log1p / pow and pnjlim on two lanes (#21, #67) -----------------------
+/* PerLane<M> (the #21 reference, StereoStage's default): M's scalar functions and the scalar pnjlim, called once per
+ * lane, so each lane gets mono's bits, libm or fast. */
+template <class M> struct PerLane {
     using V2 = simd::V2;
     static V2 exp(V2 x) { return simd::per_lane([](double a) { return M::exp(a); }, x); }
     static V2 log1p(V2 x) { return simd::per_lane([](double a) { return M::log1p(a); }, x); }
     static V2 pow(V2 x, double y) { return simd::per_lane([y](double a) { return M::pow(a, y); }, x); }
+    static V2 pnjlim(V2 vnew, V2 vold, double vt) {
+        using simd::lane;
+        return simd::make(detail::pnjlim(lane(vnew, 0), lane(vold, 0), vt), detail::pnjlim(lane(vnew, 1), lane(vold, 1), vt));
+    }
+};
+
+/* VecFastMath (#67): dk/fastmath.h's fm_exp / fm_log1p / fm_pow on both lanes at once. The same algorithm, tables,
+ * constants and expressions, with V2 for double and U2 / S2 for uint64_t / int64_t; the table lookups are two scalar
+ * loads (no gather instruction on NEON / SSE2). A lane outside a function's fast domain (NaN, inf, <= 0, subnormal,
+ * x outside [EXP_LO, EXP_HI], e outside (0, 1]) sends the call to the scalar fm_* on each lane, i.e. to libm there,
+ * as mono. So each lane computes what FastMath computes in mono, operation for operation: the same bits wherever
+ * the build contracts (FMA) vector and scalar code at the same places (cpp/README.md, "Stereo"), else the same
+ * arithmetic with other rounding. Its error against libm: cpp/README.md "Vector maths (#67)" (test_core vecmath).
+ * Without a vector unit (the struct fallback) it is fm_* per lane.
+ * pnjlim: compares and selects on both lanes; its log, which only a limited step needs, is std::log on the lanes
+ * that use it (mono's call, mono's bits). */
+struct VecFastMath {
+    using V2 = simd::V2;
+    static V2 pnjlim(V2 vnew, V2 vold, double vt) {              // detail::pnjlim per lane
+        using namespace simd;
+        const V2 zero = splat(0.0), one = splat(1.0), vtv = splat(vt);
+        const M2 lim = gt(vnew, splat(VCRIT)) & gt(vabs(vnew - vold), splat(2.0 * vt));
+        if (!bits(lim)) return vnew;                             // the common case: no lane is limited
+        const M2 up = gt(vold, zero);
+        const V2 arg = one + (vnew - vold) / vtv;
+        const M2 la = lim & up & gt(arg, zero), lb = lim & ~up & gt(vnew, vtv);
+        const V2 l = per_lane([](double a) { return std::log(a); }, select(la, arg, select(lb, vnew / vtv, one)));
+        const V2 ra = select(gt(arg, zero), vold + vtv * l, splat(VCRIT));
+        const V2 rb = select(gt(vnew, vtv), vtv * l, vnew);
+        return select(lim, select(up, ra, rb), vnew);
+    }
+#if defined(DKCORE_SIMD_NEON) || defined(DKCORE_SIMD_SSE2)
+    using U2 = simd::U2;
+    using S2 = simd::S2;
+    static V2 exp(V2 x) {                                        // fm_exp
+        using namespace simd;
+        if (bits(~(ge(x, splat(FM_EXP_LO)) & ge(splat(FM_EXP_HI), x)))) return off_domain(0, x, 0.0);
+        V2 kd = x * splat(FM_INV_LN2N) + splat(FM_SHIFT);
+        const U2 k = ubits(kd) - ubits(splat(FM_SHIFT));
+        kd = kd - splat(FM_SHIFT);
+        const V2 r = (x - kd * splat(FM_LN2N_HI)) - kd * splat(FM_LN2N_LO);
+        const V2 r2 = r * r;
+        const V2 p = splat(1.0) + (r + r2 * (splat(FM_EXP_C[2]) + r * splat(FM_EXP_C[3])));
+        const U2 sb = ubits(gather(FM_EXP_T, k & usplat((1 << FM_EXP_BITS) - 1))) + (U2(S2(k) >> FM_EXP_BITS) << 52);
+        return dbits(sb) * p;
+    }
+    static V2 log1p(V2 e) {                                      // fm_log1p
+        using namespace simd;
+        const V2 one = splat(1.0);
+        if (bits(~(gt(e, splat(0.0)) & ge(one, e)))) return off_domain(1, e, 0.0);
+        const V2 t = one + e, c = e - (t - one);
+        V2 kd, lc, inv;
+        const V2 r = log_reduce(t, kd, lc, inv);
+        return (kd * splat(FM_LN2_HI) + lc) + ((kd * splat(FM_LN2_LO) + log_poly(r)) + c * inv * (one - splat(0.5) * kd));
+    }
+    static V2 pow(V2 s, double g) {                              // fm_pow
+        using namespace simd;
+        if (bits(~(ge(s, splat(0x1p-1022)) & lt(s, splat(INFINITY))))) return off_domain(2, s, g);
+        V2 kd, lc, inv;
+        const V2 r = log_reduce(s, kd, lc, inv);
+        const V2 l = (kd * splat(FM_LN2_HI) + lc) + (kd * splat(FM_LN2_LO) + log_poly(r));   // fm_log
+        return exp(splat(g) * l);
+    }
+
+private:
+    // a lane outside the fast domain: the scalar fm_exp / fm_log1p / fm_pow (f = 0 / 1 / 2) on each lane. Out of line
+    // and cold, so that the fast path stays small enough to be inlined (the stage never comes here,
+    // dk/fastmath_domain.json)
+    __attribute__((noinline, cold)) static V2 off_domain(int f, V2 x, double g) {
+        return f == 0 ? simd::per_lane(fm_exp, x) : f == 1 ? simd::per_lane(fm_log1p, x)
+                      : simd::per_lane([g](double a) { return fm_pow(a, g); }, x);
+    }
+    static V2 log_poly(V2 r) {                                   // fm_log_poly
+        using simd::splat;
+        const V2 r2 = r * r;
+        return r + r2 * ((splat(FM_LOG_A[2]) + r * splat(FM_LOG_A[3])) + r2 * (splat(FM_LOG_A[4]) + r * splat(FM_LOG_A[5])));
+    }
+    // fm_log_reduce for positive normal x: r, and kd, ln c_i, 1 / c_i of x's bin
+    static V2 log_reduce(V2 x, V2& kd, V2& lc, V2& inv) {
+        using namespace simd;
+        const U2 ix = ubits(x), tmp = ix - usplat(FM_LOG_OFF);
+        const U2 i = (tmp >> (52 - FM_LOG_BITS)) & usplat((1 << FM_LOG_BITS) - 1);
+        kd = to_double(S2(tmp) >> 52);
+        const V2 m = dbits(ix - (tmp & usplat(0xfffULL << 52)));
+        lc = gather(FM_LOG_LC, i);
+        inv = gather(FM_LOG_INV, i);
+        return (m - gather(FM_LOG_C, i)) * inv;
+    }
+#else
+    static V2 exp(V2 x) { return PerLane<FastMath>::exp(x); }
+    static V2 log1p(V2 x) { return PerLane<FastMath>::log1p(x); }
+    static V2 pow(V2 x, double y) { return PerLane<FastMath>::pow(x, y); }
+#endif
+};
+
+/* Triode<M> on two lanes: the same expressions in the same order, branches as per-lane selects. L is the lane maths
+ * (PerLane<LibmMath>, PerLane<FastMath> or VecFastMath). */
+struct Currents2 { simd::V2 ig, ia, j00, j01, j10, j11; };
+
+template <class L> struct Triode2 {
+    using V2 = simd::V2;
+    static V2 exp(V2 x) { return L::exp(x); }
+    static V2 log1p(V2 x) { return L::log1p(x); }
+    static V2 pow(V2 x, double y) { return L::pow(x, y); }
     static V2 softplus(V2 x) {
         const V2 zero = simd::splat(0.0);
         return simd::select(simd::gt(x, zero), x, zero) + log1p(exp(-simd::vabs(x)));
@@ -262,27 +402,6 @@ template <class M> struct Triode2 {
         ia = ik - ig;
     }
 };
-
-// ---- per-sample Newton-Raphson (dk/solver.py) -----------------------------------------------------------------
-
-struct Solution { double v0, v1, ig, ia; int it; bool ok; };
-
-namespace detail {
-inline double pmax(double a, double b) { return b > a ? b : a; }   // Python's max(a, b), NaN included
-
-// SPICE pnjlim on Vgk (Nagel 1975). vt = 1/Cg. (Python uses the module constant 1/DZ_12AX7_RSD1["Cg"]; equal for
-// the one parameter set the stage uses.)
-inline double pnjlim(double vnew, double vold, double vt) {
-    if (vnew > VCRIT && std::fabs(vnew - vold) > 2.0 * vt) {
-        if (vold > 0.0) {
-            const double arg = 1.0 + (vnew - vold) / vt;
-            return arg > 0.0 ? vold + vt * std::log(arg) : VCRIT;
-        }
-        return vnew > vt ? vt * std::log(vnew / vt) : vnew;
-    }
-    return vnew;
-}
-}  // namespace detail
 
 /* Solve F(v) = p - K i(v) - v = 0 for v = (Vgk, Vak) from the warm start (v0, v1); step limiting on Vgk,
  * backtracking line search (full step with its Jacobian, halvings with currents only, Jacobian once at the
@@ -356,13 +475,10 @@ inline Solution solve(double p0, double p1, const double (&K)[2][2], double v0, 
  * have converged or the cap is reached. The line search is masked the same way: a lane leaves the halving loop when
  * its own trial is accepted. A lane still active at the cap returns its best iterate, flagged (#7). So each lane's
  * result, iteration count and flag equal solve()'s on that lane's problem; the kernel costs max(itL, itR)
- * iterations of both lanes. pnjlim and the transcendentals run per lane in scalar code (Triode2). */
+ * iterations of both lanes. pnjlim and the transcendentals are L's (PerLane<M>: scalar per lane; VecFastMath). */
 struct Solution2 { simd::V2 v0, v1, ig, ia; int it[2]; bool ok[2]; };
 
 namespace detail {
-inline simd::V2 pnjlim2(simd::V2 vnew, simd::V2 vold, double vt) {
-    return simd::make(pnjlim(simd::lane(vnew, 0), simd::lane(vold, 0), vt), pnjlim(simd::lane(vnew, 1), simd::lane(vold, 1), vt));
-}
 inline Currents2 select(simd::M2 m, const Currents2& a, const Currents2& b) {
     using simd::select;
     return Currents2{select(m, a.ig, b.ig), select(m, a.ia, b.ia), select(m, a.j00, b.j00), select(m, a.j01, b.j01),
@@ -370,11 +486,11 @@ inline Currents2 select(simd::M2 m, const Currents2& a, const Currents2& b) {
 }
 }  // namespace detail
 
-template <class M>
+template <class L>
 inline Solution2 solve2(simd::V2 p0, simd::V2 p1, const double (&Km)[2][2], simd::V2 v0, simd::V2 v1,
                         const TriodeParams& par, const Newton& nw) {
     using namespace simd;
-    using T = Triode2<M>;
+    using T = Triode2<L>;
     const double vt = 1.0 / par.Cg;
     const V2 K00 = splat(Km[0][0]), K01 = splat(Km[0][1]), K10 = splat(Km[1][0]), K11 = splat(Km[1][1]);
     const V2 zero = splat(0.0), one = splat(1.0), half = splat(0.5), tol_v = splat(nw.tol_v), tol_f = splat(nw.tol_f),
@@ -396,7 +512,7 @@ inline Solution2 solve2(simd::V2 p0, simd::V2 p1, const double (&Km)[2][2], simd
         const V2 det = a * d - b * cc;
         const V2 d0 = -(d * f0 - b * f1) / det;
         const V2 d1 = -(-cc * f0 + a * f1) / det;
-        const V2 n0 = detail::pnjlim2(v0 + d0, v0, vt);
+        const V2 n0 = L::pnjlim(v0 + d0, v0, vt);
         const V2 s0 = n0 - v0, s1 = d1 * select(ne(d0, zero), (n0 - v0) / d0, one);
         const V2 fn = pmax(vabs(f0), vabs(f1));
         V2 lam = one;
@@ -1136,6 +1252,9 @@ public:
     void set_drive(double g) { set_drive(g, g); }
     void set_output(double l, double r) { output_[0].store(l, std::memory_order_relaxed); output_[1].store(r, std::memory_order_relaxed); }
     void set_output(double g) { set_output(g, g); }
+    // the lane maths (#67), read once per block like the gains; default per_lane (the #21 reference)
+    void set_lane_math(LaneMath m) { lane_math_.store(m, std::memory_order_relaxed); }
+    LaneMath lane_math() const { return lane_math_.load(std::memory_order_relaxed); }
 
     // ---- audio thread -------------------------------------------------------------------------------------------
     void reset() noexcept {                // both channels to the active pack's operating point; clears the stats
@@ -1145,6 +1264,7 @@ public:
         v_[0] = q_[0] = simd::splat(c.op.vgk);
         v_[1] = q_[1] = simd::splat(c.op.vak);
         stats_[0] = stats_[1] = Stats{};
+        kernel_iterations_ = 0;
         nonconv_total_.store(0, std::memory_order_relaxed);
         rs_.reset();
     }
@@ -1159,6 +1279,8 @@ public:
     int oversampling() const { return rs_.os(); }
     int latency_samples() const { return rs_.latency_samples(); }
     const Stats& stats(int ch) const { return stats_[ch]; }          // ch 0 = left, 1 = right
+    // Newton iterations the 2-lane kernel ran since reset(): per internal sample max(itL, itR), summed (#67)
+    std::uint64_t kernel_iterations() const { return kernel_iterations_; }
     double state_x(int ch, int i) const { return simd::lane(x_[i], ch); }
     double state_v(int ch, int i) const { return simd::lane(v_[i], ch); }
 
@@ -1188,6 +1310,7 @@ private:
             if (it > st.max_iterations) st.max_iterations = it;
             if (!r.ok[k]) { ++st.nonconverged; ++st.nonconv_block; }
         }
+        kernel_iterations_ += std::uint64_t(r.it[0] > r.it[1] ? r.it[0] : r.it[1]);
         V2 y = splat(c.E[0][0]) * s + splat(c.E[0][1]) * HT + splat(c.F[0][0]) * r.ig + splat(c.F[0][1]) * r.ia;
         for (int j = 0; j < NX; ++j) y = y + splat(c.D[0][j]) * x_[j];
         V2 xn[NX];
@@ -1223,8 +1346,9 @@ private:
         const Coeffs& c = coeffs_.front();
         const V2 drive = simd::make(drive_[0].load(std::memory_order_relaxed), drive_[1].load(std::memory_order_relaxed));
         const V2 og = simd::make(output_[0].load(std::memory_order_relaxed), output_[1].load(std::memory_order_relaxed));
-        if (c.math == TriodeMath::fast) run<FastMath>(c, inL, inR, outL, outR, n, drive, og);
-        else run<LibmMath>(c, inL, inR, outL, outR, n, drive, og);
+        if (c.math != TriodeMath::fast) run<PerLane<LibmMath>>(c, inL, inR, outL, outR, n, drive, og);
+        else if (lane_math_.load(std::memory_order_relaxed) == LaneMath::vector) run<VecFastMath>(c, inL, inR, outL, outR, n, drive, og);
+        else run<PerLane<FastMath>>(c, inL, inR, outL, outR, n, drive, og);
         end_block();
     }
 
@@ -1232,8 +1356,11 @@ private:
     V2 x_[NX]{}, v_[2]{}, q_[2]{};
     ResamplerT<V2> rs_;
     Stats stats_[2];
+    std::uint64_t kernel_iterations_ = 0;
     // shared
     std::atomic<double> drive_[2] = {{1.0}, {1.0}}, output_[2] = {{1.0}, {1.0}};
+    std::atomic<LaneMath> lane_math_{LaneMath::per_lane};
+    static_assert(std::atomic<LaneMath>::is_always_lock_free, "lock-free lane maths switch");
 };
 
 }  // namespace dkcore
