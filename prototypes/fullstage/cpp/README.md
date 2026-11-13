@@ -275,6 +275,10 @@ rare log); it still stores 45 / reloads 83 q registers, around its out-of-line c
 clang does not inline (as it does not inline `Triode<FastMath>::currents` into mono `solve`). Forcing that inline was
 tried: −0.6 % cycles for the vector path in an informal run, so it was not kept.
 
+**Cost** (official M1 run, BENCHMARK.md "Vector-maths stereo results (#67)"): with `LaneMath::vector` one
+StereoStage costs 1.13–1.21 × one mono fast Stage (0.57–0.61 × two), against 1.27–1.35 × for the per-lane path in the
+same run. The kernel ran 1.00–1.07 × the left channel's Newton iterations. The ~1.1 × goal of #67 is not met.
+
 ## Tests and tolerances
 
 `python -m pytest -q cpp/tests` (from `prototypes/fullstage`, ~40 s, 18 tests) compiles `test_core.cpp` with `$CXX`,
