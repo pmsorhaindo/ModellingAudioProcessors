@@ -154,6 +154,8 @@ def test_bit_exact_triode():
 # differently, which moves the stage outputs by up to ~1e-6 V (cpp/README.md); a real change to the Python stage
 # moves them by far more
 def _tol(name):
+    if name == "solve.in":                    # not a rounded input: see test_vectors_are_fresh (#66)
+        return "rel", 1e-9
     if name.endswith((".in", ".cfg")) or name.startswith("taps."):
         return "abs", 1e-14
     if name.startswith(("internal.", "case.")) and name.endswith((".out", ".vgk")):
@@ -174,6 +176,11 @@ def test_vectors_are_fresh():
         if kind == "rel":
             err /= max(np.max(np.abs(v)), 1e-300)
         assert err <= tol, f"{k}: {err:.3g} > {tol:g}; regenerate with python -m cpp.export_vectors"
+    # solve.in (#66): p0, p1 (p_rest + dp) and the DC-point starts are computed from the matrices, so they round like
+    # the matrices (the "rel" 1e-9 of coef.*), not like the 10-digit inputs. The Newton settings (max_it, tol_v,
+    # tol_f) are exact.
+    settings = lambda V: V["solve.in"].reshape(-1, 7)[:, 4:]
+    assert np.array_equal(settings(now), settings(old)), "solve.in settings"
 
 
 _REF = {}
