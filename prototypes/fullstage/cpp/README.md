@@ -315,9 +315,12 @@ the C++ core takes 0.14–0.18 s (about 40× less).
 - No smoothing of drive / output / bias, as in Python. A bias swap jumps the matrices at a block boundary.
 - Allocation hooks are glibc-specific; elsewhere only `operator new` / `delete` are counted.
 - TSan, FMA and every run were on x86-64 Linux only. AArch64 / macOS / Windows were compile-checked, not run.
-  Since then (11 Nov 2026, #20) `pytest cpp/tests` was run once on an Apple M1, macOS 15.6.1, Apple clang 17. Every
-  test passed, including the bit-exact and TSan ones, except one check in `test_core_vectors`: "ScopedFlushDenormals
-  flushes in scope and restores". It fails the same way at 70ceacc (before #20) and is not investigated here.
+  Since then (11 Nov 2026, #20) `pytest cpp/tests` runs on an Apple M1, macOS 15.6.1, Apple clang 17, by hand (CI
+  has no macOS job, #72). Every test passes there, including the bit-exact and TSan ones. One check failed until
+  #64: "ScopedFlushDenormals flushes in scope and restores". The guard was right and the test was not: Apple clang
+  moved the test's multiply to after the guard's FPCR restore, which it may do, as it does not know the guard
+  changes the FP mode. The test now stores its results in volatiles, and also checks that `process()` restores
+  FPCR on AArch64 (as it did for MXCSR on x86).
 
 ## Build and run
 
