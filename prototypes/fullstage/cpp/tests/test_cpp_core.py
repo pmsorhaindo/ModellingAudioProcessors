@@ -17,8 +17,8 @@ clang++): skipped without one, except under CI (CI set in the environment), wher
   test_bench_smoke         cpp/bench.cpp (#20, #21) builds and runs every configuration once on 512 samples, output
                            deterministic, stereo SIMD rows bit-identical to their two-mono twins; no timing is
                            checked (cpp/BENCHMARK.md)
-  test_bench_records       the committed cpp/bench_*.json results files are complete and well formed (#20 72-row
-                           and #21 108-row schemas)
+  test_bench_records       the committed cpp/bench_*.json results files are complete and well formed (#20 72-row,
+                           #21 108-row and #67 126-row schemas)
 Run from prototypes/fullstage:  python -m pytest -q cpp/tests   (~15 s)
 """
 import glob, json, os, platform, signal, subprocess, sys
@@ -223,24 +223,38 @@ BENCH_KEYS = {"name", "quality", "os", "math", "level_v", "block", "instances", 
 
 def _bench_rows_ok(rows):
     """#20 records: 72 rows, mono only (x1, x2), no "path". #21 records: 108 rows, x1 / x2 / s2, with "path", and every
-    s2 row says whether it is bit-identical to its x2 twin (only reported, not required here: see test_bench_smoke)."""
-    stereo = any("path" in r for r in rows)
-    n_expected = 108 if stereo else 72
+    s2 row says whether it is bit-identical to its x2 twin (only reported, not required here: see test_bench_smoke).
+    #67 records: 126 rows, plus 18 v2 rows (vector maths, fast only), each with matches_x2, and the Newton means of
+    both channels (newton_mean_r) and of the 2-lane kernel (newton_mean_max, s2 and v2)."""
+    paths = {r.get("path") for r in rows}
+    vec = "stereo_simd_vecmath" in paths
+    n_expected = 126 if vec else 108 if "stereo_simd" in paths else 72
     assert len(rows) == n_expected and len({r["name"] for r in rows}) == n_expected
     for r in rows:
         assert BENCH_KEYS <= set(r), r["name"]
         assert r["deterministic"] and r["ns_per_sample"] > 0 and r["newton_mean"] >= 1.0, r
-    if stereo:
-        s2 = [r for r in rows if r["path"] == "stereo_simd"]
-        assert len(s2) == 36 and all(r["name"].endswith("_s2") and r["instances"] == 2 for r in s2)
-        assert all(r["matches_x2"] in (True, False) for r in s2)      # the full matrix: every twin is in the run
-        assert {r["path"] for r in rows} == {"mono", "stereo_simd"}
+    if n_expected == 72:
+        return
+    s2 = [r for r in rows if r["path"] == "stereo_simd"]
+    assert len(s2) == 36 and all(r["name"].endswith("_s2") and r["instances"] == 2 for r in s2)
+    assert all(r["matches_x2"] in (True, False) for r in s2)      # the full matrix: every twin is in the run
+    assert paths == ({"mono", "stereo_simd", "stereo_simd_vecmath"} if vec else {"mono", "stereo_simd"})
+    if vec:
+        v2 = [r for r in rows if r["path"] == "stereo_simd_vecmath"]
+        assert len(v2) == 18 and all(r["name"].endswith("_v2") and r["instances"] == 2 and r["math"] == "fast" for r in v2)
+        assert all(r["matches_x2"] in (True, False) for r in v2)
+        for r in rows:
+            two = r["instances"] == 2
+            assert (r["newton_mean_r"] is not None) == two and (r["newton_mean_max"] is not None) == (r["path"] != "mono")
+            if r["path"] != "mono":                             # max(itL, itR) per sample: >= each mean, <= their sum
+                assert max(r["newton_mean"], r["newton_mean_r"]) <= r["newton_mean_max"] + 1e-4
+                assert r["newton_mean_max"] <= r["newton_mean"] + r["newton_mean_r"] + 1e-4
 
 
 def test_bench_smoke():
     exe = _exe(name="bench")
     names = subprocess.run([exe, "--list"], capture_output=True, text=True, check=True).stdout.split()
-    assert len(names) == 3 * 2 * 3 * 2 * 3          # quality x math x peak x block x mode (x1, x2, s2)
+    assert len(names) == 3 * 2 * 3 * 2 * 3 + 3 * 3 * 2   # quality x math x peak x block x (x1, x2, s2), + v2 (fast)
     p = subprocess.run([exe, "--seconds", "0.011", "--reps", "1"], capture_output=True, text=True)
     assert p.returncode == 0, p.stderr[-2000:]      # 1: an output differed between passes
     d = json.loads(p.stdout)
@@ -248,8 +262,8 @@ def test_bench_smoke():
     assert d["meta"]["simd"] == ("neon" if ARM64 else "sse2" if X86 else d["meta"]["simd"])
     _bench_rows_ok(d["results"])
     m = d["meta"]
-    if _stereo_exact_expected(("-O2",), False, m["compiler"], m["fma"]):   # then s2 equals x2 bit for bit
-        assert all(r["matches_x2"] for r in d["results"] if r["path"] == "stereo_simd"), (m["compiler"], m["fma"])
+    if _stereo_exact_expected(("-O2",), False, m["compiler"], m["fma"]):   # then s2 and v2 equal x2 bit for bit
+        assert all(r["matches_x2"] for r in d["results"] if r["path"] != "mono"), (m["compiler"], m["fma"])
 
 
 def test_bench_records():

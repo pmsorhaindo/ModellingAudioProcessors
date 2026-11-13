@@ -1,8 +1,8 @@
-"""Per-instance CPU benchmark of the C++ core (#20; stereo SIMD rows #21): builds cpp/bench.cpp, runs it, and writes
-one results file with the host, build and power / thermal / load state next to the measurements. Method and results:
+"""Per-instance CPU benchmark of the C++ core (#20; stereo SIMD rows #21; vector-maths rows #67): builds cpp/bench.cpp,
+runs it, and writes one results file with the host, build and power / thermal / load state next to the measurements. Method and results:
 cpp/BENCHMARK.md. Run from prototypes/fullstage:
-  python -m cpp.bench --out cpp/bench_<machine>_stereo.json   # the official run: 108 configurations (x1, x2, s2),
-                                                               # -O3, 2 s x 11 passes
+  python -m cpp.bench --out cpp/bench_<machine>_simd_math.json  # the official run: 126 configurations (x1, x2,
+                                                                 # s2, v2), -O3, 2 s x 11 passes
   python -m cpp.bench --only standard_libm --reps 5        # a subset (bench.cpp --only), not for the record
   python -m cpp.bench --seconds 0.011 --reps 1             # a functional smoke (512 samples); its numbers mean nothing
   python -m cpp.bench --table cpp/bench_<machine>.json     # the BENCHMARK.md tables from a results file
@@ -106,8 +106,17 @@ def _cycles(r):
 
 
 def _mode(r):
-    """x1 / x2 / s2 (#21). The #20 records have no "path": mono only."""
-    return "s2" if r.get("path") == "stereo_simd" else f"x{r['instances']}"
+    """x1 / x2 / s2 (#21) / v2 (#67). The #20 records have no "path": mono only."""
+    return {"stereo_simd": "s2", "stereo_simd_vecmath": "v2"}.get(r.get("path"), f"x{r['instances']}")
+
+
+def _newton(r):
+    """Newton iterations per internal sample: left; "left / right" for x2; "left / right / kernel max" for s2 and v2
+    (#67 records; earlier ones have the left channel only)."""
+    if not r:
+        return "—"
+    v = [r.get(k) for k in ("newton_mean", "newton_mean_r", "newton_mean_max")]
+    return " / ".join(f"{x:.2f}" for x in v if x is not None)
 
 
 def _ratio(a, b, key):
@@ -125,7 +134,8 @@ def table(rec):
     os_ = {k[0]: R[k]["os"] for k in R}
     lines = []
     for inst, title in (("x1", "one mono instance"), ("x2", "two mono instances, one after the other (stereo-equivalent)"),
-                        ("s2", "stereo SIMD: one StereoStage, the x2 signals as two lanes of one kernel (#21)")):
+                        ("s2", "stereo SIMD: one StereoStage, the x2 signals as two lanes of one kernel (#21)"),
+                        ("v2", "stereo SIMD with vector maths: the s2 StereoStage with LaneMath::vector (#67)")):
         if not any(k[4] == inst for k in R):
             continue
         lines += [f"**{title}** — % of one core at 48 kHz real time (median), ns per base-rate sample "
@@ -141,7 +151,29 @@ def table(rec):
                     ns = lambda r: "—" if not r else f"{r['ns_per_sample']:.0f} ({r['ns_min']:.0f}–{r['ns_max']:.0f})"
                     lines.append(f"| {q} {os_[q]}× | {m} | {v:g} V | {_cell(a, 'pct_core', '.2f')} | "
                                  f"{_cell(b, 'pct_core', '.2f')} | {ns(a)} | {ns(b)} | {_cycles(a)} | {_cycles(b)} | "
-                                 f"{_cell(a or b, 'newton_mean', '.2f')} |")
+                                 f"{_newton(a or b)} |")
+        lines.append("")
+    if any(k[4] == "v2" for k in R):
+        lines += ["**vector-maths stereo cost (#67)** — v2 / x1, v2 / x2 and v2 / s2 from the same run: median ns per "
+                  "base-rate sample, and cycles where counted (1.00 = one mono instance for v2/x1); matches x2 = v2 "
+                  "output bit-identical to x2's", "",
+                  "| setting | math | peak | ns v2/x1 b64 | ns v2/x1 b512 | ns v2/x2 b64 | ns v2/x2 b512 | "
+                  "ns v2/s2 b64 | ns v2/s2 b512 | cycles v2/x1 b64 | cycles v2/s2 b64 | matches x2 |",
+                  "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+        for q in qs:
+            for m in ms:
+                for v in lv:
+                    w = {b: R.get((q, m, v, b, "v2")) for b in (64, 512)}
+                    if not any(w.values()):
+                        continue
+                    one, two, s2 = ({b: R.get((q, m, v, b, mode)) for b in (64, 512)} for mode in ("x1", "x2", "s2"))
+                    match = {r.get("matches_x2") for r in w.values() if r}
+                    lines.append(f"| {q} {os_[q]}× | {m} | {v:g} V | {_ratio(w[64], one[64], 'ns_per_sample')} | "
+                                 f"{_ratio(w[512], one[512], 'ns_per_sample')} | {_ratio(w[64], two[64], 'ns_per_sample')} | "
+                                 f"{_ratio(w[512], two[512], 'ns_per_sample')} | {_ratio(w[64], s2[64], 'ns_per_sample')} | "
+                                 f"{_ratio(w[512], s2[512], 'ns_per_sample')} | {_ratio(w[64], one[64], 'cycles_per_sample')} | "
+                                 f"{_ratio(w[64], s2[64], 'cycles_per_sample')} | "
+                                 f"{'yes' if match == {True} else 'NO' if False in match else '—'} |")
         lines.append("")
     if any(k[4] == "s2" for k in R):
         lines += ["**stereo SIMD cost** — s2 / x1 and s2 / x2 from the same run: median ns per base-rate sample, and "

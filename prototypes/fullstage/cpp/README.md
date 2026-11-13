@@ -290,7 +290,7 @@ ubuntu runners have g++, so the existing `test (fullstage)` job runs these tests
 | `test_vectors_are_fresh` | the committed `vectors.txt` still matches what the Python stage produces now |
 | `test_validate_reproduced[hq/standard/eco]` | `dk.validate.run` on the C++ core reproduces `dk/results.json` within `validate_cpp.LIMITS`, and every `pass_vs_dz` criterion holds |
 | `test_stereo_parity[...]` | `StereoStage` = two mono `Stage`s (section "Stereo"), six builds; bit-exact where guaranteed. The same for the vector maths (#67), plus its error bounds against libm on grids covering `dk/fastmath_domain.json` |
-| `test_bench_smoke` / `test_bench_records` | `bench.cpp` (#20, #21) builds and runs all 108 configurations once on 512 samples, with bit-identical output across passes and s2 = x2 on exact builds (no timing checked); every committed `bench_*.json` is complete (the #20 72-row or the #21 108-row schema) |
+| `test_bench_smoke` / `test_bench_records` | `bench.cpp` (#20, #21, #67) builds and runs all 126 configurations once on 512 samples, with bit-identical output across passes and s2 = v2 = x2 on exact builds (no timing checked); every committed `bench_*.json` is complete (the #20 72-row, #21 108-row or #67 126-row schema) |
 
 **Vectors** (`export_vectors.py`; tolerances in `test_core.cpp`). The tolerances were set from the worst error measured
 over four x86-64 builds: gcc 14 `-O0`, `-O2`, `-O2 -march=x86-64-v3` and `-O3 -march=native`. A fifth run nudged

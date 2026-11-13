@@ -15,6 +15,7 @@
 | `build.py` | the shared compile helper (also used by `validate_cpp.py` and the tests) |
 | `bench_apple_m1.json`, `bench_x86_64_linux.json` | committed official #20 results, one file per machine |
 | `bench_apple_m1_stereo.json` | committed official #21 stereo run (x1 + x2 + s2, 108 rows), M1 |
+| `bench_apple_m1_simd_math.json` | committed official #67 run (x1 + x2 + s2 + v2, 126 rows), M1 |
 
 ## What is measured
 
@@ -31,8 +32,11 @@ configuration runs three ways:
   The row's `matches_x2` records whether it did in that run. The question it answers is #21's: s2 / x2 (2 × mono
   costs 1.00 here), and s2 / x1 (the budget note's estimate is 1.1–1.3; an estimate to test, not a result).
   Both ratios come from the same run.
+- `v2` (#67, fast math only), the **vector-maths stereo path**: the `s2` StereoStage with
+  `set_lane_math(LaneMath::vector)`, i.e. `dk/fastmath.h` on both lanes at once (cpp/README.md, "Vector maths").
+  The same signals; `matches_x2` again. Its question is #67's: v2 / x1 against the ~1.1 × goal, and v2 / s2.
 
-**Matrix: 108 configurations** (#20 records: 72, without `s2`), all at 48 kHz, bias 1, drive 1, output 1, default
+**Matrix: 126 configurations** (#20 records: 72, without `s2`; #21 records: 108, without `v2`), all at 48 kHz, bias 1, drive 1, output 1, default
 Newton settings:
 
 | axis | values | why |
@@ -41,7 +45,7 @@ Newton settings:
 | math | `libm` (default), `fast` (`dk/fastmath.h`, #18) | the two triode math paths |
 | input peak | 0.5 V, 2 V, 8 V | clean / edge of breakup / driven; cost follows the Newton iteration count, which follows the level |
 | block | 64, 512 samples (1.33 ms, 10.67 ms) | 64: a common low-latency tracking buffer, where the deadline is tightest. 512: a common mixing default. Per-block work in `process()` is constant (FTZ set and restore, the triple-buffer check, two relaxed atomic loads, the math dispatch), so two sizes bracket that overhead. The per-sample work does not depend on the block size. |
-| mode | `x1`, `x2`, `s2` | above |
+| mode | `x1`, `x2`, `s2`, `v2` (fast math only: 18 rows) | above |
 
 ## Signal
 
@@ -113,8 +117,8 @@ near silence. It is still synthetic, not a recorded performance.
 
 | field | meaning |
 |---|---|
-| `instances`, `path` | 1 or 2 channels; `mono` (x1, x2) or `stereo_simd` (s2). The #20 records have no `path`: mono |
-| `matches_x2` | s2 only: output bit-identical to the x2 row with the same settings (`null` if that row is not in the run) |
+| `instances`, `path` | 1 or 2 channels; `mono` (x1, x2), `stereo_simd` (s2) or `stereo_simd_vecmath` (v2). The #20 records have no `path`: mono |
+| `matches_x2` | s2 and v2 only: output bit-identical to the x2 row with the same settings (`null` if that row is not in the run) |
 | `ns_per_sample`, `ns_min`, `ns_max` | wall ns per base-rate sample frame (for `x2` and `s2`, both channels), median / min / max over the passes |
 | `pct_core` | `ns_per_sample` × 48 000 / 10⁹ × 100: **% of one core at real time** (median) |
 | `block_pct_p50`, `_p99`, `_max` | one block's wall time as % of its real-time period, over all blocks of all passes |
@@ -123,6 +127,7 @@ near silence. It is still synthetic, not a recorded performance.
 | `ghz_on_cpu` | cycles / thread CPU ns (median): a clock sanity check (P-core max on the M1 is 3.2 GHz) |
 | `p_core_fraction`, `_min` | macOS: the share of the cycles counted on P-cores (median, worst pass) |
 | `newton_mean`, `nonconverged` | the mean Newton iterations per internal sample (left instance / channel), and the non-converged samples (warm-up pass) |
+| `newton_mean_r`, `newton_mean_max` | #67 records: the right instance / channel's mean (`null` for x1), and for s2 / v2 the iterations the 2-lane kernel ran, per sample max(itL, itR) (`StereoStage::kernel_iterations`; `null` for mono) |
 | `deterministic` | always true in a written file |
 
 ## Caveats
@@ -189,9 +194,18 @@ x86-64 Linux, on the VM: `taskset -c 2 python3 -m cpp.bench --flags=-O3 --second
 cpp/bench_x86_64_linux_stereo.json`, then `--table`. Expect about 9–11 minutes by the same arithmetic; #20 took
 6 min 34 s there.
 
+**#67 run (126 configurations, x1 + x2 + s2 + v2).** Again into a new file, the #20 and #21 records stay as they
+are; all four modes in one round-robin run:
+```bash
+cd ~/Developer/ModellingAudioProcessors/prototypes/fullstage
+python3 -m cpp.bench --flags=-O3 --seconds 2 --reps 11 --out cpp/bench_apple_m1_simd_math.json
+python3 -m cpp.bench --table cpp/bench_apple_m1_simd_math.json
+```
+
 **File names.** Results files are named `cpp/bench_<machine>[_<variant>].json`. `test_bench_records` checks every
-`cpp/bench_*.json`: all 72 rows (#20 schema, no `path`) or all 108 rows (#21 schema, every `s2` row with a
-`matches_x2`), deterministic, at least 5 repetitions, not dirty.
+`cpp/bench_*.json`: all 72 rows (#20 schema, no `path`), all 108 rows (#21 schema, every `s2` row with a
+`matches_x2`) or all 126 rows (#67 schema, also 18 `v2` rows with `matches_x2`, and `newton_mean_r` /
+`newton_mean_max` consistent with max(itL, itR)), deterministic, at least 5 repetitions, not dirty.
 
 **Not for the record.** `--only` subsets and the functional smoke (`--seconds 0.011 --reps 1`, which is what
 `test_bench_smoke` runs in CI) produce numbers that mean nothing. CI checks that the harness builds and is
