@@ -5,7 +5,7 @@ Kernel bounds are relative against glibc libm on dense grids that cover the stag
 terms each output is formed from (currents_err), so it stays defined where Ia = Ik - Ig or dIa/dVgk = dIk - dIg
 cross zero. A test fails if any sample exceeds fastmath.BOUND.
 """
-import json, math, os, shutil, signal, struct, subprocess, sys, tempfile
+import json, math, os, platform, shutil, signal, struct, subprocess, sys, tempfile
 import numpy as np
 import pytest
 
@@ -158,11 +158,18 @@ def test_currents_only_fast_matches_currents_fast():
 
 # ---- C (dk/fastmath.h, dk/triode_eval.h) ----------------------------------------------------------------
 NOFMA = ["-O2", "-ffp-contract=off"]
-FMA = ["-O2", "-march=x86-64-v3"]            # AVX2 + FMA; gcc contracts a * b + c by default (GNU C)
+# The FMA build, by architecture (#69). x86-64: AVX2 + FMA; gcc contracts a * b + c by default (GNU C). AArch64: FMA
+# is baseline and gcc / clang contract by default, so it is the plain -O2 build (test_c_fma_build_is_contracted
+# checks that it really is contracted). Elsewhere: none, and the FMA tests skip.
+_ARCH = platform.machine().lower()
+FMA = (["-O2", "-march=x86-64-v3"] if _ARCH in ("x86_64", "amd64") else
+       ["-O2"] if _ARCH in ("arm64", "aarch64") else None)
 _EXE = {}
 
 
 def _build_check(flags):
+    if flags is None:
+        pytest.skip("no FMA build defined for this architecture")
     if shutil.which("gcc") is None:
         pytest.skip("gcc missing")
     key = tuple(flags)
