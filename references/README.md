@@ -1,6 +1,6 @@
-# References: Thermionic Culture Vulture modelling
+# References: background for a valve saturator inspired by the Thermionic Culture Vulture
 
-Background reading for modelling the Thermionic Culture Vulture, a two-channel all-valve distortion unit, as an AU/VST3 plugin in C/C++.
+Background reading for an AU/VST3 valve saturator in C/C++, *inspired by* the Thermionic Culture Vulture, a two-channel all-valve distortion unit. The plugin is not an emulation of that unit and will not carry its name.
 
 | File | What's in it |
 | --- | --- |
