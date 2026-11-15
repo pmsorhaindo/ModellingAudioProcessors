@@ -47,6 +47,29 @@ jobs:
       - name: Pytest
         run: python -m pytest -q
 
+  # Apple silicon (#72): the plugin's first target (AU is macOS-only). The same fullstage suite as above, on an
+  # arm64 macOS runner (Apple clang, numpy on Accelerate). Non-blocking until #70 is fixed; then drop
+  # continue-on-error.
+  test-macos:
+    name: test (fullstage, macos arm64, non-blocking)
+    runs-on: macos-14
+    timeout-minutes: 20
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: prototypes/fullstage
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: prototypes/fullstage/requirements.txt
+      - name: Install requirements
+        run: python -m pip install -r requirements.txt
+      - name: Pytest
+        run: python -m pytest -q
+
   # Blocking aliasing guard (#35): the lean aliasing subset for every setting x filter at 2 V and 8 V, against
   # the absolute limits (dk/aliasing.py LIMIT_DBC) and the committed baseline ratchet (dk/aliasing_baseline.json,
   # 1.5 dB tolerance). To change the baseline on purpose: python -m dk.aliasing_guard --update-baseline --reason "..."
