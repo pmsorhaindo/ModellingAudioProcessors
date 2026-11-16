@@ -52,6 +52,8 @@ jobs:
   # continue-on-error.
   test-macos:
     name: test (fullstage, macos arm64, non-blocking)
+    # macOS minutes bill at 10x on private repos: run on PRs and manual dispatch, not on pushes to main.
+    if: github.event_name != 'push'
     runs-on: macos-15
     timeout-minutes: 20
     continue-on-error: true
