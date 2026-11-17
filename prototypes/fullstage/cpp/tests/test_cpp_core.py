@@ -123,7 +123,7 @@ def test_bit_exact_solver():
     K = s.K
     rows = V["solve.in"].reshape(-1, 7)
     rng = np.random.default_rng(7)
-    p_rest = s.m["G"] @ s.x + s.m["H"] @ np.array([0.0, circuit.VALUES["HT"]])
+    p_rest = s.m["G"] @ s.x0 + s.m["H"] @ np.array([0.0, circuit.VALUES["HT"]])
     extra = [[*(p_rest + rng.uniform([-12, -80], [3, 80])), rng.uniform(-3, 3), rng.uniform(0, 450), *solver_default()]
              for _ in range(2000)]
     rows = np.vstack([rows, np.array(extra)])

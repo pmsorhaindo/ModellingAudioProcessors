@@ -5,7 +5,10 @@
  * cpp/test_core.cpp checks this core against them (tolerances and method in cpp/README.md).
  *
  * Fixed-size state, as in Stage: 6 capacitor history states x, the 2 Newton unknowns v = (Vgk, Vak) and the previous
- * solution for the predictor. Fixed matrices, as in Stage.m: A 6x6, B 6x2, C 6x2, D 5x6, E 5x2, F 5x2, G 2x6,
+ * solution for the predictor. x runs as the deviation from the operating point (#70, dk/stage.py Stage._rest): the
+ * absolute history is x0 + x, the valve currents enter as i - i0, and HT enters only through p_dc and y_dc. So
+ * silence is x = 0 and out = the DC solve's out node exactly, instead of a rest point that the matrix rounding moves
+ * by ~1 uV at hq. Fixed matrices, as in Stage.m: A 6x6, B 6x2, C 6x2, D 5x6, E 5x2, F 5x2, G 2x6,
  * H 2x2, K 2x2 (circuit.build), all in one trivially copyable Coeffs pack. Nothing here allocates: no std::vector,
  * no new, no exceptions. process() is noexcept, lock-free and wait-free.
  *
@@ -18,7 +21,8 @@
  *   set_drive() / set_output()  any thread (relaxed atomics, read once per block).
  * On a swap the state x, v is kept, not reset: bias changes only Rk, so the companion conductances (Gx) and with them
  * the meaning of x are unchanged, and the circuit moves from its present state to the new operating point, as a real
- * pot would. reset() goes to the active pack's operating point.
+ * pot would (the absolute history x0 + x is kept; x is re-expressed against the new pack's x0, Stage.swap_bias in
+ * Python). reset() goes to the active pack's operating point.
  *
  * Denormals: process() and process_internal() hold a ScopedFlushDenormals (FTZ + DAZ on x86 SSE, FPCR.FZ on
  * AArch64), restoring the caller's mode on return (RESEARCH-numerics.md c).
@@ -477,11 +481,23 @@ struct Coeffs {
            K[NNL][NNL];
     OperatingPoint op;
     double x0[NX];                                     // capacitor history with every i_c = 0 at the op point
+    // derived from op and K by finish_coeffs() (build_coeffs, and every publish): the rest constants of the
+    // deviation-form recursion (#70). p_dc = (Vgk, Vak) + K i0, so the op point solves the rest problem exactly;
+    // y_dc = the DC solve's out node voltage
+    double p_dc[NNL];
+    double y_dc;
     // DC failure diagnostics (stage.OperatingPointError's message)
     int dc_step = 0, dc_iterations = 0;
     double dc_best_vgk = 0.0, dc_best_vak = 0.0;
 };
 static_assert(std::is_trivially_copyable<Coeffs>::value, "Coeffs is published by copy");
+
+// Coeffs::p_dc and y_dc from op and K (Stage._rest: v_dc + K @ i0, the DC node voltage of "out")
+inline void finish_coeffs(Coeffs& c) {
+    c.p_dc[0] = c.op.vgk + (c.K[0][0] * c.op.ig + c.K[0][1] * c.op.ia);
+    c.p_dc[1] = c.op.vak + (c.K[1][0] * c.op.ig + c.K[1][1] * c.op.ia);
+    c.y_dc = c.op.nodes[OUT];
+}
 
 namespace detail {
 template <int R, int C> struct Mat {
@@ -662,6 +678,7 @@ inline BuildStatus build_coeffs(Coeffs& out, double fs, double bias = 1.0, doubl
         for (int j = 0; j < NNODES; ++j) s += m.Nx[i][j] * c.op.nodes[j];
         c.x0[i] = m.gx[i] * s;
     }
+    finish_coeffs(c);
     out = c;
     return BuildStatus::ok;
 }
@@ -960,9 +977,11 @@ protected:
         return st;
     }
     void publish_locked(const Coeffs& c) {
-        coeffs_.back() = c;
+        Coeffs& b = coeffs_.back();
+        b = c;
+        finish_coeffs(b);                           // p_dc, y_dc always match the published op and K
         coeffs_.publish();
-        latest_ = c;
+        latest_ = b;
     }
 
     TripleBuffer<Coeffs> coeffs_;                   // the audio thread adopts packs from here
@@ -999,7 +1018,7 @@ public:
     void reset() noexcept {                // state to the active pack's operating point; clears the stats
         if (coeffs_.acquire()) {}
         const Coeffs& c = coeffs_.front();
-        std::memcpy(x_, c.x0, sizeof x_);
+        for (int i = 0; i < NX; ++i) x_[i] = 0.0;      // at the operating point: no deviation from x0
         v_[0] = q_[0] = c.op.vgk;
         v_[1] = q_[1] = c.op.vak;
         stats_ = Stats{};
@@ -1036,20 +1055,27 @@ public:
     int up_delay_internal() const { return rs_.up_delay_internal(); }
     const Resampler& resampler() const { return rs_; }
     const Stats& stats() const { return stats_; }                   // audio thread, or while stopped
-    const double* state_x() const { return x_; }
+    const double* state_x() const { return x_; }                    // deviation from active().x0 (#70)
     const double* state_v() const { return v_; }
 
 private:
     void begin_block() {
-        if (coeffs_.acquire()) ++stats_.swaps;
+        // The old pack's x0 is read before acquire(): after it, that slot belongs to the producer again.
+        double x0_old[NX];
+        std::memcpy(x0_old, coeffs_.front().x0, sizeof x0_old);
+        if (coeffs_.acquire()) {
+            ++stats_.swaps;
+            const Coeffs& c = coeffs_.front();      // keep the absolute history x0 + x across the swap
+            for (int i = 0; i < NX; ++i) x_[i] = x_[i] + (x0_old[i] - c.x0[i]);
+        }
         stats_.nonconv_block = 0;
     }
     void end_block() { nonconv_total_.store(stats_.nonconverged, std::memory_order_relaxed); }
 
     // one internal-rate sample (the loop body of Stage.process_internal); returns the "out" node voltage
+    // deviation form (#70): x_ is the deviation from c.x0, the currents enter as i - i0, HT only through p_dc / y_dc
     template <class M> double tick(const Coeffs& c, double s, int& it) {
-        const double HT = c.HT;
-        double p0 = c.H[0][0] * s + c.H[0][1] * HT, p1 = c.H[1][0] * s + c.H[1][1] * HT;
+        double p0 = c.H[0][0] * s + c.p_dc[0], p1 = c.H[1][0] * s + c.p_dc[1];
         for (int j = 0; j < NX; ++j) { p0 += c.G[0][j] * x_[j]; p1 += c.G[1][j] * x_[j]; }
         // warm start from the linear extrapolation of the last two solutions (#15)
         const double e0 = 2.0 * v_[0] - q_[0], e1 = 2.0 * v_[1] - q_[1];
@@ -1062,11 +1088,13 @@ private:
         ++stats_.histogram[r.it < Stats::HIST ? r.it : Stats::HIST - 1];
         if (r.it > stats_.max_iterations) stats_.max_iterations = r.it;
         if (!r.ok) { ++stats_.nonconverged; ++stats_.nonconv_block; }
-        double y = c.E[0][0] * s + c.E[0][1] * HT + c.F[0][0] * r.ig + c.F[0][1] * r.ia;
+        const double di0 = r.ig - c.op.ig, di1 = r.ia - c.op.ia;
+        double y = c.E[0][0] * s + c.F[0][0] * di0 + c.F[0][1] * di1;
         for (int j = 0; j < NX; ++j) y += c.D[0][j] * x_[j];
+        y += c.y_dc;
         double xn[NX];
         for (int i = 0; i < NX; ++i) {
-            double a = c.B[i][0] * s + c.B[i][1] * HT + c.C[i][0] * r.ig + c.C[i][1] * r.ia;
+            double a = c.B[i][0] * s + c.C[i][0] * di0 + c.C[i][1] * di1;
             for (int j = 0; j < NX; ++j) a += c.A[i][j] * x_[j];
             xn[i] = a;
         }
@@ -1141,7 +1169,7 @@ public:
     void reset() noexcept {                // both channels to the active pack's operating point; clears the stats
         if (coeffs_.acquire()) {}
         const Coeffs& c = coeffs_.front();
-        for (int i = 0; i < NX; ++i) x_[i] = simd::splat(c.x0[i]);
+        for (int i = 0; i < NX; ++i) x_[i] = simd::splat(0.0);   // at the operating point: no deviation from x0
         v_[0] = q_[0] = simd::splat(c.op.vgk);
         v_[1] = q_[1] = simd::splat(c.op.vak);
         stats_[0] = stats_[1] = Stats{};
@@ -1159,12 +1187,18 @@ public:
     int oversampling() const { return rs_.os(); }
     int latency_samples() const { return rs_.latency_samples(); }
     const Stats& stats(int ch) const { return stats_[ch]; }          // ch 0 = left, 1 = right
-    double state_x(int ch, int i) const { return simd::lane(x_[i], ch); }
+    double state_x(int ch, int i) const { return simd::lane(x_[i], ch); }   // deviation from active().x0 (#70)
     double state_v(int ch, int i) const { return simd::lane(v_[i], ch); }
 
 private:
-    void begin_block() {
-        if (coeffs_.acquire()) { ++stats_[0].swaps; ++stats_[1].swaps; }
+    void begin_block() {                                        // as Stage::begin_block, both lanes
+        double x0_old[NX];
+        std::memcpy(x0_old, coeffs_.front().x0, sizeof x0_old);
+        if (coeffs_.acquire()) {
+            ++stats_[0].swaps; ++stats_[1].swaps;
+            const Coeffs& c = coeffs_.front();
+            for (int i = 0; i < NX; ++i) x_[i] = x_[i] + simd::splat(x0_old[i] - c.x0[i]);
+        }
         stats_[0].nonconv_block = stats_[1].nonconv_block = 0;
     }
     void end_block() { nonconv_total_.store(stats_[0].nonconverged + stats_[1].nonconverged, std::memory_order_relaxed); }
@@ -1172,8 +1206,7 @@ private:
     // Stage::tick on both lanes, the same expressions with V2 for double (so the same contraction per lane)
     template <class M> V2 tick(const Coeffs& c, V2 s) {
         using simd::splat;
-        const V2 HT = splat(c.HT);
-        V2 p0 = splat(c.H[0][0]) * s + splat(c.H[0][1]) * HT, p1 = splat(c.H[1][0]) * s + splat(c.H[1][1]) * HT;
+        V2 p0 = splat(c.H[0][0]) * s + splat(c.p_dc[0]), p1 = splat(c.H[1][0]) * s + splat(c.p_dc[1]);
         for (int j = 0; j < NX; ++j) { p0 = p0 + splat(c.G[0][j]) * x_[j]; p1 = p1 + splat(c.G[1][j]) * x_[j]; }
         const V2 e0 = splat(2.0) * v_[0] - q_[0], e1 = splat(2.0) * v_[1] - q_[1];
         q_[0] = v_[0]; q_[1] = v_[1];
@@ -1188,11 +1221,13 @@ private:
             if (it > st.max_iterations) st.max_iterations = it;
             if (!r.ok[k]) { ++st.nonconverged; ++st.nonconv_block; }
         }
-        V2 y = splat(c.E[0][0]) * s + splat(c.E[0][1]) * HT + splat(c.F[0][0]) * r.ig + splat(c.F[0][1]) * r.ia;
+        const V2 di0 = r.ig - splat(c.op.ig), di1 = r.ia - splat(c.op.ia);
+        V2 y = splat(c.E[0][0]) * s + splat(c.F[0][0]) * di0 + splat(c.F[0][1]) * di1;
         for (int j = 0; j < NX; ++j) y = y + splat(c.D[0][j]) * x_[j];
+        y = y + splat(c.y_dc);
         V2 xn[NX];
         for (int i = 0; i < NX; ++i) {
-            V2 a = splat(c.B[i][0]) * s + splat(c.B[i][1]) * HT + splat(c.C[i][0]) * r.ig + splat(c.C[i][1]) * r.ia;
+            V2 a = splat(c.B[i][0]) * s + splat(c.C[i][0]) * di0 + splat(c.C[i][1]) * di1;
             for (int j = 0; j < NX; ++j) a = a + splat(c.A[i][j]) * x_[j];
             xn[i] = a;
         }

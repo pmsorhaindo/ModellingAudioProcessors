@@ -505,6 +505,25 @@ static void test_nonconvergence() {
     delete s;
 }
 
+// #70: the state runs as the deviation from the operating point, so 100 ms of silence stays at the rest point: out =
+// the DC out node (0 V) up to per-sample rounding (measured 1.2e-13 V at hq, Apple M1). The absolute-state form
+// settled 7.7e-8 / 7.4e-7 / 1.2e-6 V off (eco / standard / hq, Apple M1, Apple clang -O2).
+static void test_silence() {
+    const Quality qs[3] = {ECO, STANDARD, HQ};
+    const char* names[3] = {"eco", "standard", "hq"};
+    Vec x(4800, 0.0), y(4800);
+    for (int k = 0; k < 3; ++k) {
+        Stage* s = new Stage;
+        check(s->prepare(48000.0, qs[k]) == BuildStatus::ok, "silence prepare");
+        s->process(x.data(), y.data(), x.size());
+        double e = 0.0;
+        for (double v : y) e = std::max(e, std::fabs(v));
+        metric(std::string("silence_abs_") + names[k], e);
+        check(e <= TOL_PINNED_ABS, std::string("silence stays at the operating point, ") + names[k] + " " + std::to_string(e));
+        delete s;
+    }
+}
+
 static void test_denormals() {
     if (!ScopedFlushDenormals::active()) { metric("ftz_tested", 0); return; }
     volatile double tiny = 1e-310, one = 1.0;           // a double denormal
@@ -939,6 +958,7 @@ int main(int argc, char** argv) {
     test_internal(V);
     test_cases(V);
     test_nonconvergence();
+    test_silence();
     test_denormals();
     test_swap_threads();
     test_float_io();

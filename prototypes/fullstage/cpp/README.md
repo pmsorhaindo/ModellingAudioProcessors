@@ -20,7 +20,8 @@ stays the reference. Everything here is checked against it.
 ## What the core is
 
 * **Fixed-size state, as in `Stage`.** It holds the 6 capacitor history states `x`, the 2 Newton unknowns (Vgk, Vak)
-  and the previous solution for the #15 predictor. The matrices are fixed-size, as in `Stage.m`: A 6×6, B 6×2, C 6×2,
+  and the previous solution for the #15 predictor. `x` is the deviation from the operating point's history x0
+  (#70; see "Why built needs 1e-5 V" below), so silence is exactly the rest point. The matrices are fixed-size, as in `Stage.m`: A 6×6, B 6×2, C 6×2,
   D 5×6, E 5×2, F 5×2, G 2×6, H 2×2, K 2×2. They live in one trivially copyable `Coeffs` pack, together with the DC
   operating point, x0, the triode parameters, the Newton settings and the math switch. No `std::vector`, no `new`,
   no exceptions in the core. `sizeof(Stage)` is 27 kB, most of it the FIR state; `sizeof(Coeffs)` is 1.3 kB.
@@ -60,8 +61,9 @@ A `std::mutex` serialises producers only; the audio thread never touches it. A p
 published (`BuildStatus::dc_nonconvergence`, `bad_argument`, `singular_matrix`), and a pack for another internal rate
 is refused. On a swap, the state x and v is **kept, not reset**. Bias changes only Rk, so the companion
 conductances, and with them the meaning of x, are unchanged: the stage moves from its present state to the new
-operating point, as a real pot would. `reset()` goes to the active pack's operating point. This is the same as the
-Python reference for a swap (`export_vectors._run_case`: replace `m` and `K`, keep `x` and `v`). Drive, output and
+operating point, as a real pot would: the absolute history x0 + x is kept, and x is re-expressed against the new
+pack's x0. `reset()` goes to the active pack's operating point. This is the same as the Python reference for a swap
+(`Stage.swap_bias`, used by `export_vectors._run_case`: new matrices and operating point, keep x0 + x and `v`). Drive, output and
 bias are not smoothed (zipper noise is possible on fast moves), as in the Python prototype.
 
 **Denormals.** `process()` and `process_internal()` hold a `ScopedFlushDenormals`. On x86 it sets MXCSR FTZ (bit 15)
@@ -237,6 +239,18 @@ The C++ matrices are as close to exact as numpy's, or closer (A: 6.5e-14 vs nump
 loaded ("pinned"), the per-sample code agrees to 2.7×10⁻¹¹ V. So the pinned tolerance (1e-9 V) is the one that
 catches a change in the per-sample code. The built tolerance (1e-5 V, i.e. −140 dB re 100 V) checks the whole core
 end to end.
+
+The numbers above are from before #70, when the state was the absolute capacitor history. Most of that error was
+not in the signal. The constant HT = 300 V and the bias currents went through the discretised map's slow modes
+((I − A)⁻¹ ~ fs·τ), so the matrix rounding left a residual DC gain from HT to "out" (−8.0×10⁻⁹ at hq with numpy on
+Accelerate). Silence then settled 1.6 µV off the operating point at hq, with the sign and size set by the BLAS/LAPACK
+rounding. The state now runs as the deviation from the DC operating point (`Stage._rest`; `p_dc`, `y_dc` and x0 in
+`Coeffs`), so only the signal sees the matrix rounding. On the Apple M1 (numpy 2.5.4 on Accelerate, Apple clang 17
+`-O2`), `python -m cpp.matrix_rounding` gives:
+- **Python vs Python with the exact matrices**: 7.6×10⁻¹¹–2.3×10⁻⁹ V (main before #70, same machine: 2.5×10⁻⁷ V).
+- **`test_core`**: built 5.2×10⁻⁹ V and pinned 1.3×10⁻¹¹ V worst, and silence 1.2×10⁻¹³ V at hq (`test_silence`).
+
+The tolerances stay as they are.
 
 **`dk/results.json` reproduced** (`validate_cpp.py`, `results.json`). Every time-domain number comes from the C++
 `process()`: H1–H5, THD, burst, Newton iterations. The small-signal numbers come from the C++ matrices and operating

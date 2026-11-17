@@ -84,16 +84,49 @@ class Stage:
         nodes = dict(zip(circuit.NODES, w[:len(circuit.NODES)]))
         return dict(vgk=v0, vak=v1, ig=ig, ia=ia, nodes=nodes, w=w)
 
+    def _rest(self):
+        """The operating-point constants the deviation-form recursion runs around (#70), from self.m and self.dc.
+        The state runs as the DEVIATION from the DC operating point: capacitor history X = x0 + x, valve currents
+        i = i0 + di, and only vin enters the recursion (HT and the bias currents are folded into p_dc and y_dc).
+        Silence then keeps x = 0, di at the rounding of the rest problem, and out at y_dc = the DC solve's out node
+        (0 V). With the absolute history state the constant HT = 300 V and the bias currents go through the
+        discretised map's near-singular DC path ((I - A)^-1 ~ fs * tau): the ~1e-13 relative rounding of the built
+        matrices left a residual DC gain HT -> out of ~8e-9 at hq, so silence settled to a rest point ~1.6 uV off
+        the operating point (#70, measured in the PR). In exact arithmetic the two forms are the same recursion."""
+        m, dc = self.m, self.dc
+        vn = dc["w"][:len(circuit.NODES)]
+        self.x0 = m["Gx"] @ m["Nx"] @ vn         # absolute capacitor history so that every i_c = 0 at t=0
+        self.i0 = np.array([dc["ig"], dc["ia"]])
+        self.p_dc = np.array([dc["vgk"], dc["vak"]]) + m["K"] @ self.i0   # the DC point solves p_dc exactly
+        self.y_dc = np.array([dc["nodes"][n] for n in m["out_names"]])     # the DC node voltages (out = 0 V)
+
     def reset(self):
-        m = self.m
-        vn = self.dc["w"][:len(circuit.NODES)]
-        self.x = m["Gx"] @ m["Nx"] @ vn          # capacitor history so that every i_c = 0 at t=0
+        self._rest()
+        self.x = np.zeros_like(self.x0)        # deviation from x0 (see _rest)
         self.v = [self.dc["vgk"], self.dc["vak"]]
         self.v_prev = list(self.v)              # solution one sample before self.v, for the predictor
         self.iters = []
         self.nonconv = 0                        # non-converged internal-rate samples since reset()
         self.nonconv_block = 0                  # ... in the last process() / process_internal() call
         self.rs.reset()
+
+    def swap_bias(self, bias):
+        """The C++ core's live bias swap (cpp/dk_core.h request_bias): new matrices and DC operating point for the new
+        Rk scale, the circuit state kept. The absolute history x0 + x stays where it is and is re-expressed as the
+        deviation from the new x0 (the same expression as the core). The DC solve uses the current Newton settings, as
+        request_bias does (it builds with the active pack's). Raises OperatingPointError, state unchanged, if it
+        fails."""
+        m = circuit.build(self.fs, rk_scale=bias, prewarp_hz=self.prewarp_hz)
+        bias_old, self.bias = self.bias, bias
+        try:
+            dc = self.operating_point()
+        except OperatingPointError:
+            self.bias = bias_old
+            raise
+        x0_old = self.x0
+        self.m, self.K, self.dc = m, m["K"].tolist(), dc
+        self._rest()
+        self.x = self.x + (x0_old - self.x0)
 
     @property
     def latency_samples(self):
@@ -110,18 +143,17 @@ class Stage:
         A sample on which Newton hits the cap keeps the solver's best finite iterate and is counted: see
         nonconv, nonconv_block and iteration_stats(). A NonConvergenceWarning is issued once per call."""
         m = self.m
-        A, B, C, D, E, F, G, H = (m[k] for k in "ABCDEFGH")
-        HT = circuit.VALUES["HT"]
+        A, C, D, F, G = (m[k] for k in "ACDFG")
+        B0, E0, H0 = m["B"][:, 0], m["E"][:, 0], m["H"][:, 0]      # the vin columns; HT is in p_dc, y_dc (_rest)
+        p_dc, y_dc, (ig0, ia0) = self.p_dc, self.y_dc, self.i0
         rec = {n: np.empty(len(vin)) for n in record}
         idx = {n: m["out_names"].index(n) for n in record if n in m["out_names"]}
         x, (v0, v1), K, par, nw, ev = self.x, self.v, self.K, self.par, self.newton, self.ev
         q0, q1 = self.v_prev
         iters = np.empty(len(vin), dtype=np.int16)
         bad = 0
-        Gu, Hu = G, H
         for n, s in enumerate(vin):
-            u = np.array([s, HT])
-            p = Gu @ x + Hu @ u
+            p = G @ x + H0 * s + p_dc
             # warm start from the linear extrapolation of the last two solutions (#15): at 8x the
             # signal is smooth per sample, so this lands within ~1e-6 V more often than v[n-1] does
             e0, e1 = 2.0 * v0 - q0, 2.0 * v1 - q1
@@ -130,13 +162,14 @@ class Stage:
             iters[n] = it
             if not ok:
                 bad += 1
-            inl = np.array([ig, ia])
-            y = D @ x + E @ u + F @ inl
-            for nm, j in idx.items():
-                rec[nm][n] = y[j]
+            inl = np.array([ig - ig0, ia - ia0])        # deviation from the operating point
+            if idx:
+                y = D @ x + E0 * s + F @ inl + y_dc
+                for nm, j in idx.items():
+                    rec[nm][n] = y[j]
             if "vgk" in rec:
                 rec["vgk"][n] = v0
-            x = A @ x + B @ u + C @ inl
+            x = A @ x + B0 * s + C @ inl
         self.x, self.v, self.v_prev = x, [v0, v1], [q0, q1]
         self.iters.append(iters)
         self.nonconv += bad

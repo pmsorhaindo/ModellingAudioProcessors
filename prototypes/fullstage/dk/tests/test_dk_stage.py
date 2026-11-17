@@ -26,6 +26,19 @@ def test_silence_has_no_startup_thump(quality):
     assert np.max(np.abs(y)) < 1e-6          # volts at the output, first 100 ms of silence
 
 
+@pytest.mark.parametrize("quality", QUALITY)
+def test_silence_stays_at_the_operating_point(quality):
+    """#70: the state runs as the deviation from the DC operating point (Stage._rest), so silence is the rest point
+    itself: out stays at the DC solve's out node (0 V) up to the per-sample rounding of the rest problem (measured 0 V
+    in Python, 1.2e-13 V in the C++ core, Apple M1). 1e-9 V is the C++ pinned per-sample tolerance (TOL_PINNED_ABS).
+    The absolute-state form drifted 5.4e-8 / 1.8e-7 / 5.0e-7 V (eco / standard / hq, M1) within these 10 ms, towards
+    a rest point set by the matrix rounding (1.6e-6 V at hq on the M1)."""
+    s = Stage(48000.0, quality=quality)
+    y = s.process(np.zeros(480))["out"]
+    assert np.max(np.abs(y)) < 1e-9
+    assert np.max(np.abs(s.x)) < 1e-9 * np.max(np.abs(s.x0))
+
+
 def test_newton_always_converges(res):
     for k, st in res["iterations"].items():
         assert st["nonconverged"] == 0 and st["converged"], k
