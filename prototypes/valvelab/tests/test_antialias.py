@@ -10,7 +10,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 @pytest.fixture(scope="module")
 def tab():
-    s = Stage(KorenPentode("EF86")); s.set_bias_va(0.55 * s.B)
+    s = Stage(KorenPentode("EF86"))
+    s.set_bias_va(0.55 * s.B)
     return AA.Table(s.transfer, xmax=2.5, m=4097), s
 
 
@@ -22,7 +23,8 @@ def test_table_matches_direct_solve(tab):
 
 def test_antiderivative_is_consistent(tab):
     t, _ = tab
-    x = np.linspace(-2.4, 2.4, 501); h = 1e-6
+    x = np.linspace(-2.4, 2.4, 501)
+    h = 1e-6
     assert np.allclose((t.F(x + h) - t.F(x - h)) / (2 * h), t.f(x), atol=1e-4)
 
 

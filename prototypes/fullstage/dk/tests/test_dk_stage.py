@@ -3,7 +3,8 @@ against reference (ii): ngspice running the same Dempwolf-Zoelzer equations, so 
 not a valve-model difference. Every quality setting (#17) must pass the same criteria.
 Run from prototypes/fullstage:  python -m pytest -q dk/tests
 """
-import os, sys
+import os
+import sys
 import numpy as np
 import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))

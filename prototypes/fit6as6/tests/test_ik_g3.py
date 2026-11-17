@@ -1,7 +1,9 @@
 """Issue #53: g3-dependent cathode current (KR) and plate power (XA) in model6as6.py, and the study in ik_g3.py.
 The study is on the #25-#53 data split; its BEFORE is the #51 model (refit_51; dual_control until #55). Values at the
 time of writing in brackets (README, issue #53)."""
-import json, os, sys
+import json
+import os
+import sys
 import numpy as np
 import pytest
 from scipy.optimize import least_squares
@@ -18,7 +20,8 @@ FIT = json.load(open(os.path.join(HERE, "results", "fit_results.json")))
 HO = json.load(open(os.path.join(HERE, "results", "heldout_checks.json")))
 KEYS = ("refit_53", "refit_53_kr_only", "refit_53_xa_only", "diagnostic_p11_ic2_in_fit")
 RNG = np.random.default_rng(53)
-V = dict(g1=RNG.uniform(-5, 0, 400), g2=RNG.uniform(60, 140, 400), g3=RNG.uniform(-14, 12, 400), va=RNG.uniform(0, 420, 400))
+V = dict(g1=RNG.uniform(-5, 0, 400), g2=RNG.uniform(60, 140, 400), g3=RNG.uniform(-14, 12, 400),
+         va=RNG.uniform(0, 420, 400))
 
 
 def test_defaults_are_the_51_model():
@@ -38,10 +41,13 @@ def test_defaults_are_the_51_model():
 def test_extension_is_bounded_and_finite():
     """Ik stays in [(1 - KR) Ik0, Ik0]; no overflow at extreme g3 / plate voltages; finite slope at Va -> 0."""
     p = R["refit_53"]["params"]
-    g3 = np.array([-1e4, -200, -14, 0, 12, 200, 1e4]); va = np.array([0, 1e-9, 1, 120, 420, 1e4, 1e5])
+    g3 = np.array([-1e4, -200, -14, 0, 12, 200, 1e4])
+    va = np.array([0, 1e-9, 1, 120, 420, 1e4, 1e5])
     for x in va:
-        ik = M.dual_cathode(-2.0, 120.0, g3, x, p); ik0 = M.dual_ik(-2.0, 120.0, p["MU"], p["EX"], p["KG1"], p["KP"])
-        assert np.all(np.isfinite(ik)) and np.all(ik <= ik0 * (1 + 1e-12)) and np.all(ik >= ik0 * (1 - p["KR"]) * (1 - 1e-12))
+        ik = M.dual_cathode(-2.0, 120.0, g3, x, p)
+        ik0 = M.dual_ik(-2.0, 120.0, p["MU"], p["EX"], p["KG1"], p["KP"])
+        assert (np.all(np.isfinite(ik)) and np.all(ik <= ik0 * (1 + 1e-12))
+                and np.all(ik >= ik0 * (1 - p["KR"]) * (1 - 1e-12)))
         assert np.all(np.isfinite(M.dual_ip(-2.0, 120.0, g3, x, p))) and np.all(M.dual_ip(-2.0, 120.0, g3, x, p) >= 0)
     d = (M.plate_term(2e-3, p["MU3"], p["XA"]) - M.plate_term(1e-3, p["MU3"], p["XA"])) / 1e-3
     assert np.isfinite(d) and d < 10
@@ -80,7 +86,8 @@ def test_restarts_reach_the_same_minimum():
     for key, need in (("refit_53", 10), ("diagnostic_p11_ic2_in_fit", 10)):
         r = R[key]["restarts"]
         assert r["seeded_same_minimum"] == r["seeded"] == 7                    # [7 / 7]
-        assert r["random"] == 12 and r["random_same_minimum"] >= need           # [10 / 10 of 12; refit_53 was 11 before #55's
+        assert r["random"] == 12 and r["random_same_minimum"] >= need           # [10 / 10 of 12; refit_53
+                                                                                # was 11 before #55's
                                                                                # shared-exp change moved one start]
         assert min(r["lowest_cost_by_start"]) == pytest.approx(R[key]["cost"], rel=1e-12)
 
@@ -88,7 +95,8 @@ def test_restarts_reach_the_same_minimum():
 def test_fit_set_does_not_pin_kr():
     """On the #51 fit set (no screen current under g3 control) the cost changes by < 5 % over KR = 0..0.9, and the
     minimum sits where the cathode-current drop is far larger than on the sheet: KR is not identified (README)."""
-    prof = R["kr_profile"]; c = [r["cost"] for r in prof]
+    prof = R["kr_profile"]
+    c = [r["cost"] for r in prof]
     assert (max(c) - min(c)) / min(c) < 0.05                                       # [4.4 %]
     for key in ("refit_53", "refit_53_kr_only"):
         ck = R[key]["checks"]
@@ -96,7 +104,8 @@ def test_fit_set_does_not_pin_kr():
         for e1, v in ck["cathode_current_p11"].items():
             assert v["model_ratio_m10_to_0"] < v["sheet_ratio_m10_to_0"] - 0.3, e1   # [0.36-0.40 vs 0.75-0.87]
         # and the held-out screen check gets much worse than #51 [0.40, 0.42 vs 0.18]
-        assert ck["split_check_heldout"]["all"]["rms_log"] > 2 * R["before_refit_51"]["checks"]["split_check_heldout"]["all"]["rms_log"]
+        assert (ck["split_check_heldout"]["all"]["rms_log"]
+                > 2 * R["before_refit_51"]["checks"]["split_check_heldout"]["all"]["rms_log"])
 
 
 def test_diagnostic_with_screen_data_pins_kr():
@@ -108,9 +117,11 @@ def test_diagnostic_with_screen_data_pins_kr():
         # [model 0.79-0.81 vs sheet 0.75-0.87: the sheet's drop shrinks with current faster than the model's]
         assert v["model_ratio_m10_to_0"] == pytest.approx(v["sheet_ratio_m10_to_0"], abs=0.07), e1
         assert v["model_ratio_p10_to_0"] == pytest.approx(1.0, abs=0.03)              # [1.01]; sheet 0.95-1.02
-    p10 = lambda c: c["split_by_graph"]["p10_bottom_Ic2_vs_Ec3"]["all"]["rms_log"]
+    def p10(c):
+        return c["split_by_graph"]["p10_bottom_Ic2_vs_Ec3"]["all"]["rms_log"]
     assert p10(d) < p10(b) + 0.01                                                     # [0.199 vs 0.199]
-    assert abs(d["p8_bottom_heldout"]["Ic2_Ec3_-14"]["mean_rel"]) < abs(b["p8_bottom_heldout"]["Ic2_Ec3_-14"]["mean_rel"])  # [-8 vs +14 %]
+    assert (abs(d["p8_bottom_heldout"]["Ic2_Ec3_-14"]["mean_rel"])
+            < abs(b["p8_bottom_heldout"]["Ic2_Ec3_-14"]["mean_rel"]))                # [-8 vs +14 %]
     assert d["gm_summary"]["gm3"]["rms_log"] < b["gm_summary"]["gm3"]["rms_log"]       # [0.507 vs 0.625]
 
 
@@ -120,7 +131,8 @@ def test_plate_mu_stays_in_the_sheet_range(key):
     cut-off lines is 39.0 (0.3 mA) / 45.5 (1 mA); the model's, measured the same way, must be within 15 % of it.
     With XA = 1, MU3 is that mu and must lie in [39, 46]; with XA < 1 MU3 is the local mu at Eb = 120 V [33.4-33.6],
     and the local mu at 250 V must lie in the sheet's chord range (README)."""
-    c = R[key]["checks"]["g3_cutoff_vs_plate_voltage"]; p = R[key]["params"]
+    c = R[key]["checks"]["g3_cutoff_vs_plate_voltage"]
+    p = R[key]["params"]
     for lv in ("Ib_0.3_mA", "Ib_1.0_mA"):
         assert c[lv]["model_plate_mu"] == pytest.approx(c[lv]["plate_mu"], rel=0.15), lv
     lo, hi = c["Ib_0.3_mA"]["plate_mu"], c["Ib_1.0_mA"]["plate_mu"]
@@ -136,7 +148,8 @@ def test_plate_mu_stays_in_the_sheet_range(key):
 def test_spice_expressions_match_python_for_the_extension():
     import emit_spice as E
     for key in ("refit_53", "diagnostic_p11_ic2_in_fit"):
-        p = R[key]["params"]; e = E.expressions(p)
+        p = R[key]["params"]
+        e = E.expressions(p)
         for i in range(200):
             v = dict(G1=V["g1"][i], G2=V["g2"][i], G3=V["g3"][i], P=max(V["va"][i], 20.0))
             v["ik0"] = _spice_eval(e["ik0"], v)

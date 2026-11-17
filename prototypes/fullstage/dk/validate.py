@@ -10,17 +10,21 @@ setting exceeds its aliasing limit.
 Run: python -m dk.validate [--workers N]   (from prototypes/fullstage). Writes dk/results.json, one entry per
 setting plus "aliasing".
 """
-import argparse, json, os, sys, time
+import argparse
+import json
+import os
+import sys
+import time
 import numpy as np
 from scipy.optimize import minimize_scalar
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
-from analysis import harmonics, thd, db_rel
-from spice.run_refs import burst_metrics, AMPS
-from dk.stage import Stage, QUALITY
-from dk import aliasing as AL
-from dk import linear
+from analysis import harmonics, thd, db_rel  # noqa: E402 -- after the sys.path setup
+from spice.run_refs import burst_metrics, AMPS  # noqa: E402 -- after the sys.path setup
+from dk.stage import Stage, QUALITY  # noqa: E402 -- after the sys.path setup
+from dk import aliasing as AL  # noqa: E402 -- after the sys.path setup
+from dk import linear  # noqa: E402 -- after the sys.path setup
 
 FS = 48000.0
 # #5 tightened op 1% -> 0.1%, harmonics 1 dB above -100 dBc -> 0.1 dB above -90 dBc, burst 5/10/5% -> 0.5/1/0.5%,
@@ -60,9 +64,11 @@ def prewarp_minimax(factor=4, lo=10e3, hi=20e3):
     """The pre-warp frequency that minimises the worst small-signal deviation (whole chain) from (ii) over
     CRIT["ac_band"] at `factor`x oversampling: how stage.PREWARP_HZ was chosen."""
     r = ref("dz")
-    f = np.array(r["ac"]["f"]); sel = (f >= CRIT["ac_band"][0]) & (f <= CRIT["ac_band"][1])
-    worst = lambda f0: float(np.max(np.abs(small_signal(Stage(FS, quality=(factor, f0)), f[sel])[1]
-                                           - np.array(r["ac"]["db"])[sel])))
+    f = np.array(r["ac"]["f"])
+    sel = (f >= CRIT["ac_band"][0]) & (f <= CRIT["ac_band"][1])
+    def worst(f0):
+        return float(np.max(np.abs(small_signal(Stage(FS, quality=(factor, f0)), f[sel])[1]
+                                               - np.array(r["ac"]["db"])[sel])))
     m = minimize_scalar(worst, bounds=(lo, hi), method="bounded", options=dict(xatol=1.0))
     return dict(oversampling=factor, prewarp_hz=float(m.x), ac_maxdev_db_chain=float(m.fun),
                 without_prewarp_db=worst(None))
@@ -81,15 +87,18 @@ def run(T=0.5, quality="standard", filt="fir", triode_math="libm"):
     for mname, r in R.items():
         o = {}
         o["op_rel"] = {k: abs(out["op"][k] / r["op"][k] - 1) for k in ("va", "vk", "ia", "vgk")}
-        f = np.array(r["ac"]["f"]); sel = (f >= CRIT["ac_band"][0]) & (f <= CRIT["ac_band"][1])
+        f = np.array(r["ac"]["f"])
+        sel = (f >= CRIT["ac_band"][0]) & (f <= CRIT["ac_band"][1])
         ds, dch = small_signal(st, f[sel])
         refdb = np.array(r["ac"]["db"])[sel]
         o["ac_maxdev_db_stage"] = float(np.max(np.abs(ds - refdb)))
         o["ac_maxdev_db_chain"] = float(np.max(np.abs(dch - refdb)))
         o["ac_worst_f_stage"] = float(f[sel][np.argmax(np.abs(ds - refdb))])
         o["ac_worst_f_chain"] = float(f[sel][np.argmax(np.abs(dch - refdb))])
-        o["ac_dev_at"] = {str(int(fx)): float((ds - refdb)[np.argmin(abs(f[sel] - fx))]) for fx in (20, 100, 1000, 10000, 20000)}
-        o["ac_chain_dev_at"] = {str(int(fx)): float((dch - refdb)[np.argmin(abs(f[sel] - fx))]) for fx in (20, 100, 1000, 10000, 20000)}
+        o["ac_dev_at"] = {str(int(fx)): float((ds - refdb)[np.argmin(abs(f[sel] - fx))])
+                          for fx in (20, 100, 1000, 10000, 20000)}
+        o["ac_chain_dev_at"] = {str(int(fx)): float((dch - refdb)[np.argmin(abs(f[sel] - fx))])
+                                for fx in (20, 100, 1000, 10000, 20000)}
         out["vs"][mname] = o
     out["ac_gain_1k_db"] = float(small_signal(st, [1000.0])[0][0])
 
@@ -105,28 +114,34 @@ def run(T=0.5, quality="standard", filt="fir", triode_math="libm"):
         out["sine"][a] = dict(H_peak_V=h[:5].tolist(), H_dBc=db_rel(h)[:5].tolist(), thd_pct=100 * thd(h))
         its[a] = s.iteration_stats()
     for mname, r in R.items():
-        o = out["vs"][mname]; o["harm"] = {}
+        o = out["vs"][mname]
+        o["harm"] = {}
         for a in AMPS:
-            rd = np.array(r["sine"][a]["H_dBc"]); dd = np.array(out["sine"][a]["H_dBc"])
+            rd = np.array(r["sine"][a]["H_dBc"])
+            dd = np.array(out["sine"][a]["H_dBc"])
             rows = {}
             for hk in range(1, 5):          # H2..H5
                 rows[f"H{hk+1}"] = dict(ref_dBc=float(rd[hk]), dk_dBc=float(dd[hk]), dev_db=float(dd[hk] - rd[hk]),
                                         tested=bool(rd[hk] > CRIT["harm_floor_dbc"]))
             rows["H1_dev_db"] = float(20 * np.log10(out["sine"][a]["H_peak_V"][0] / r["sine"][a]["H_peak_V"][0]))
-            rows["thd_ref_pct"] = r["sine"][a]["thd_pct"]; rows["thd_dk_pct"] = out["sine"][a]["thd_pct"]
+            rows["thd_ref_pct"] = r["sine"][a]["thd_pct"]
+            rows["thd_dk_pct"] = out["sine"][a]["thd_pct"]
             o["harm"][a] = rows
 
     s = Stage(FS, quality=quality, filt=filt, triode_math=triode_math)
-    nb = int(0.12 * FS); tb = np.arange(nb + s.latency_samples) / FS
+    nb = int(0.12 * FS)
+    tb = np.arange(nb + s.latency_samples) / FS
     xb = 4 * np.sin(2 * np.pi * 1000 * tb) * ((tb > 10e-3) & (tb < 30e-3))
     rb = aligned(s, xb, record=("out", "vgk"))
     vg = rb["_internal"]["vgk"]
     ti = (np.arange(len(vg)) - s.rs.up_delay_internal) / s.fs   # Vgk is seen after the interpolator only
-    keep = (ti >= 0) & (ti < nb / FS); vg, ti = vg[keep], ti[keep]
+    keep = (ti >= 0) & (ti < nb / FS)
+    vg, ti = vg[keep], ti[keep]
     out["burst"] = burst_metrics(ti, vg)
     its["burst"] = s.iteration_stats()
     for mname, r in R.items():
-        o = out["vs"][mname]; rb_ = r["burst"]
+        o = out["vs"][mname]
+        rb_ = r["burst"]
         shift_ref = rb_["min_vgk"] - rb_["rest_vgk"]
         tr = np.array(out["burst"]["traj_vgk"]) - out["burst"]["rest_vgk"]
         rr = np.array(rb_["traj_vgk"]) - rb_["rest_vgk"]
@@ -136,7 +151,8 @@ def run(T=0.5, quality="standard", filt="fir", triode_math="libm"):
                           t_min_diff_ms=1e3 * (out["burst"]["t_min"] - rb_["t_min"]),
                           ref=dict(rest=rb_["rest_vgk"], min=rb_["min_vgk"], tau=rb_["recovery_tau_s"]))
     out["iterations"] = its
-    out["cpu"] = dict(method=f"time.perf_counter around Stage.process (pure Python, one core, 48 kHz base, {st.os}x OS, "
+    out["cpu"] = dict(method=f"time.perf_counter around Stage.process (pure Python, one core, 48 kHz base, "
+                             f"{st.os}x OS, "
                              f"{filt} half-band resampling included); value = seconds of CPU per second of audio",
                       seconds_per_second=times)
     o = out["vs"]["dz"]
@@ -173,11 +189,14 @@ def summary(res):
     lines = [json.dumps(dict(op=res["op"], pass_vs_dz=res["pass_vs_dz"]), default=float)]
     for m in ("dz", "koren"):
         o = res["vs"][m]
-        lines.append(f"{m}: op_rel {o['op_rel']} ac stage {o['ac_maxdev_db_stage']:.3f} dB @ {o['ac_worst_f_stage']:.0f} Hz, "
-                     f"chain {o['ac_maxdev_db_chain']:.3f} dB @ {o['ac_worst_f_chain']:.0f}; at {o['ac_dev_at']} chain {o['ac_chain_dev_at']}")
+        lines.append(f"{m}: op_rel {o['op_rel']} ac stage {o['ac_maxdev_db_stage']:.3f} dB "
+                     f"@ {o['ac_worst_f_stage']:.0f} Hz, "
+                     f"chain {o['ac_maxdev_db_chain']:.3f} dB @ {o['ac_worst_f_chain']:.0f}; at {o['ac_dev_at']} chain "
+                     f"{o['ac_chain_dev_at']}")
         lines.append(f"{m}: burst {o['burst']}")
         for a in AMPS:
-            lines.append(f"{m} {a}: " + str({k: (round(v['dev_db'], 3), v['tested']) if isinstance(v, dict) else round(v, 3)
+            lines.append(f"{m} {a}: " + str({k: (round(v['dev_db'], 3), v['tested'])
+                                             if isinstance(v, dict) else round(v, 3)
                                             for k, v in o["harm"][a].items()}))
     lines.append(str({k: (round(v["mean"], 2), v["max"], v["nonconverged"]) for k, v in res["iterations"].items()}))
     lines.append(str(res["cpu"]["seconds_per_second"]))

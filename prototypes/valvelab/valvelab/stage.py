@@ -27,12 +27,14 @@ def solve_monotone(h, lo, hi, x0=None, tol=1e-9, maxit=80):
     (numerical derivative) when it lands inside the bracket, bisects otherwise.
     Returns (x, iterations_used).
     """
-    lo = np.array(lo, float, copy=True); hi = np.array(hi, float, copy=True)
+    lo = np.array(lo, float, copy=True)
+    hi = np.array(hi, float, copy=True)
     x = 0.5 * (lo + hi) if x0 is None else np.clip(np.array(x0, float), lo, hi)
     for it in range(1, maxit + 1):
         fx = h(x)
         pos = fx > 0
-        lo = np.where(pos, x, lo); hi = np.where(pos, hi, x)
+        lo = np.where(pos, x, lo)
+        hi = np.where(pos, hi, x)
         d = 1e-6 * np.maximum(1.0, np.abs(x))
         dfx = (h(x + d) - fx) / d
         with np.errstate(divide="ignore", invalid="ignore"):
@@ -77,7 +79,8 @@ class Stage:
 
     def _plate_dc(self, vk):
         vk = np.asarray(vk, float)
-        h = lambda va: (self.B - va) / self.Rp - self._ip(-vk, va, vk)
+        def h(va):
+            return (self.B - va) / self.Rp - self._ip(-vk, va, vk)
         va, _ = solve_monotone(h, vk + 0.0 * vk, self.B + 0.0 * vk)
         return va
 
@@ -88,7 +91,8 @@ class Stage:
             va = self._plate_dc(vk)
             return self.Rk * self._ik(-vk, va, vk) - vk   # decreasing in vk
         vk, _ = solve_monotone(g, np.array(0.0), np.array(min(self.B, 50.0)))
-        self.Vk0 = float(vk); self.Va0 = float(self._plate_dc(vk))
+        self.Vk0 = float(vk)
+        self.Va0 = float(self._plate_dc(vk))
         self.Ia0 = float(self._ip(-self.Vk0, self.Va0, self.Vk0))
         return self
 
@@ -110,7 +114,8 @@ class Stage:
         if self.Rs == 0:
             return vin - self.Vk0
         ig = self.valve.ig
-        h = lambda vg: vin - self.Rs * ig(vg - self.Vk0) - vg   # decreasing
+        def h(vg):
+            return vin - self.Rs * ig(vg - self.Vk0) - vg   # decreasing
         vg, _ = solve_monotone(h, np.minimum(vin, 0.0) - 1.0, np.maximum(vin, 0.0) + 1.0, x0=vin)
         return vg - self.Vk0
 
@@ -119,7 +124,8 @@ class Stage:
         vk = self.Vk0
         def h(va):
             return (self.B - va) / self.Rp - self._ip(vgk, va, vk) - (va - self.Va0) / self.RL
-        lo = np.full_like(vgk, vk); hi = np.full_like(vgk, self.B)
+        lo = np.full_like(vgk, vk)
+        hi = np.full_like(vgk, self.B)
         va, it = solve_monotone(h, lo, hi, x0=np.full_like(vgk, self.Va0))
         return (va, it) if return_iters else va
 

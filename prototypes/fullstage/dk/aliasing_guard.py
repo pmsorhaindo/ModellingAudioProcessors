@@ -16,11 +16,18 @@ Run (from prototypes/fullstage):
   python -m dk.aliasing_guard --update-baseline --reason "..."       rewrite the baseline (refused over a limit)
 Writes a markdown table to $GITHUB_STEP_SUMMARY when that is set. The CI job `aliasing` runs the check.
 """
-import argparse, datetime, json, os, platform, subprocess, sys, time
+import argparse
+import datetime
+import json
+import os
+import platform
+import subprocess
+import sys
+import time
 from concurrent.futures import ProcessPoolExecutor
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from dk import aliasing as AL
+from dk import aliasing as AL  # noqa: E402 -- after the sys.path setup
 
 BASELINE_JSON = os.path.join(HERE, "aliasing_baseline.json")
 TOLERANCE_DB = 1.5
@@ -91,7 +98,8 @@ def limits_by_key():
 
 
 def markdown(rows, tol=TOLERANCE_DB, baseline_meta=None, wall_s=None, baseline_name="dk/aliasing_baseline.json"):
-    f = lambda v, fmt: "—" if v is None else format(v, fmt)
+    def f(v, fmt):
+        return "—" if v is None else format(v, fmt)
     bad, imp = failed(rows), [r for r in rows if r["status"] == "improved"]
     head = (f"## Aliasing guard: {'FAIL' if bad else 'pass'}\n\n"
             f"Absolute limit `aliasing.LIMIT_DBC`; regression tolerance {tol} dB vs `{baseline_name}`"

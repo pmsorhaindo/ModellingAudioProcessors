@@ -35,14 +35,19 @@ the bias shift settle (time constants ~20-30 ms).
 
 Use: measure() one point, sweep() a set of points (optionally in parallel processes). validate.py runs the full
 sweep (1 s windows) for every setting and enforces LIMIT_DBC; dk/aliasing_guard.py (the CI `aliasing` job) runs
-CI_TONES with short buffers. `python -m dk.aliasing` regenerates the 64x ground truth (GROUND_TRUTH_JSON; 11 min on 8 cores).
+CI_TONES with short buffers. `python -m dk.aliasing` regenerates the 64x ground truth (GROUND_TRUTH_JSON; 11 min on 8
+cores).
 """
-import argparse, json, os, sys, time
+import argparse
+import json
+import os
+import sys
+import time
 from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from dk.stage import Stage
+from dk.stage import Stage  # noqa: E402 -- after the sys.path setup
 
 FS = 48000
 SWEEP_HZ = tuple(range(1037, 20000, 1000))      # 1037, 2037, ... 19037 Hz
@@ -130,7 +135,8 @@ def alias_dbc(y, m, fs=FS, os_=None, band=BAND_HZ, mask=MASK_BINS):
         harm[max(k * m - mask, 0):k * m + mask + 1] = True
     sel = (fb >= band[0]) & (fb <= band[1]) & ~harm
     fund = P[m - mask:m + mask + 1].sum()
-    db = lambda e: max(float(10 * np.log10(max(e, 1e-300) / fund)), DB_FLOOR)
+    def db(e):
+        return max(float(10 * np.log10(max(e, 1e-300) / fund)), DB_FLOOR)
     j = int(np.argmax(np.where(sel, P, 0.0)))
     out = dict(total_dbc=db(P[sel].sum()), worst_dbc=db(P[j]), worst_hz=float(fb[j]))
     if os_ is not None:
@@ -209,7 +215,8 @@ def table(records, drives=DRIVES):
         lines += [f"\n{d:g} V, total non-harmonic energy 20 Hz-20 kHz, dBc",
                   "| tone Hz | " + " | ".join(f"{q} {flt}" for q, flt in cols) + " |", "|---" * (len(cols) + 1) + "|"]
         for f in sorted({r["tone"] for r in records if r["drive"] == d}):
-            lines.append(f"| {f} | " + " | ".join(f"{val.get((q, flt, d, f), float('nan')):.1f}" for q, flt in cols) + " |")
+            lines.append(f"| {f} | " + " | ".join(f"{val.get((q, flt, d, f), float('nan')):.1f}"
+                                                  for q, flt in cols) + " |")
     return "\n".join(lines)
 
 

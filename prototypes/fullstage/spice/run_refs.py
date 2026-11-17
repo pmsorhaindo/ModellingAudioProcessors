@@ -2,7 +2,8 @@
 
   model 'koren' : Koren 12AX7 'NEW MODEL' (models/12ax7_koren.lib, fetched)  -> reference (i)
   model 'dz'    : Dempwolf-Zoelzer subckt with the DK model's params (models_dz/dz_12ax7.inc) -> (ii)
-Analyses: 'main'  = .op; .ac 1 Hz-100 kHz (AC_GRID, plus the band edges AC_EDGES_HZ); 1 kHz sines at 0.05/0.5/2/8 V peak for 500 ms (analysed 400-500 ms);
+Analyses: 'main'  = .op; .ac 1 Hz-100 kHz (AC_GRID, plus the band edges AC_EDGES_HZ); 1 kHz sines at 0.05/0.5/2/8 V
+          peak for 500 ms (analysed 400-500 ms);
           'burst' = 4 V 1 kHz tone burst 10-30 ms, 120 ms.
 
 Single source of truth (#4): netlist() builds every netlist from dk/circuit.VALUES (component values), ELEMENTS
@@ -17,12 +18,15 @@ version and the analysis parameters under "generator". The ngspice binary is $NG
 Usage: python spice/run_refs.py [koren] [dz]      (both if none given; ~2 min each, run in parallel)
        python spice/run_refs.py --write-netlist   (rewrites spice/stage_12ax7.cir only; no ngspice needed)
 """
-import json, os, subprocess, sys
+import json
+import os
+import subprocess
+import sys
 import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from analysis import load_wrdata, resample_uniform, harmonics, thd, db_rel, cycle_mean, recovery_tau
-from dk.circuit import VALUES
+from analysis import load_wrdata, resample_uniform, harmonics, thd, db_rel, cycle_mean, recovery_tau  # noqa: E402 -- after the sys.path setup
+from dk.circuit import VALUES  # noqa: E402 -- after the sys.path setup
 
 NGSPICE = os.environ.get("NGSPICE", os.path.join(HERE, "..", ".ngenv", "bin", "ngspice"))
 MODELS = {"koren": (".include models/12ax7_koren.lib", "12AX7"),
@@ -127,7 +131,8 @@ def write_netlist(fn=NETLIST_FILE):
 
 def ngspice_version():
     r = subprocess.run([NGSPICE, "--version"], capture_output=True, text=True)
-    return next((ln.strip("* ").split(":")[0].strip() for ln in r.stdout.splitlines() if "ngspice-" in ln), r.stdout.strip())
+    return next((ln.strip("* ").split(":")[0].strip() for ln in r.stdout.splitlines() if "ngspice-" in ln),
+                r.stdout.strip())
 
 
 def run(model, solver=SOLVER, out="out", write=True):

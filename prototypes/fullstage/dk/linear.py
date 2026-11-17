@@ -29,7 +29,7 @@ def linearised(stage):
 def stage_response(stage, f):
     """Complex response of the discretised stage alone (internal rate, no resampler) at frequencies f."""
     Al, Bl, Cl, Dl = linearised(stage)
-    I = np.eye(Al.shape[0])
+    I = np.eye(Al.shape[0])  # noqa: E741 -- the identity matrix I of the DK equations
     z = np.exp(2j * np.pi * np.atleast_1d(np.asarray(f, float)) / stage.fs)
     return np.array([(Cl @ np.linalg.solve(zz * I - Al, Bl) + Dl)[0, 0] for zz in z])
 

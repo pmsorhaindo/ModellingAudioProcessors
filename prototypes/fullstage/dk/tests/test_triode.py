@@ -1,11 +1,13 @@
 """#16: currents() with the shared exp and divided powers against a gold copy of the pre-#16 formulas.
 Run from prototypes/fullstage:  python -m pytest -q dk/tests/test_triode.py
 """
-import math, os, sys
+import math
+import os
+import sys
 import numpy as np
 HERE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, HERE)
-from dk.triode import currents, currents_only, softplus, softplus_sigmoid, DZ_12AX7_RSD1
+from dk.triode import currents, currents_only, softplus, softplus_sigmoid, DZ_12AX7_RSD1  # noqa: E402 -- after the sys.path setup
 
 # Dense grid over and beyond the stage's range (grid -20..+5 V, plate 0..450 V), plus the far cutoff where
 # exp(-|z|) underflows (z < -745: softplus = sigmoid = 0) and the subnormal tail just before it.

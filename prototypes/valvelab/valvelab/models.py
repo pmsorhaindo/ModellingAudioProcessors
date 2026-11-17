@@ -28,7 +28,8 @@ class KorenTriode:
         self.source = p["source"]
 
     def ip(self, vg, vp):
-        vg = np.asarray(vg, float); vp = np.asarray(vp, float)
+        vg = np.asarray(vg, float)
+        vp = np.asarray(vp, float)
         vpc = np.maximum(vp, 0.0)
         e1 = vpc / self.KP * _softplus(self.KP * (1.0 / self.MU + vg / np.sqrt(self.KVB + vpc * vpc)))
         # E1 >= 0 always for Vp >= 0, so (1+sgn) = 2
@@ -41,7 +42,9 @@ class KorenTriode:
     def ig(vg):
         """Grid current of RGI + diode(IS, RS) in series, solved by Newton."""
         g = P.KOREN_GRID
-        R = g["RGI"] + g["RS"]; Is = g["IS"]; Vt = 0.025852 * g["N"]
+        R = g["RGI"] + g["RS"]
+        Is = g["IS"]
+        Vt = 0.025852 * g["N"]
         vg = np.asarray(vg, float)
         i = np.zeros_like(vg)
         pos = vg > 0
@@ -74,7 +77,8 @@ class KorenPentode:
         self.source = p["source"]
 
     def ip(self, vg1, vg2, vp):
-        vg1 = np.asarray(vg1, float); vp = np.asarray(vp, float)
+        vg1 = np.asarray(vg1, float)
+        vp = np.asarray(vp, float)
         vg2 = np.maximum(vg2, 1e-3)   # screen must be positive for eq. (5)
         e1 = vg2 / self.KP * _softplus(self.KP * (1.0 / self.MU + vg1 / vg2))
         return 2.0 * np.power(e1, self.EX) / self.KG1 * np.arctan(np.maximum(vp, 0.0) / self.KVB)
@@ -105,7 +109,8 @@ class DempwolfTriode:
         self.source = p["source"]
 
     def ik(self, vg, vp):
-        vg = np.asarray(vg, float); vp = np.asarray(vp, float)
+        vg = np.asarray(vg, float)
+        vp = np.asarray(vp, float)
         return self.G * np.power(_softplus(self.C * (vp / self.mu + vg)) / self.C, self.gamma)
 
     def ig(self, vg):

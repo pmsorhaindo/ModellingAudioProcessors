@@ -11,16 +11,19 @@ Run: python -m dk6as6.validate   (from prototypes/fullstage). Writes dk6as6/resu
 (ii), and "plain_4x": the same run at 4x without pre-warp, for information only (no 4x setting yet: its aliasing,
 dk/aliasing.py, has not been assessed for this stage).
 """
-import json, os, sys, time
+import json
+import os
+import sys
+import time
 import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
-from analysis import harmonics, thd, db_rel
-from spice.run_refs import burst_metrics, AMPS
-from dk.validate import CRIT, aligned
-from dk6as6.stage import Stage, QUALITY
-from dk6as6 import linear, pentode
+from analysis import harmonics, thd, db_rel  # noqa: E402 -- after the sys.path setup
+from spice.run_refs import burst_metrics, AMPS  # noqa: E402 -- after the sys.path setup
+from dk.validate import CRIT, aligned  # noqa: E402 -- after the sys.path setup
+from dk6as6.stage import Stage, QUALITY  # noqa: E402 -- after the sys.path setup
+from dk6as6 import linear, pentode  # noqa: E402 -- after the sys.path setup
 
 FS = 48000.0
 PARAMS = {"dual": pentode.DUAL_CONTROL, "r51": pentode.REFIT_51}
@@ -40,13 +43,16 @@ def small_signal(stage, f):
 
 
 def ac_dev(st, r):
-    f = np.array(r["ac"]["f"]); sel = (f >= CRIT["ac_band"][0]) & (f <= CRIT["ac_band"][1])
+    f = np.array(r["ac"]["f"])
+    sel = (f >= CRIT["ac_band"][0]) & (f <= CRIT["ac_band"][1])
     ds, dch = small_signal(st, f[sel])
     refdb = np.array(r["ac"]["db"])[sel]
-    o = dict(ac_maxdev_db_stage=float(np.max(np.abs(ds - refdb))), ac_maxdev_db_chain=float(np.max(np.abs(dch - refdb))),
+    o = dict(ac_maxdev_db_stage=float(np.max(np.abs(ds - refdb))),
+             ac_maxdev_db_chain=float(np.max(np.abs(dch - refdb))),
              ac_worst_f_stage=float(f[sel][np.argmax(np.abs(ds - refdb))]),
              ac_worst_f_chain=float(f[sel][np.argmax(np.abs(dch - refdb))]))
-    o["ac_dev_at"] = {str(int(fx)): float((ds - refdb)[np.argmin(abs(f[sel] - fx))]) for fx in (20, 100, 1000, 10000, 20000)}
+    o["ac_dev_at"] = {str(int(fx)): float((ds - refdb)[np.argmin(abs(f[sel] - fx))])
+                      for fx in (20, 100, 1000, 10000, 20000)}
     o["ac_chain_dev_at"] = {str(int(fx)): float((dch - refdb)[np.argmin(abs(f[sel] - fx))])
                             for fx in (20, 100, 1000, 10000, 20000)}
     return o
@@ -71,13 +77,15 @@ def sines(quality="standard", filt="fir", model="dual", T=0.5, amps=AMPS):
 def harm_dev(sine, r):
     res = {}
     for a in sine:
-        rd = np.array(r["sine"][a]["H_dBc"]); dd = np.array(sine[a]["H_dBc"])
+        rd = np.array(r["sine"][a]["H_dBc"])
+        dd = np.array(sine[a]["H_dBc"])
         rows = {}
         for hk in range(1, 5):          # H2..H5
             rows[f"H{hk+1}"] = dict(ref_dBc=float(rd[hk]), dk_dBc=float(dd[hk]), dev_db=float(dd[hk] - rd[hk]),
                                     tested=bool(rd[hk] > CRIT["harm_floor_dbc"]))
         rows["H1_dev_db"] = float(20 * np.log10(sine[a]["H_peak_V"][0] / r["sine"][a]["H_peak_V"][0]))
-        rows["thd_ref_pct"] = r["sine"][a]["thd_pct"]; rows["thd_dk_pct"] = sine[a]["thd_pct"]
+        rows["thd_ref_pct"] = r["sine"][a]["thd_pct"]
+        rows["thd_dk_pct"] = sine[a]["thd_pct"]
         res[a] = rows
     return res
 
@@ -100,12 +108,14 @@ def run(T=0.5, quality="standard", filt="fir", model="dual"):
     o["harm"] = harm_dev(out["sine"], r)
 
     s = Stage(FS, quality=quality, filt=filt, pentode=PARAMS[model])
-    nb = int(0.12 * FS); tb = np.arange(nb + s.latency_samples) / FS
+    nb = int(0.12 * FS)
+    tb = np.arange(nb + s.latency_samples) / FS
     xb = 4 * np.sin(2 * np.pi * 1000 * tb) * ((tb > 10e-3) & (tb < 30e-3))
     rb = aligned(s, xb, record=("out", "vgk"))
     vg = rb["_internal"]["vgk"]
     ti = (np.arange(len(vg)) - s.rs.up_delay_internal) / s.fs   # Vgk is seen after the interpolator only
-    keep = (ti >= 0) & (ti < nb / FS); vg, ti = vg[keep], ti[keep]
+    keep = (ti >= 0) & (ti < nb / FS)
+    vg, ti = vg[keep], ti[keep]
     out["burst"] = burst_metrics(ti, vg)
     its["burst"] = s.iteration_stats()
     rb_ = r["burst"]
@@ -119,7 +129,8 @@ def run(T=0.5, quality="standard", filt="fir", model="dual"):
                       ref=dict(rest=rb_["rest_vgk"], min=rb_["min_vgk"], tau=rb_["recovery_tau_s"]))
     out["vs"] = {model: o}
     out["iterations"] = its
-    out["cpu"] = dict(method=f"time.perf_counter around Stage.process (pure Python, one core, 48 kHz base, {st.os}x OS, "
+    out["cpu"] = dict(method=f"time.perf_counter around Stage.process (pure Python, one core, 48 kHz base, "
+                             f"{st.os}x OS, "
                              f"{filt} half-band resampling included); value = seconds of CPU per second of audio",
                       seconds_per_second=times)
     out["passed"] = dict(
