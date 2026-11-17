@@ -27,7 +27,7 @@ def resid(p, K, v):
 def rest():
     """The runtime 2-port problem at rest (zero input), from a converged stage."""
     s = Stage(FS)
-    p = s.m["G"] @ s.x + s.m["H"] @ np.array([0.0, circuit.VALUES["HT"]])
+    p = s.m["G"] @ s.x0 + s.m["H"] @ np.array([0.0, circuit.VALUES["HT"]])
     return p, s.K, (s.dc["vgk"], s.dc["vak"])
 
 

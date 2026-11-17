@@ -64,6 +64,11 @@ i = grid and plate currents). Exponential/power-law currents make plain NR diver
 - Our ngspice `.op` (below) is the reference these numbers must match.
 - Same routine is needed after sample-rate change (states are rate-independent if stored as capacitor
   voltages, rate-dependent if stored as trapezoidal "canonical" states — convert, don't re-solve blindly).
+- Matching the DC solve is not enough in floating point (#70). With the absolute state, the discretised map's own
+  rest point is (I−A)⁻¹(B u + C i), and (I−A)⁻¹ ~ fs·τ amplifies the ~1e-13 rounding of the built matrices. The
+  stage started at the DC point and drifted to a rest point 1.6 µV away at hq. Running the state as the deviation
+  from the DC point (x = x0 + Δx, i = i0 + Δi, p = p_dc + G Δx + H vin with p_dc = v0 + K i0) makes the DC point the
+  exact rest point (dk/stage.py `Stage._rest`, cpp/dk_core.h).
 
 ## c. Denormals
 

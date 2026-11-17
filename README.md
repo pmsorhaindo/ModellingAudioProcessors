@@ -46,8 +46,6 @@ will not use a brand or device name.
 
 **Known problems**
 - CI runs on x86-64 Linux only; Apple silicon, the first target, is tested by hand (#72).
-- On Apple silicon a silent input settles to a small DC offset at the output: 1.6 µV at hq in the Python stage,
-  less at standard and eco. The hq silence test (limit 1 µV) fails on it (#70).
 
 Nothing is signed, notarised, published or released.
 
