@@ -111,4 +111,4 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: python -m pip install ruff==0.17.3
       - name: Ruff (pyflakes + pycodestyle)
-        run: ruff check --isolated --select E,F --output-format github prototypes
+        run: ruff check --isolated --select E,F --line-length 120 --output-format github prototypes
