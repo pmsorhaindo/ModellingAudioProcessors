@@ -99,10 +99,11 @@ def build(fs, rk_scale=1.0, dc=False, prewarp_hz=None):
     nn, nu = len(NODES), len(U)
     S = np.block([[Nr.T @ Gr @ Nr + Nx.T @ Gx @ Nx, Nu.T], [Nu, np.zeros((nu, nu))]])
     Si = np.linalg.inv(S)
-    pad = lambda M: np.hstack([M, np.zeros((M.shape[0], nu))])
+    def pad(M):
+        return np.hstack([M, np.zeros((M.shape[0], nu))])
     Nxp, Nvp, Nip, Nop = pad(Nx), pad(Nv), pad(Ni), pad(No)
     Nup = np.hstack([np.zeros((nu, nn)), np.eye(nu)])
-    I = np.eye(len(Cs))
+    I = np.eye(len(Cs))  # noqa: E741 -- the identity matrix I of the DK equations
     return dict(
         A=2 * Gx @ Nxp @ Si @ Nxp.T - I, B=2 * Gx @ Nxp @ Si @ Nup.T, C=-2 * Gx @ Nxp @ Si @ Nip.T,
         D=Nop @ Si @ Nxp.T, E=Nop @ Si @ Nup.T, F=-(Nop @ Si @ Nip.T),

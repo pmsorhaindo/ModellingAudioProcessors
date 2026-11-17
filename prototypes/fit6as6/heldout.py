@@ -14,7 +14,9 @@ held-out screen check of the #55 split; p.11 top Ic2 vs Ec3 is in the fit since 
 4) GE p.1 typical-operation gm values against the Raytheon gm curves (two makers' sheets).
 Writes results/heldout_checks.json and plots/heldout_gm.png (not committed).
 """
-import csv, json, os
+import csv
+import json
+import os
 import numpy as np
 import model6as6 as M
 
@@ -28,7 +30,7 @@ P, P51, P25 = FIT["dual_control"]["params"], FIT["refit_51"]["params"], FIT["ref
 
 def load(fn, val):
     with open(os.path.join(HERE, "data", fn)) as f:
-        rows = list(csv.DictReader(l for l in f if not l.startswith("#")))
+        rows = list(csv.DictReader(ln for ln in f if not ln.startswith("#")))
     for r in rows:
         for k in ("Ec1_V", "Ec2_V", "Ec3_V", "Eb_V", val):
             r[k] = float(r[k])
@@ -55,7 +57,8 @@ def stats(m, d, floor):
     m, d = np.asarray(m, float), np.asarray(d, float)
     if not len(d):
         return dict(n=0)
-    rel = (m - d) / d; lg = np.log((np.maximum(m, 0) + floor) / (d + floor))
+    rel = (m - d) / d
+    lg = np.log((np.maximum(m, 0) + floor) / (d + floor))
     return dict(n=int(len(d)), rms_log=float(np.sqrt(np.mean(lg ** 2))), median_abs_rel=float(np.median(np.abs(rel))),
                 mean_rel=float(np.mean(rel)), rms_abs=float(np.sqrt(np.mean((m - d) ** 2))),
                 max_abs_rel=float(np.max(np.abs(rel))))
@@ -99,7 +102,8 @@ GM_BANDS = (("Ec3_below_-6", -99, -6), ("Ec3_-6_to_0", -6, 0), ("Ec3_0_to_5", 0,
 
 def gm_bands(q, p=P):
     """pooled gm(q) error by Ec3 band (all gm graphs of that quantity; p.12 top is at Ec3 = 0)."""
-    rows = [r for r in GM if r["quantity"] == q]; out = {}
+    rows = [r for r in GM if r["quantity"] == q]
+    out = {}
     for name, lo, hi in GM_BANDS:
         rs = [r for r in rows if lo <= r["Ec3_V"] < hi]
         cs = dict.fromkeys((r["graph"], r["curve"]) for r in rs)
@@ -122,7 +126,8 @@ def sheet_slope(graph, curve, sweep, x, w):
         k = np.abs(xs - x0) <= w
         # need points on both sides of x0, spanning most of the window
         if k.sum() < 5 or xs[k].min() > x0 - 0.6 * w or xs[k].max() < x0 + 0.6 * w:
-            out.append(np.nan); continue
+            out.append(np.nan)
+            continue
         c = np.polyfit(xs[k] - x0, ys[k], 2)
         out.append(c[1] * 1e3)            # mA/V -> umho
     return np.array(out)
@@ -139,8 +144,11 @@ for gg, lab, cg, sw, w in SELF:
         rc = [r for r in GM if r["graph"] == gg and r["curve"] == c]
         cur = "Ib_" + c.split("_", 1)[1]
         s = sheet_slope(cg, cur, sw, [r[sw] for r in rc], w)
-        k = np.isfinite(s); d = np.array([r["gm_umho"] for r in rc])[k]
-        per[c] = stats(s[k], d, G0); ms.append(s[k]); ds.append(d)
+        k = np.isfinite(s)
+        d = np.array([r["gm_umho"] for r in rc])[k]
+        per[c] = stats(s[k], d, G0)
+        ms.append(s[k])
+        ds.append(d)
     self_check[gg] = dict(from_current_graph=cg, window_V=w, all=stats(np.concatenate(ms), np.concatenate(ds), G0),
                           per_curve=per)
 
@@ -172,7 +180,8 @@ p8_per_curve = {c: stats(p8_model(rc), [r["I_mA"] for r in rc], I0_MA)
 
 
 def at(rows, sweep, x, val="I_mA", tol=None):
-    rr = sorted(rows, key=lambda r: r[sweep]); xs, ys = arr(rr, sweep, val)
+    rr = sorted(rows, key=lambda r: r[sweep])
+    xs, ys = arr(rr, sweep, val)
     if not len(xs) or not xs.min() <= x <= xs.max():
         return None
     if tol is not None and np.min(np.abs(xs - x)) > tol:
@@ -224,7 +233,8 @@ def g3_cutoff_check(p):
         pts = {e: v for e, v in pts.items() if v is not None}
         mpts = {e: model_eb_at(e, level, p) for e in pts}
         out[f"Ib_{level}_mA"] = dict(Eb_V_by_Ec3={str(e): v for e, v in pts.items()}, plate_mu=plate_mu(pts),
-                                     model_Eb_V_by_Ec3={str(e): v for e, v in mpts.items()}, model_plate_mu=plate_mu(mpts))
+                                     model_Eb_V_by_Ec3={str(e): v for e, v in mpts.items()},
+                                     model_plate_mu=plate_mu(mpts))
     out["model_MU3"] = p["MU3"]
     return out
 
@@ -246,7 +256,8 @@ def ge_gm_check(p):
             raytheon_gm1_p12_top=gm_at("p12_gm1_vs_Ec1_Ec2", "gm1_Ec2_120", "Ec1_V", -2.0) if e3 == 0 else None,
             raytheon_gm3_p13_top=gm_at("p13_gm3_vs_Ec3_Ec2", "gm3_Ec2_120", "Ec3_V", e3),
             raytheon_gm3_p13_bottom=gm_at("p13_gm3_vs_Ec3_Ec1", "gm3_Ec1_-2", "Ec3_V", e3),
-            model_gm1=float(model_gm("gm1", -2, 120, e3, 120, p)), model_gm3=float(model_gm("gm3", -2, 120, e3, 120, p))))
+            model_gm1=float(model_gm("gm1", -2, 120, e3, 120, p)),
+            model_gm3=float(model_gm("gm3", -2, 120, e3, 120, p))))
     return out
 
 
@@ -278,7 +289,9 @@ with open(os.path.join(HERE, "results", "heldout_checks.json"), "w") as f:
     json.dump(res, f, indent=1)
 
 if __name__ == "__main__":
-    import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
     graphs = list(dict.fromkeys(r["graph"] for r in GM))
     fig, axs = plt.subplots(2, 3, figsize=(18, 10))
     for ax, g in zip(axs.flat, graphs):
@@ -286,25 +299,35 @@ if __name__ == "__main__":
         sw = "Ec1_V" if g.startswith("p12_gm1_vs_Ec1") else "Ec3_V"
         cs = list(dict.fromkeys(r["curve"] for r in rg))
         for i, c in enumerate(cs):
-            rc = [r for r in rg if r["curve"] == c]; col = plt.cm.viridis(0.85 * i / max(len(cs) - 1, 1))
+            rc = [r for r in rg if r["curve"] == c]
+            col = plt.cm.viridis(0.85 * i / max(len(cs) - 1, 1))
             ax.plot([r[sw] for r in rc], [r["gm_umho"] for r in rc], "o", ms=3, color=col, label=c)
             v = {k: np.full(300, rc[0][k]) for k in ("Ec1_V", "Ec2_V", "Ec3_V", "Eb_V")}
             v[sw] = np.linspace(-7, 0, 300) if sw == "Ec1_V" else np.linspace(-12, 12, 300)
-            ax.plot(v[sw], model_gm(rc[0]["quantity"], v["Ec1_V"], v["Ec2_V"], v["Ec3_V"], v["Eb_V"]), "-", color=col, lw=1)
-        ax.set_title(g + " (points: sheet, lines: model)", fontsize=9); ax.set_xlabel(sw); ax.set_ylabel("umho")
-        ax.grid(alpha=.3); ax.legend(fontsize=6)
+            ax.plot(v[sw], model_gm(rc[0]["quantity"], v["Ec1_V"], v["Ec2_V"], v["Ec3_V"], v["Eb_V"]), "-", color=col,
+                    lw=1)
+        ax.set_title(g + " (points: sheet, lines: model)", fontsize=9)
+        ax.set_xlabel(sw)
+        ax.set_ylabel("umho")
+        ax.grid(alpha=.3)
+        ax.legend(fontsize=6)
     ax = axs.flat[5]
     for i, c in enumerate(dict.fromkeys(r["curve"] for r in P8 if r["quantity"] == "Ib")):
-        rc = [r for r in P8 if r["curve"] == c]; col = plt.cm.viridis(0.85 * i / 13)
+        rc = [r for r in P8 if r["curve"] == c]
+        col = plt.cm.viridis(0.85 * i / 13)
         ax.plot([r["Eb_V"] for r in rc], [r["I_mA"] for r in rc], "o", ms=2, color=col)
         eb = np.linspace(1, 440, 300)
         ax.plot(eb, M.dual_ip(-2.0, 120.0, rc[0]["Ec3_V"], eb, P) * 1e3, "-", color=col, lw=1)
-    ax.set_yscale("log"); ax.set_ylim(0.05, 10); ax.set_title("p8 bottom Ib, Ec3 = -1..-14 V (in the fit since #51)", fontsize=9)
+    ax.set_yscale("log")
+    ax.set_ylim(0.05, 10)
+    ax.set_title("p8 bottom Ib, Ec3 = -1..-14 V (in the fit since #51)", fontsize=9)
     ax.grid(alpha=.3, which="both")
-    plt.tight_layout(); os.makedirs(os.path.join(HERE, "plots"), exist_ok=True)
+    plt.tight_layout()
+    os.makedirs(os.path.join(HERE, "plots"), exist_ok=True)
     plt.savefig(os.path.join(HERE, "plots", "heldout_gm.png"), dpi=100)
     print(json.dumps(dict(gm=gm_summary, self={k: v["all"] for k, v in self_check.items()}, p8=p8), indent=1))
-    print(json.dumps(p8_vs_transfer, indent=1)); print(json.dumps(ge_gm, indent=1))
+    print(json.dumps(p8_vs_transfer, indent=1))
+    print(json.dumps(ge_gm, indent=1))
     for g, v in gm_check.items():
         print(g, {k: round(v["all"][k], 3) for k in ("n", "rms_log", "median_abs_rel", "mean_rel")})
         for c, s in v["per_curve"].items():

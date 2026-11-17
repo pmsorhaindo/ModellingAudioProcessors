@@ -99,16 +99,17 @@ jobs:
           path: prototypes/fullstage/aliasing_guard_results.json
           if-no-files-found: warn
 
+  # Blocking lint (#87). Settings (line length 120, select E and F) are in ruff.toml at the repo root, shared with
+  # the pre-commit hook (.pre-commit-config.yaml); keep the ruff version here and the hook's rev the same.
   lint:
-    name: ruff (non-blocking)
+    name: ruff
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: python -m pip install ruff==0.17.3
-      - name: Ruff (pyflakes + pycodestyle)
-        run: ruff check --isolated --select E,F --line-length 120 --output-format github prototypes
+      - name: Ruff (pyflakes + pycodestyle, settings from ruff.toml)
+        run: ruff check --output-format github prototypes

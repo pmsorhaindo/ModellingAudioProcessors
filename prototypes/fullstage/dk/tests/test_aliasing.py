@@ -6,7 +6,8 @@ ratchet; run it locally with `python -m dk.aliasing_guard`. Here: the limits and
 and drive, the metric itself (periodic Hann, coherent bins, masks) is checked on synthetic signals, and the 64x ground
 truth sits below every limit.
 """
-import os, sys
+import os
+import sys
 import numpy as np
 import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -18,7 +19,7 @@ FS = A.FS
 
 def harmonic_signal(m, n, levels_db):
     t = np.arange(n)
-    return sum(10 ** (l / 20) * np.sin(2 * np.pi * (k + 1) * m * t / n + k) for k, l in enumerate(levels_db))
+    return sum(10 ** (lev / 20) * np.sin(2 * np.pi * (k + 1) * m * t / n + k) for k, lev in enumerate(levels_db))
 
 
 def test_limits_cover_every_setting_filter_and_drive():

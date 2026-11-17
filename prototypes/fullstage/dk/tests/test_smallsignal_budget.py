@@ -12,7 +12,8 @@ dk/budget.py):
   * the resampler is counted once (validate.small_signal squared chain_response before #38).
 Run from prototypes/fullstage:  python -m pytest -q dk/tests
 """
-import os, sys
+import os
+import sys
 import numpy as np
 import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))

@@ -1,6 +1,8 @@
 """Issue #55 (option A of #53): dual_control is the KR + XA fit with p.11 top Ic2 vs Ec3 in the fit; the held-out
 screen check is p.10 bottom Ic2 vs Ec3 plus p.8 bottom Ic2. Values at the time of writing in brackets (README)."""
-import json, os, sys
+import json
+import os
+import sys
 import numpy as np
 import pytest
 
@@ -56,10 +58,13 @@ def test_heldout_screen_by_graph():
 def test_kr_term_reuses_the_share_exp():
     """dual_ip_ig2 with KR > 0 (one z, one exp shared by the share and the KR term) equals the #53 code path, which
     recomputed z and took its own softplus and exp; and the KR = 0 path equals dual_ip / dual_ig2."""
-    rng = np.random.default_rng(55); n = 5000
+    rng = np.random.default_rng(55)
+    n = 5000
     v = (rng.uniform(-5, 0, n), rng.uniform(60, 140, n), rng.uniform(-300, 300, n), rng.uniform(0, 1e4, n))
-    ip, ig2 = M.dual_ip_ig2(*v, D["params"]); jp, jg2 = B.ip_ig2_unshared(*v, D["params"])
-    assert np.all(np.isfinite(ip)) and np.allclose(ip, jp, rtol=1e-12, atol=0) and np.allclose(ig2, jg2, rtol=1e-12, atol=0)
+    ip, ig2 = M.dual_ip_ig2(*v, D["params"])
+    jp, jg2 = B.ip_ig2_unshared(*v, D["params"])
+    assert (np.all(np.isfinite(ip)) and np.allclose(ip, jp, rtol=1e-12, atol=0)
+            and np.allclose(ig2, jg2, rtol=1e-12, atol=0))
     ip, ig2 = M.dual_ip_ig2(*v, B51["params"])
     assert np.allclose(ip, M.dual_ip(*v, B51["params"]), rtol=1e-14, atol=0)
     assert np.allclose(ig2, M.dual_ig2(*v, B51["params"]), rtol=1e-12, atol=0)

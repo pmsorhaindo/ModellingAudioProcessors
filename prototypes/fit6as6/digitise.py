@@ -5,7 +5,11 @@ column-wise curve tracking from a hand-placed seed -> pixel->data calibration
 from detected grid-line positions. Writes data/*.csv and an overlay PNG per page.
 Seeds are only starting hints; every point comes from dark pixels in the scan.
 """
-import csv, hashlib, json, os, subprocess
+import csv
+import hashlib
+import json
+import os
+import subprocess
 import numpy as np
 from PIL import Image, ImageDraw
 from scipy import ndimage as ndi
@@ -55,11 +59,15 @@ def track(mask, x0, y0, x1, ignore_cols=(), w=7, max_gap=1, merge=4, start_w=6, 
             cents = [lo + r.mean() for r in runs]
             c = min(cents, key=lambda v: abs(v - pred)) if cents else 1e9
             if abs(c - pred) > win:
-                gap += 1; continue
-            pts.append((x, c)); hist.append((x, c)); gap = 0
+                gap += 1
+                continue
+            pts.append((x, c))
+            hist.append((x, c))
+            gap = 0
         # linear prediction from last ~15 accepted points
         if len(hist) >= 4:
-            h = np.array(hist[-15:]); p = np.polyfit(h[:, 0], h[:, 1], 1)
+            h = np.array(hist[-15:])
+            p = np.polyfit(h[:, 0], h[:, 1], 1)
             pred = np.polyval(p, x + step)
         elif hist:
             pred = hist[-1][1]
@@ -72,7 +80,9 @@ def track2(mask, xs, ys, xlo, xhi, **kw):
 
 
 def sample(pts, xs_px):
-    a = np.array(pts); o = np.argsort(a[:, 0]); a = a[o]
+    a = np.array(pts)
+    o = np.argsort(a[:, 0])
+    a = a[o]
     keep = [(x, np.interp(x, a[:, 0], a[:, 1])) for x in xs_px if a[0, 0] <= x <= a[-1, 0]]
     # only keep samples that have a real traced pixel within 2 columns
     return [(x, y) for x, y in keep if np.min(np.abs(a[:, 0] - x)) <= 2]
@@ -80,30 +90,42 @@ def sample(pts, xs_px):
 
 def page3():
     """AVERAGE PLATE CHARACTERISTICS: Ef=6.3, Ec2=120, Ec3=0. Solid = Ib, dashed = Ic2."""
-    im = render(3); g = np.array(im) < 128
-    cols = gridlines(g, "col", 590, 1330, 0.4); rows = gridlines(g, "row", 300, 1330, 0.4)
-    cols = cols[(cols > 280) & (cols < 1345)]; rows = rows[(rows > 580) & (rows < 1345)]
+    im = render(3)
+    g = np.array(im) < 128
+    cols = gridlines(g, "col", 590, 1330, 0.4)
+    rows = gridlines(g, "row", 300, 1330, 0.4)
+    cols = cols[(cols > 280) & (cols < 1345)]
+    rows = rows[(rows > 580) & (rows < 1345)]
     # keep only rows on the regular 1 mA lattice (a near-horizontal curve can also pass the threshold)
-    pitch = np.median(np.diff(rows)); top = rows[0]
+    pitch = np.median(np.diff(rows))
+    top = rows[0]
     rows = np.array([r for r in rows if abs(((r - top) / pitch) - round((r - top) / pitch)) < 0.1
                      and (r - top) / pitch > -0.5])
     rows = np.array([min(rows, key=lambda r: abs(r - (top + k * pitch))) for k in range(21)])
     # calibration: vertical lines every 10 V from 0 V; horizontal every 1 mA from 0 mA (bottom)
     kx = np.polyfit(np.arange(len(cols)) * 10.0, cols, 1)            # px = a*V + b
-    ry = rows[::-1]; ky = np.polyfit(np.arange(len(ry)) * 1.0, ry, 1)  # px = a*mA + b
+    ry = rows[::-1]
+    ky = np.polyfit(np.arange(len(ry)) * 1.0, ry, 1)  # px = a*mA + b
     assert len(cols) == 29 and len(rows) == 21, (len(cols), len(rows))
-    V2x = lambda v: np.polyval(kx, v); x2V = lambda x: (x - kx[1]) / kx[0]
-    I2y = lambda i: np.polyval(ky, i); y2I = lambda y: (y - ky[1]) / ky[0]
+    def V2x(v):
+        return np.polyval(kx, v)
+    def x2V(x):
+        return (x - kx[1]) / kx[0]
+    def I2y(i):
+        return np.polyval(ky, i)
+    def y2I(y):
+        return (y - ky[1]) / ky[0]
     m = g.copy()
-    for r in rows: m[int(r) - 2:int(r) + 3, :] = False   # strip horizontal grid
-    ign = [c + d for c in cols for d in range(-3, 4)]     # skip vertical grid columns
+    for r in rows:
+        m[int(r) - 2:int(r) + 3, :] = False   # strip horizontal grid
     # Coarse guide polylines (Va V, mA) for each curve. Each node was read from a printed list of
     # dark-pixel runs at Va = 25, 35, ... 235 V (see README) and assigned to a curve by eye.
     # The guide only picks WHICH run belongs to a curve; every saved value is a run centroid.
     G = {
      ("Ib", 0): "65 10.52 85 11.11 105 11.65 125 12.16 145 12.60 165 12.98 185 13.28 205 13.52 225 13.81 240 14.03",
      ("Ib", -1): "42 7.05 55 7.45 75 7.98 95 8.44 115 8.80 135 9.04 155 9.28 175 9.47 195 9.68 215 9.86 228 9.99",
-     ("Ib", -2): "22 3.62 35 4.04 55 4.48 75 4.79 95 5.00 115 5.16 135 5.31 155 5.39 175 5.50 195 5.60 215 5.70 240 5.84",
+     ("Ib", -2): "22 3.62 35 4.04 55 4.48 75 4.79 95 5.00 115 5.16 135 5.31 155 5.39 175 5.50 195 "
+                 "5.60 215 5.70 240 5.84",
      ("Ib", -3): "22 2.00 45 2.18 65 2.32 85 2.40 105 2.49 125 2.58 145 2.64 165 2.69 185 2.76 205 2.81 240 2.99",
      ("Ib", -4): "22 0.80 45 0.92 65 0.96 85 0.99 155 1.00 235 1.04 240 1.04",
      ("Ic2", 0): "72 11.95 85 11.53 95 11.34 125 10.66 145 10.32 155 10.19 185 9.82 215 9.55 240 9.40",
@@ -111,7 +133,8 @@ def page3():
      ("Ic2", -2): "22 4.70 35 4.29 55 3.97 85 3.65 115 3.45 145 3.29 175 3.14 215 3.04 240 3.00",
      ("Ic2", -3): "25 2.00 45 1.89 75 1.74 105 1.69 145 1.63 185 1.54 215 1.49 240 1.45",
      ("Ic2", -4): "22 0.72 45 0.66 75 0.58 105 0.54 155 0.51 205 0.47 240 0.43"}
-    rows_out, ov = [], im.convert("RGB"); d = ImageDraw.Draw(ov)
+    rows_out, ov = [], im.convert("RGB")
+    d = ImageDraw.Draw(ov)
     gridrows = set(int(round(r)) + k for r in rows for k in (-1, 0, 1))
     for (kind, ec1), txt in G.items():
         nodes = np.array(txt.split(), float).reshape(-1, 2)
@@ -121,7 +144,8 @@ def page3():
             if any(abs(x - c) <= 3 for c in cols):
                 continue
             yg = I2y(np.interp(v, nodes[:, 0], nodes[:, 1]))
-            lo = int(yg) - 8; ys = np.where(g[lo:int(yg) + 9, x])[0] + lo
+            lo = int(yg) - 8
+            ys = np.where(g[lo:int(yg) + 9, x])[0] + lo
             if not len(ys):
                 continue
             runs = np.split(ys, np.where(np.diff(ys) > 1)[0] + 1)
@@ -130,7 +154,8 @@ def page3():
             runs = [r for r in runs if abs(r.mean() - yg) <= 4]
             if len(runs) != 1 or len(runs[0]) > 7:   # ambiguous (crossing, label) -> skip
                 continue
-            y = runs[0].mean(); near = bool(any(int(p) in gridrows for p in runs[0]))
+            y = runs[0].mean()
+            near = bool(any(int(p) in gridrows for p in runs[0]))
             rows_out.append(dict(page=3, curve=name, quantity=kind, Ec1_V=ec1, Ec2_V=120, Ec3_V=0,
                                  Eb_V=round(x2V(x), 2), I_mA=round(y2I(y), 4), x_px=x, y_px=round(y, 1),
                                  on_gridline=int(near)))
@@ -150,38 +175,59 @@ def page3():
     rows_out = []
     for nm in guides:
         pts = [r for r in kept if r["curve"] == nm]
-        x = np.array([r["x_px"] for r in pts], float); y = np.array([r["y_px"] for r in pts])
+        x = np.array([r["x_px"] for r in pts], float)
+        y = np.array([r["y_px"] for r in pts])
         for _ in range(3):
-            p = np.polyfit(x, y, 4); res = np.abs(y - np.polyval(p, x)); ok = res <= 3
-            pts = [r for r, o in zip(pts, ok) if o]; x, y = x[ok], y[ok]
+            p = np.polyfit(x, y, 4)
+            res = np.abs(y - np.polyval(p, x))
+            ok = res <= 3
+            pts = [r for r, o in zip(pts, ok) if o]
+            x, y = x[ok], y[ok]
         rows_out += pts
     for r in rows_out:
         col = (255, 0, 0) if r["quantity"] == "Ib" else (0, 120, 255)
-        x, y = r["x_px"], r["y_px"]; d.ellipse([x - 4, y - 4, x + 4, y + 4], outline=col, width=2)
+        x, y = r["x_px"], r["y_px"]
+        d.ellipse([x - 4, y - 4, x + 4, y + 4], outline=col, width=2)
     # draw calibration ticks
-    for v in range(0, 281, 50): d.line([V2x(v), I2y(0) + 8, V2x(v), I2y(0) + 20], fill=(0, 160, 0), width=3)
+    for v in range(0, 281, 50):
+        d.line([V2x(v), I2y(0) + 8, V2x(v), I2y(0) + 20], fill=(0, 160, 0), width=3)
     ov.crop((250, 560, 1370, 1360)).save(os.path.join(HERE, "plots", "overlay_page3_plate.png"))
     return rows_out, dict(px_per_V=kx[0], x_at_0V=kx[1], px_per_mA=ky[0], y_at_0mA=ky[1])
 
 
 def page4():
     """Top-right: Ib vs Ec3 at Ef=6.3, Eb=120, Ec2=120, Ec1 = -1, -2, -3."""
-    im = render(4); g = np.array(im) < 128
+    im = render(4)
+    g = np.array(im) < 128
     # this plot is on fine graph paper (1-2 px lines); curves are ~5 px -> opening removes grid
     m = ndi.binary_opening(g, structure=np.ones((4, 4)))
     # calibration from the heavy axis/major lines: Ec3=-10 V and +10 V borders, 0/5/10 mA rows
     sub = g[200:800, 880:1370]
-    c = sub.mean(0); r = sub.mean(1)
+    c = sub.mean(0)
+    r = sub.mean(1)
     def peak(prof, lo, hi, off):
-        seg = prof[lo - off:hi - off]; return lo + int(np.argmax(seg))
-    xm10 = peak(c, 905, 916, 880); xp10 = peak(c, 1348, 1358, 880); x0 = peak(c, 1128, 1138, 880)
-    y0 = peak(r, 790, 799, 200); y5 = peak(r, 568, 577, 200); y10 = peak(r, 345, 353, 200)
-    kx = np.polyfit([-10, 0, 10], [xm10, x0, xp10], 1); ky = np.polyfit([0, 5, 10], [y0, y5, y10], 1)
-    V2x = lambda v: np.polyval(kx, v); x2V = lambda x: (x - kx[1]) / kx[0]
-    I2y = lambda i: np.polyval(ky, i); y2I = lambda y: (y - ky[1]) / ky[0]
+        seg = prof[lo - off:hi - off]
+        return lo + int(np.argmax(seg))
+    xm10 = peak(c, 905, 916, 880)
+    xp10 = peak(c, 1348, 1358, 880)
+    x0 = peak(c, 1128, 1138, 880)
+    y0 = peak(r, 790, 799, 200)
+    y5 = peak(r, 568, 577, 200)
+    y10 = peak(r, 345, 353, 200)
+    kx = np.polyfit([-10, 0, 10], [xm10, x0, xp10], 1)
+    ky = np.polyfit([0, 5, 10], [y0, y5, y10], 1)
+    def V2x(v):
+        return np.polyval(kx, v)
+    def x2V(x):
+        return (x - kx[1]) / kx[0]
+    def I2y(i):
+        return np.polyval(ky, i)
+    def y2I(y):
+        return (y - ky[1]) / ky[0]
     curves = [("Ib_vs_Ec3_Ec1_-1", -1, 9.8, 10.95, -8.0), ("Ib_vs_Ec3_Ec1_-2", -2, 9.8, 6.25, -8.0),
               ("Ib_vs_Ec3_Ec1_-3", -3, 9.8, 3.1, -8.0)]
-    rows_out, ov = [], im.convert("RGB"); d = ImageDraw.Draw(ov)
+    rows_out, ov = [], im.convert("RGB")
+    d = ImageDraw.Draw(ov)
     for name, ec1, v0, i0, v1 in curves:
         pts = track(m, int(V2x(v0)), I2y(i0), int(V2x(v1)), (), w=6, max_gap=6)
         sv = np.arange(-7.5, 9.8 + 1e-9, 0.5)
@@ -201,9 +247,9 @@ def page4():
 # Curves are 5-9 px strokes and graph-paper lines 1-5 px on the fine-grid graphs, so the grid is
 # removed by a morphological opening with a 5 px disc; the coarse-grid graphs (p.8 top, p.10
 # bottom, p.11 top) are drawn with a thinner pen (3.5-5 px) on a 1-2 px grid and use a 3x3
-# opening. Every graph has an overlay in plots/overlay_raytheon_*.png. The scan is slightly sheared (vertical lines drift ~5 px over the
-# graph height) and the printed grid is not perfectly uniform, so calibration interpolates
-# between the individually located major grid lines (see lattice()).
+# opening. Every graph has an overlay in plots/overlay_raytheon_*.png. The scan is slightly sheared (vertical lines
+# drift ~5 px over the graph height) and the printed grid is not perfectly uniform, so calibration interpolates between
+# the individually located major grid lines (see lattice()).
 # Issue #48 added p.8 bottom (plate family at Ec3 = -14..+10 V, g3 current) and the five gm graphs of
 # pp. 11-13. These are written to their own CSVs (held out of every fit) and drawn on a 2-3 px grid, which a
 # 4 px disc opening removes.
@@ -260,32 +306,41 @@ def lattice(g, m, xspec, yspec):
     Lines are located in g & ~m (the thin-line residue left after removing the curve strokes m), so a
     curve running next to a grid line cannot pull it; heavy lines (axes) that the opening keeps are
     located in the raw scan g instead."""
-    xl = np.linspace(xspec[0], xspec[1], xspec[4] + 1); uv = np.linspace(xspec[2], xspec[3], xspec[4] + 1)
-    yl = np.linspace(yspec[0], yspec[1], yspec[4] + 1); vv = np.linspace(yspec[2], yspec[3], yspec[4] + 1)
-    ylo, yhi = int(min(yl)), int(max(yl)); xlo, xhi = int(min(xl)), int(max(xl))
+    xl = np.linspace(xspec[0], xspec[1], xspec[4] + 1)
+    uv = np.linspace(xspec[2], xspec[3], xspec[4] + 1)
+    yl = np.linspace(yspec[0], yspec[1], yspec[4] + 1)
+    vv = np.linspace(yspec[2], yspec[3], yspec[4] + 1)
+    ylo, yhi = int(min(yl)), int(max(yl))
+    xlo, xhi = int(min(xl)), int(max(xl))
     gi = g & ~m
 
     def locate(nominal, along, vertical):
         c, n = _line_fit(gi, nominal, along, vertical)
         return (c, n, "thin") if n >= 5 else (*_line_fit(g, nominal, along, vertical), "raw")
-    V = [locate(x, (ylo, yhi), True) for x in xl]; H = [locate(y, (xlo, xhi), False) for y in yl]
-    vert = np.array([v[0] for v in V]); hori = np.array([h[0] for h in H])   # x = c0*y + c1; y = d0*x + d1
+    V = [locate(x, (ylo, yhi), True) for x in xl]
+    H = [locate(y, (xlo, xhi), False) for y in yl]
+    vert = np.array([v[0] for v in V])
+    hori = np.array([h[0] for h in H])   # x = c0*y + c1; y = d0*x + d1
     P, D = [], []
     for (c0, c1), u in zip(vert, uv):
         for (d0, d1), v in zip(hori, vv):
-            y = (d0 * c1 + d1) / (1 - d0 * c0); x = c0 * y + c1
-            P.append((x, y)); D.append((u, v, 1.0))
+            y = (d0 * c1 + d1) / (1 - d0 * c0)
+            x = c0 * y + c1
+            P.append((x, y))
+            D.append((u, v, 1.0))
     P, D = np.array(P), np.array(D)
     A, *_ = np.linalg.lstsq(D, P, rcond=None)            # [x y] = [u v 1] @ A
     res = np.hypot(*(D @ A - P).T)
     ou, ov = np.argsort(vert[:, 1] * np.sign(A[0, 0])), np.argsort(hori[:, 1] * np.sign(A[1, 1]))
 
     def to_data(x, y):
-        xs = vert[:, 0] * y + vert[:, 1]; ys = hori[:, 0] * x + hori[:, 1]
+        xs = vert[:, 0] * y + vert[:, 1]
+        ys = hori[:, 0] * x + hori[:, 1]
         u = np.interp(x * np.sign(A[0, 0]), (xs * np.sign(A[0, 0]))[ou], uv[ou])
         v = np.interp(y * np.sign(A[1, 1]), (ys * np.sign(A[1, 1]))[ov], vv[ov])
         return float(u), float(v)
-    to_px = lambda u, v: tuple(np.array([u, v, 1.0]) @ A)
+    def to_px(u, v):
+        return tuple(np.array([u, v, 1.0]) @ A)
     info = dict(n_vertical=len(xl), n_horizontal=len(yl), px_per_u=float(A[0, 0]), px_per_v=float(A[1, 1]),
                 affine_rms_residual_px=float(np.sqrt(np.mean(res ** 2))), affine_max_residual_px=float(res.max()),
                 line_x_at_mid=[round(float(c0 * (ylo + yhi) / 2 + c1), 2) for c0, c1 in vert],
@@ -316,18 +371,22 @@ def trace_runs(m, x0, y0, x1, w=8, max_gap=60, tmax=22, skip_cols=(), hist_n=12)
         if x in skip_cols:
             continue
         win = 5 if not hist else w
-        dist = lambda r: max(r[0] - pred, pred - r[1], 0.0)
+        def dist(r):
+            return max(r[0] - pred, pred - r[1], 0.0)
         cand = [(t, b) for t, b in runs_at(m, x, int(pred - win - tmax), int(pred + win + tmax) + 1)
                 if b - t + 1 <= tmax and dist((t, b)) <= win]
         if cand:
             t, b = min(cand, key=lambda r: (dist(r), abs((r[0] + r[1]) / 2 - pred)))
-            out.append((x, (t + b) / 2, t, b)); hist.append((x, (t + b) / 2)); gap = 0
+            out.append((x, (t + b) / 2, t, b))
+            hist.append((x, (t + b) / 2))
+            gap = 0
         else:
             gap += 1
             if gap > max_gap and hist:
                 break
         if len(hist) >= 4:
-            h = np.array(hist[-hist_n:]); deg = 2 if abs(h[-1, 0] - h[0, 0]) > 60 else 1
+            h = np.array(hist[-hist_n:])
+            deg = 2 if abs(h[-1, 0] - h[0, 0]) > 60 else 1
             pred = float(np.polyval(np.polyfit(h[:, 0] - x, h[:, 1], deg), step))
         elif hist:
             pred = hist[-1][1]
@@ -337,12 +396,15 @@ def trace_runs(m, x0, y0, x1, w=8, max_gap=60, tmax=22, skip_cols=(), hist_n=12)
 def _smooth_ok(tr, half=30, tol=2.5):
     """Drop columns whose centre is > tol px from a local quadratic through the neighbouring
     columns (label strokes, grid remnants)."""
-    a = np.array([(x, y) for x, y, _, _ in tr], float); keep = np.ones(len(a), bool)
+    a = np.array([(x, y) for x, y, _, _ in tr], float)
+    keep = np.ones(len(a), bool)
     for _ in range(2):
         for i, (x, y) in enumerate(a):
-            nb = keep & (np.abs(a[:, 0] - x) <= half); nb[i] = False
+            nb = keep & (np.abs(a[:, 0] - x) <= half)
+            nb[i] = False
             if nb.sum() < 8:
-                keep[i] = False; continue
+                keep[i] = False
+                continue
             c = np.polyfit(a[nb, 0] - x, a[nb, 1], 2)
             keep[i] = abs(np.polyval(c, 0) - y) <= tol
     return [t for t, k in zip(tr, keep) if k]
@@ -369,11 +431,13 @@ RAY_GRAPHS = {
         title="Ib, Ic2 vs Eb; Ec2 = 120 V, Ec3 = 0; Ec1 = 0..-5 V (p.9 top)",
         x=(527.5, 1924.5, 0, 400, 20), y=(1617.4, 648, 0, 14, 14), step=5.0, crop=(480, 600, 1960, 1660),
         urange=(20, 400),               # below ~20 V all curves run together into the origin
-        curves=[("Ib", 0, (250, 13.887), None), ("Ib", -0.5, [(250, 11.792), (80, 9.125)], None), ("Ib", -1, [(150, 8.824), (290, 9.995)], None),
+        curves=[("Ib", 0, (250, 13.887), None), ("Ib", -0.5, [(250, 11.792), (80, 9.125)], None),
+                ("Ib", -1, [(150, 8.824), (290, 9.995)], None),
                 ("Ib", -1.5, (250, 7.721), None), ("Ib", -2, (150, 5.378), None), ("Ib", -2.5, (250, 4.019), None),
                 ("Ib", -3, (250, 2.514), None), ("Ib", -3.5, (250, 1.488), None), ("Ib", -4, (250, 0.754), None),
                 ("Ib", -5, (250, 0.141), None),
-                ("Ic2", 0, [(150, 10.24), (80, 11.417)], None), ("Ic2", -1, (150, 6.394), None), ("Ic2", -2, (150, 3.32), None),
+                ("Ic2", 0, [(150, 10.24), (80, 11.417)], None), ("Ic2", -1, (150, 6.394), None),
+                ("Ic2", -2, (150, 3.32), None),
                 ("Ic2", -3, [(250, 1.30), (80, 1.536)], None), ("Ic2", -4, (250, 0.367), None)]),
     "p9_Ib_vs_Ec1_Ec2": dict(
         page=9, sweep="Ec1_V", fixed=dict(Eb_V=120, Ec3_V=0), label="Ec2_V",
@@ -385,7 +449,8 @@ RAY_GRAPHS = {
         page=10, sweep="Ec1_V", fixed=dict(Eb_V=120, Ec3_V=0), label="Ec2_V",
         title="Ic2 vs Ec1; Eb = 120 V, Ec3 = 0; Ec2 = 60..140 V (p.10 top)",
         x=(518, 1910, -5, 0, 20), y=(1632, 661, 0, 14, 14), max_gap=15, step=0.05, crop=(470, 610, 1960, 1680),
-        curves=[("Ic2", 140, (-0.3, 12.208), None), ("Ic2", 120, (-0.3, 9.343), None), ("Ic2", 100, (-0.3, 6.802), None),
+        curves=[("Ic2", 140, (-0.3, 12.208), None), ("Ic2", 120, (-0.3, 9.343), None),
+                ("Ic2", 100, (-0.3, 6.802), None),
                 ("Ic2", 80, (-0.3, 4.503), None), ("Ic2", 60, (-0.3, 2.461), None)]),
     "p10_vs_Ec3_Ec2": dict(
         page=10, sweep="Ec3_V", fixed=dict(Eb_V=120, Ec1_V=-2), label="Ec2_V", dashed="Ic2",
@@ -403,8 +468,10 @@ RAY_GRAPHS = {
         title="Ib, Ic2 vs Ec3; Eb = Ec2 = 120 V; Ec1 = 0..-5 V (p.11 top)",
         x=(551, 1945, -14, 14, 28), y=(1653, 673, 0, 20, 20), max_gap=15, step=0.25, crop=(500, 620, 2000, 1700),
         open=np.ones((3, 3), bool),     # thin pen (solid strokes ~3.5-5 px, grid 1-2 px)
-        curves=[("Ib", 0, (11, 15.28), (-5.7, 14)), ("Ib", -1, (8, 10.768), (-6.5, 14)), ("Ib", -2, (8, 6.435), (-6.5, 14)),
-                ("Ib", -3, (8, 2.723), (-6.5, 14)), ("Ib", -4, (8, 0.721), (-6.5, 14)), ("Ib", -5, (8, 0.214), (-6.5, 14)),
+        curves=[("Ib", 0, (11, 15.28), (-5.7, 14)), ("Ib", -1, (8, 10.768), (-6.5, 14)),
+                ("Ib", -2, (8, 6.435), (-6.5, 14)),
+                ("Ib", -3, (8, 2.723), (-6.5, 14)), ("Ib", -4, (8, 0.721), (-6.5, 14)),
+                ("Ib", -5, (8, 0.214), (-6.5, 14)),
                 # all Ib curves leave the axis together at Ec3 = -7.8 V and stay within ~10 px of each other (so
                 # would be dropped as crossings) up to about -6.5 V; tracing there lets tracers swap strokes
                 ("Ic2", 0, (8, 5.829), None), ("Ic2", -1, (8, 3.784), None), ("Ic2", -2, (8, 2.204), None),
@@ -428,7 +495,8 @@ RAY_GRAPHS = {
                 ("Ib", -2, (395, 5.846), None), ("Ib", -3, (395, 5.52), None), ("Ib", -4, (395, 5.119), None),
                 ("Ib", -5, (395, 4.607), None), ("Ib", -6, (395, 4.105), None), ("Ib", -7, (395, 3.599), None),
                 ("Ib", -8, (395, 3.093), None), ("Ib", -9, (395, 2.503), None), ("Ib", -10, (395, 1.922), None),
-                ("Ib", -11, (395, 1.371), None), ("Ib", -12, (395, 0.897), (270, 560)), ("Ib", -13, (395, 0.529), (300, 560)),
+                ("Ib", -11, (395, 1.371), None), ("Ib", -12, (395, 0.897), (270, 560)),
+                ("Ib", -13, (395, 0.529), (300, 560)),
                 ("Ib", -14, (395, 0.215), None),
                 # Ic2: the eleven dashed curves cross 14 solid curves and each other; the dashed tracer is only
                 # allowed 30-column gaps here (longer bridges hopped between curves) and only -14 and -4 give
@@ -461,9 +529,11 @@ RAY_GRAPHS = {
         crop=(520, 1890, 1960, 2940), csv="raytheon_5725_gm_p11-13.csv", open=DISC4, clear_axis=True,
         # Ec1 = 0, -1 and -2 cross each other repeatedly between Ec3 = -7 and +5.5 V (strokes within a few px), and
         # every curve runs into the common toe at Ec3 = -8..-6 V; each range starts where its stroke is on its own.
-        curves=[("gm1", 0, (8.5, 4435), (6.5, 14)), ("gm1", -1, (8.5, 4302), (6.5, 14)), ("gm1", -2, (8.5, 3994), (4, 14)),
+        curves=[("gm1", 0, (8.5, 4435), (6.5, 14)), ("gm1", -1, (8.5, 4302), (6.5, 14)),
+                ("gm1", -2, (8.5, 3994), (4, 14)),
                 ("gm1", -3, (8.5, 2856), (-2.5, 14)), ("gm1", -3.5, (8.5, 2010), (-4, 14)),
-                ("gm1", -4, (8.5, 1284), (-5.5, 14)), ("gm1", -4.5, (8.5, 669), (-6, 14)), ("gm1", -5, (8.5, 293), (-6.5, 14))]),
+                ("gm1", -4, (8.5, 1284), (-5.5, 14)), ("gm1", -4.5, (8.5, 669), (-6, 14)),
+                ("gm1", -5, (8.5, 293), (-6.5, 14))]),
     "p13_gm3_vs_Ec3_Ec2": dict(
         page=13, sweep="Ec3_V", fixed=dict(Eb_V=120, Ec1_V=-2), label="Ec2_V", value="gm_umho",
         title="gm(g3) vs Ec3; Eb = 120 V, Ec1 = -2 V; Ec2 = 60..140 V (p.13 top)",
@@ -485,12 +555,14 @@ RAY_GRAPHS = {
 def ray_probe(key, us, vlo, vhi):
     """Debug aid: print the cleaned-mask runs (in data units) at sweep values `us`. The seeds in
     RAY_GRAPHS were chosen from this listing."""
-    G = RAY_GRAPHS[key]; g = np.array(render_ray(G["page"])) < 128
+    G = RAY_GRAPHS[key]
+    g = np.array(render_ray(G["page"])) < 128
     m = ndi.binary_opening(g, structure=G.get("open", DISC5))
     to_px, to_data, info = lattice(g, m, G["x"], G["y"])
     for u in us:
         x = int(round(to_px(u, (vlo + vhi) / 2)[0]))
-        ylo = int(to_px(u, vhi)[1]); yhi = int(to_px(u, vlo)[1])
+        ylo = int(to_px(u, vhi)[1])
+        yhi = int(to_px(u, vlo)[1])
         print(u, [(round(to_data(x, (t + b) / 2)[1], 3), b - t + 1) for t, b in runs_at(m, x, ylo, yhi)])
 
 
@@ -501,10 +573,13 @@ DASH_PX = 60       # connected strokes shorter than this (bounding box) are dash
 
 def ray_graph(key):
     """Digitise every curve of one Raytheon graph. Returns (rows, calibration info)."""
-    G = RAY_GRAPHS[key]; im = render_ray(G["page"]); g = np.array(im) < 128
+    G = RAY_GRAPHS[key]
+    im = render_ray(G["page"])
+    g = np.array(im) < 128
     m = ndi.binary_opening(g, structure=G.get("open", DISC5))
     to_px, to_data, info = lattice(g, m, G["x"], G["y"])
-    ulo, uhi = sorted(G["x"][2:4]); vmin = min(G["y"][2:4])
+    ulo, uhi = sorted(G["x"][2:4])
+    vmin = min(G["y"][2:4])
     # Solid curves are long connected strokes; dashes are short pieces (< DASH_PX). Tracing each kind
     # on its own mask stops a tracer from switching to the other family at shallow crossings.
     # Components are taken after a 2 px dilation, which rejoins thin solid strokes that the opening
@@ -540,7 +615,8 @@ def ray_graph(key):
               else dict(skip_cols=skip, max_gap=G.get("max_gap", 60), **G.get("solid_kw", {})))
         tr = {}
         for seed in ([seeds] if isinstance(seeds[0], (int, float)) else seeds):   # one or more seeds
-            x0, y0 = to_px(*seed[:2]); x0 = int(round(x0))
+            x0, y0 = to_px(*seed[:2])
+            x0 = int(round(x0))
             rng = seed[2:4] if len(seed) == 4 else (urange or G.get("urange") or (ulo, uhi))
             xa, xb = (int(round(to_px(u, seed[1])[0])) for u in rng)
             for p in trace_runs(mm, x0, y0, xa, **kw) + trace_runs(mm, x0, y0, xb, **kw):
@@ -564,12 +640,14 @@ def ray_graph(key):
                 j = np.abs(o[:, 0] - x) <= 15
                 if j.any() and o[j, 0].min() <= x <= o[j, 0].max() and \
                         abs(np.interp(x, o[j, 0], o[j, 1]) - y) < CROSS_PX:
-                    near = True; break
+                    near = True
+                    break
             if near or b >= to_px(to_data(x, y)[0], vmin - off.get(k[0], 0.0))[1] - AXIS_PX:
                 continue
             out.append((x, y, t, b))
         kept[k] = out
-    rows, ov = [], im.convert("RGB"); d = ImageDraw.Draw(ov)
+    rows, ov = [], im.convert("RGB")
+    d = ImageDraw.Draw(ov)
     for (q, lab), tr in kept.items():
         if not tr:
             continue
@@ -580,12 +658,15 @@ def ray_graph(key):
             i = int(np.argmin(np.abs(uvs[:, 0] - ut)))
             if abs(uvs[i, 0] - ut) > tol:
                 continue
-            u, v = uvs[i]; x, y = tr[i][0], tr[i][1]
+            u, v = uvs[i]
+            x, y = tr[i][0], tr[i][1]
             r = dict(page=G["page"], graph=key, curve=f"{q}_{G['label'][:-2]}_{lab:g}", quantity=q,
                      Ec1_V=None, Ec2_V=None, Ec3_V=None, Eb_V=None)
             r[G.get("value", "I_mA")] = round(v + off.get(q, 0.0), 4)
             r.update(x_px=x, y_px=round(y, 1), stroke_px=tr[i][3] - tr[i][2] + 1)
-            r.update(G["fixed"]); r[G["label"]] = lab; r[G["sweep"]] = round(u, 3)
+            r.update(G["fixed"])
+            r[G["label"]] = lab
+            r[G["sweep"]] = round(u, 3)
             rows.append(r)
             rgb = {"Ic2": (0, 120, 255), "Ic3": (220, 0, 220)}.get(q, (255, 0, 0))
             d.ellipse([x - 4, y - 4, x + 4, y + 4], outline=rgb, width=2)
@@ -598,16 +679,20 @@ def ray_graph(key):
 
 
 if __name__ == "__main__":
-    r3, c3 = page3(); r4, c4 = page4()
+    r3, c3 = page3()
+    r4, c4 = page4()
     keys = ["page", "curve", "quantity", "Ec1_V", "Ec2_V", "Ec3_V", "Eb_V", "I_mA", "x_px", "y_px", "on_gridline"]
     for fn, rows in (("plate_characteristics_p3.csv", r3), ("suppressor_characteristics_p4.csv", r4)):
         with open(os.path.join(HERE, "data", fn), "w", newline="") as f:
             f.write(f"# source: {SRC_URL} (GE 6AS6, ET-T706 12-49), rendered at {DPI} dpi; "
                     "voltages in V w.r.t. cathode, current in mA\n")
-            w = csv.DictWriter(f, keys, lineterminator="\n"); w.writeheader(); w.writerows(rows)
+            w = csv.DictWriter(f, keys, lineterminator="\n")
+            w.writeheader()
+            w.writerows(rows)
     rr, cr = [], {}
     for k in RAY_GRAPHS:
-        rows, info = ray_graph(k); rr += rows
+        rows, info = ray_graph(k)
+        rr += rows
         cr[k] = dict(page=RAY_GRAPHS[k]["page"], conditions=RAY_GRAPHS[k]["title"], points=len(rows),
                      **{a: info[a] for a in ("px_per_u", "px_per_v", "affine_rms_residual_px",
                                              "affine_max_residual_px", "lines_from_raw_scan")})
@@ -624,12 +709,14 @@ if __name__ == "__main__":
         with open(os.path.join(HERE, "data", fn), "w", newline="") as f:
             f.write(f"# source: {RAY_URL} (Raytheon 5725/6AS6W, 15 Dec 1960) SHA256 {RAY_SHA256}, {pages} "
                     f"rendered at {RAY_DPI} dpi; voltages in V w.r.t. cathode, {unit}\n")
-            w = csv.DictWriter(f, keys, lineterminator="\n"); w.writeheader()
+            w = csv.DictWriter(f, keys, lineterminator="\n")
+            w.writeheader()
             w.writerows(r for r in rr if RAY_GRAPHS[r["graph"]].get("csv", "raytheon_5725_p8-11.csv") == fn)
     with open(os.path.join(HERE, "data", "calibration.json"), "w") as f:
         json.dump(dict(page3=c3, page4=c4, raytheon_5725=cr), f, indent=1)
     from collections import Counter
-    print(Counter(r["curve"] for r in r3 + r4)); print(c3, c4)
+    print(Counter(r["curve"] for r in r3 + r4))
+    print(c3, c4)
     for k, c in cr.items():
         print(k, c["points"], "points,", sum(0.1 <= r.get("I_mA", -1) <= 0.6 for r in rr if r["graph"] == k),
               "in 0.1-0.6 mA")

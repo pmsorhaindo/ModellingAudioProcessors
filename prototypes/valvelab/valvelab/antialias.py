@@ -16,7 +16,9 @@ from scipy.signal import resample_poly
 
 class Table:
     def __init__(self, fn, xmax, m=4097):
-        self.x0 = -xmax; self.dx = 2 * xmax / (m - 1); self.m = m
+        self.x0 = -xmax
+        self.dx = 2 * xmax / (m - 1)
+        self.m = m
         self.xs = np.linspace(-xmax, xmax, m)
         self.fs = fn(self.xs)
         # exact cumulative integral of the piecewise-linear f
@@ -37,7 +39,9 @@ class Table:
         x = np.asarray(x, float)
         xc = np.clip(x, -self.xmax, self.xmax)
         i, t = self._idx(xc)
-        f0 = self.fs[i]; f1 = self.fs[i + 1]; h = t * self.dx
+        f0 = self.fs[i]
+        f1 = self.fs[i + 1]
+        h = t * self.dx
         Fin = self.Fs[i] + f0 * h + 0.5 * (f1 - f0) / self.dx * h * h
         # linear extension beyond the table (f held constant at the ends)
         Fin = Fin + np.where(x > self.xmax, (x - self.xmax) * self.fs[-1], 0.0)
@@ -52,7 +56,8 @@ def naive(tab, x):
 def adaa1(tab, x, eps=1e-6):
     xp = np.concatenate([[x[0]], x[:-1]])
     dx = x - xp
-    Fx = tab.F(x); Fp = tab.F(xp)
+    Fx = tab.F(x)
+    Fp = tab.F(xp)
     small = np.abs(dx) < eps
     with np.errstate(divide="ignore", invalid="ignore"):
         y = (Fx - Fp) / dx

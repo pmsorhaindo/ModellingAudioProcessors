@@ -3,13 +3,17 @@ finite best iterate (the C++-core contract in dk/solver.py). Failures are forced
 (iteration cap, zero tolerance) or a bad start, never through circuit values.
 Run from prototypes/fullstage:  python -m pytest -q dk/tests/test_nonconvergence.py
 """
-import math, os, subprocess, sys, warnings
+import math
+import os
+import subprocess
+import sys
+import warnings
 import numpy as np
 import pytest
 HERE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, HERE)
-from dk import circuit, solver
-from dk.stage import Stage, OperatingPointError, NonConvergenceWarning
+from dk import circuit, solver  # noqa: E402 -- after the sys.path setup
+from dk.stage import Stage, OperatingPointError, NonConvergenceWarning  # noqa: E402 -- after the sys.path setup
 
 FS = 48000.0
 

@@ -1,17 +1,21 @@
-import json, os, re, sys
+import json
+import os
+import re
+import sys
 import numpy as np
 import pytest
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
-import model6as6 as M
+import model6as6 as M  # noqa: E402 -- after the sys.path setup
 import fit as F  # noqa: E402  (re-runs every fit; deterministic)
 
 R = json.load(open(os.path.join(HERE, "results", "fit_results.json")))
 P = R["dual_control"]["params"]
 
 
-@pytest.mark.parametrize("key", ["dual_control", "refit_51", "refit_25", "before", "ablation_raytheon_relative_residual",
+@pytest.mark.parametrize("key",
+                         ["dual_control", "refit_51", "refit_25", "before", "ablation_raytheon_relative_residual",
                                  "sensitivity_p8_weight_0_25"])
 def test_fit_is_reproducible(key):
     """Re-running fit.py gives the committed parameters (before = the GE fit, refit_25 = the #25 refit, refit_51 = the
@@ -124,7 +128,8 @@ def test_datasheet_typical_operation_crosscheck():
 
 def _spice_eval(expr, v):
     s = expr.replace("1m", "1e-3")
-    s = re.sub(r"V\((\w+),K\)", lambda m: f"v['{m.group(1)}']", s).replace("V(ik)", "v['ik']").replace("V(ik0)", "v['ik0']")
+    s = (re.sub(r"V\((\w+),K\)", lambda m: f"v['{m.group(1)}']", s)
+         .replace("V(ik)", "v['ik']").replace("V(ik0)", "v['ik0']"))
     env = dict(ln=np.log, exp=np.exp, atan=np.arctan, max=np.maximum, pwr=lambda x, y: np.abs(x) ** y, v=v)
     return eval(s, env)
 

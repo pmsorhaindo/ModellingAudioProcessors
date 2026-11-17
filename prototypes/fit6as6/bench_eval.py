@@ -6,7 +6,11 @@ kept only here) to show what reusing the share's exp saves. Timings depend on th
 - vectorised: one dual_ip_ig2 call on the whole grid (numpy arrays), reported per operating point;
 - scalar: one dual_ip_ig2 call per operating point with Python floats (numpy scalar overhead dominates).
 """
-import json, os, platform, sys, time
+import json
+import os
+import platform
+import sys
+import time
 import numpy as np
 import model6as6 as M
 
@@ -33,12 +37,15 @@ def _median_ns(fn, warmup, repeat):
         fn()
     t = []
     for _ in range(repeat):
-        t0 = time.perf_counter_ns(); fn(); t.append(time.perf_counter_ns() - t0)
+        t0 = time.perf_counter_ns()
+        fn()
+        t.append(time.perf_counter_ns() - t0)
     return float(np.median(t)), float(np.min(t))
 
 
 def bench(fn, p):
-    n = len(GRID[0]); pts = list(zip(*(g.tolist() for g in GRID)))
+    n = len(GRID[0])
+    pts = list(zip(*(g.tolist() for g in GRID)))
     vmed, vmin = _median_ns(lambda: fn(*GRID, p), WARMUP_V, REPEAT_V)
     smed, smin = _median_ns(lambda: [fn(a, b, c, d, p) for a, b, c, d in pts], WARMUP_S, REPEAT_S)
     return dict(vectorised_ns_per_point=vmed / n, vectorised_ns_per_point_min=vmin / n,
@@ -51,9 +58,11 @@ CASES = dict(form_51=(M.dual_ip_ig2, FIT["refit_51"]["params"]),
 
 if __name__ == "__main__":
     res = {k: bench(fn, p) for k, (fn, p) in CASES.items()}
-    r = lambda a, b, m: res[a][m] / res[b][m]
+    def r(a, b, m):
+        return res[a][m] / res[b][m]
     out = dict(
-        method=f"model6as6.dual_ip_ig2 on a fixed grid of {len(GRID[0])} operating points (Ec1 -5..0 V x 8, Ec2 60-140 V "
+        method=f"model6as6.dual_ip_ig2 on a fixed grid of {len(GRID[0])} operating points "
+               f"(Ec1 -5..0 V x 8, Ec2 60-140 V "
                f"x 5, Ec3 -14..+12 V x 13, Eb 20-420 V x 10). Vectorised: {WARMUP_V} warm-up calls, then the median "
                f"of {REPEAT_V} timed calls on the whole grid, divided by the point count. Scalar: {WARMUP_S} warm-up "
                f"pass, then the median of {REPEAT_S} timed passes of one call per point with Python floats. "
@@ -63,8 +72,10 @@ if __name__ == "__main__":
         results=res,
         ratio_55_to_51=dict(vectorised=r("dual_control_55", "form_51", "vectorised_ns_per_point"),
                             scalar=r("dual_control_55", "form_51", "scalar_us_per_call")),
-        ratio_unshared_to_shared=dict(vectorised=r("dual_control_55_unshared_exp", "dual_control_55", "vectorised_ns_per_point"),
-                                      scalar=r("dual_control_55_unshared_exp", "dual_control_55", "scalar_us_per_call")))
+        ratio_unshared_to_shared=dict(vectorised=r("dual_control_55_unshared_exp", "dual_control_55",
+                                                   "vectorised_ns_per_point"),
+                                      scalar=r("dual_control_55_unshared_exp", "dual_control_55",
+                                               "scalar_us_per_call")))
     with open(os.path.join(HERE, "results", "bench_eval.json"), "w") as f:
         json.dump(out, f, indent=1)
     print(json.dumps(out, indent=1))

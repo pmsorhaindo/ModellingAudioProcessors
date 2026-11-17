@@ -14,7 +14,9 @@ before #38), and what test_e2e_response's multitone adds (intermodulation at 1 m
 reference at the tones). Also the internal-rate sweep 2x-128x of the warping alone (1/fs^2).
 Run from prototypes/fullstage:  python -m dk.budget [--e2e]   (--e2e adds the time-domain measurement, ~20 s)
 """
-import argparse, os, sys
+import argparse
+import os
+import sys
 import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dk.stage import Stage, QUALITY
@@ -24,12 +26,14 @@ from dk.triode import currents
 FS = V.FS
 AT_HZ = (20000.0, 10964.782, 1000.0)
 SOURCES = ("reference", "op point", "warping", "resampler")
-db = lambda h: 20 * np.log10(np.abs(h))
+def db(h):
+    return 20 * np.log10(np.abs(h))
 
 
 def band():
     r = V.ref("dz")["ac"]
-    f = np.array(r["f"]); sel = (f >= V.CRIT["ac_band"][0]) & (f <= V.CRIT["ac_band"][1])
+    f = np.array(r["f"])
+    sel = (f >= V.CRIT["ac_band"][0]) & (f <= V.CRIT["ac_band"][1])
     return f[sel], np.array(r["db"])[sel]
 
 
@@ -117,7 +121,8 @@ if __name__ == "__main__":
     print(rate_sweep())
     for q in QUALITY:
         f, o = rows(q, "iir")
-        print(f"{q} iir: resampler worst {np.max(np.abs(o['resampler'])):.1e} dB; total {np.max(np.abs(o['total'])):.5f} dB")
+        print(f"{q} iir: resampler worst {np.max(np.abs(o['resampler'])):.1e} dB; "
+              f"total {np.max(np.abs(o['total'])):.5f} dB")
     if a.e2e:
         for q in QUALITY:
             m, interp = e2e_terms(q)

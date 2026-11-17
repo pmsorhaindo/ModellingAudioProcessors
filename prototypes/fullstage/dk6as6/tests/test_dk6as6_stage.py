@@ -1,9 +1,11 @@
-"""6AS6 DK stage tests (#26). Pass criteria are dk/validate.CRIT, unchanged, tested against reference (ii): ngspice running
-the same fit6as6 dual_control equations and parameters (#55) on the same netlist (spice6as6/reference_dual.json), so a
-failure here is a METHOD error, not a valve-model difference. Every 6AS6 quality setting must pass.
+"""6AS6 DK stage tests (#26). Pass criteria are dk/validate.CRIT, unchanged, tested against reference (ii): ngspice
+running the same fit6as6 dual_control equations and parameters (#55) on the same netlist
+(spice6as6/reference_dual.json), so a failure here is a METHOD error, not a valve-model difference. Every 6AS6 quality
+setting must pass.
 Run from prototypes/fullstage:  python -m pytest -q dk6as6/tests
 """
-import os, sys
+import os
+import sys
 import numpy as np
 import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))

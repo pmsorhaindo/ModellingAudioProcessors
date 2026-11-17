@@ -29,18 +29,18 @@ import os
 for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
     os.environ.setdefault(_v, "1")         # the per-sample loop uses tiny matrices; one process per core instead
 
-import argparse
-import csv
-import json
-import math
-import subprocess
-import sys
-import time
-from concurrent.futures import ProcessPoolExecutor
-from pathlib import Path
+import argparse  # noqa: E402 -- after the BLAS thread variables are set (before numpy)
+import csv  # noqa: E402 -- after the BLAS thread variables are set (before numpy)
+import json  # noqa: E402 -- after the BLAS thread variables are set (before numpy)
+import math  # noqa: E402 -- after the BLAS thread variables are set (before numpy)
+import subprocess  # noqa: E402 -- after the BLAS thread variables are set (before numpy)
+import sys  # noqa: E402 -- after the BLAS thread variables are set (before numpy)
+import time  # noqa: E402 -- after the BLAS thread variables are set (before numpy)
+from concurrent.futures import ProcessPoolExecutor  # noqa: E402 -- after the BLAS thread variables are set (before numpy)
+from pathlib import Path  # noqa: E402 -- after the BLAS thread variables are set (before numpy)
 
-import numpy as np
-from scipy.signal import resample_poly, welch
+import numpy as np  # noqa: E402 -- after the BLAS thread variables are set (before numpy)
+from scipy.signal import resample_poly, welch  # noqa: E402 -- after the BLAS thread variables are set (before numpy)
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
@@ -238,7 +238,9 @@ def cmd_render(a):
     if a.dry:
         write_wav(a.dry, dry)
     m = dict(input=str(a.input), start=a.start, dur=len(dry) / FS, quality=a.quality, filt=a.filt, volts=volts,
-             ref=a.ref, input_peak_v=float(np.max(np.abs(dry))) * volts_scale(dry, volts, a.ref) / 10 ** (dry_info["gain_db"] / 20),
+             ref=a.ref,
+             input_peak_v=(float(np.max(np.abs(dry))) * volts_scale(dry, volts, a.ref)
+                           / 10 ** (dry_info["gain_db"] / 20)),
              target_lufs=target, dry=dry_info, **level_metrics(y), **info)
     print(json.dumps(m, indent=2))
 
@@ -290,7 +292,8 @@ def cmd_batch(a):
             if e2 is e:
                 y, info = finish([res[j["key"]] for j in js], idx, dry, target, ceiling)
                 emit(e, r["name"], y, dict(quality=r["quality"], filt=r.get("filt", "fir"), level=r["level"],
-                                           volts=volts, input_peak_v=float(np.max(np.abs(dry))) * volts_scale(dry, volts, ref),
+                                           volts=volts,
+                                           input_peak_v=float(np.max(np.abs(dry))) * volts_scale(dry, volts, ref),
                                            target_lufs=target, **info))
     out.mkdir(parents=True, exist_ok=True)
     rows = [{k: r.get(k, "") for k in CSV_FIELDS} for r in rows]
@@ -355,12 +358,12 @@ def _f0_track(x, t0, t1, frame, hop, fmin=150.0, fmax=500.0):
         s = x[i:i + frame] - x[i:i + frame].mean()
         r = np.correlate(s, s, "full")[frame - 1:]
         lo, hi = int(FS / fmax), int(FS / fmin)
-        l = lo + int(np.argmax(r[lo:hi]))
-        if r[l] < 0.8 * r[0]:
+        lag = lo + int(np.argmax(r[lo:hi]))
+        if r[lag] < 0.8 * r[0]:
             out.append((i, None))
             continue
-        a, b, c = r[l - 1], r[l], r[l + 1]
-        out.append((i, FS / (l + 0.5 * (a - c) / (a - 2 * b + c))))
+        a, b, c = r[lag - 1], r[lag], r[lag + 1]
+        out.append((i, FS / (lag + 0.5 * (a - c) / (a - 2 * b + c))))
     return out
 
 
@@ -464,9 +467,9 @@ def probe_one(amp):
     st = Stage(FS, quality="standard")
     n, lat = int(0.5 * FS), st.latency_samples
     o = st.process(amp * np.sin(2 * np.pi * 1000 * np.arange(n + lat) / FS), record=("out", "g", "k", "a"))
-    I, fsi = o["_internal"], st.fs
+    rec, fsi = o["_internal"], st.fs
     seg = slice(int(0.4 * fsi), int(0.5 * fsi))                    # last 100 ms: settled (blocking included)
-    vgk, vak = (I["g"] - I["k"])[seg], (I["a"] - I["k"])[seg]
+    vgk, vak = (rec["g"] - rec["k"])[seg], (rec["a"] - rec["k"])[seg]
     cur = np.array([currents_only(g, v) for g, v in zip(vgk, vak)])
     h = harmonics(o["out"][lat:lat + n], FS, 1000, 100)
     return dict(vpk=amp, h1=h[0], thd=thd(h), ig_max=cur[:, 0].max() - st.par["Ig0"], ia_min=cur[:, 1].min(),
@@ -482,7 +485,8 @@ def cmd_probe(a):
           "| Vgk max (V) | mean Vgk (V) |")
     print("|---|---|---|---|---|---|---|---|")
     for r in rs:
-        print(f"| {r['vpk']:g} | {db(r['h1'] / r['vpk']):.2f} | {db(r['h1'] / r['vpk'] / g0):.2f} | {100 * r['thd']:.2f} % "
+        print(f"| {r['vpk']:g} | {db(r['h1'] / r['vpk']):.2f} | {db(r['h1'] / r['vpk'] / g0):.2f} "
+              f"| {100 * r['thd']:.2f} % "
               f"| {1e6 * r['ig_max']:.3f} | {1e3 * r['ia_min']:.4f} | {r['vgk_max']:.3f} | {r['vgk_mean']:.3f} |")
 
 

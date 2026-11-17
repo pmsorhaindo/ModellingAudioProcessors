@@ -5,15 +5,24 @@ Kernel bounds are relative against glibc libm on dense grids that cover the stag
 terms each output is formed from (currents_err), so it stays defined where Ia = Ik - Ig or dIa/dVgk = dIk - dIg
 cross zero. A test fails if any sample exceeds fastmath.BOUND.
 """
-import json, math, os, platform, shutil, signal, struct, subprocess, sys, tempfile
+import json
+import math
+import os
+import platform
+import shutil
+import signal
+import struct
+import subprocess
+import sys
+import tempfile
 import numpy as np
 import pytest
 
 HERE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, HERE)
-from dk import fastmath as F
-from dk import triode as T
-from dk.triode import DZ_12AX7_RSD1
+from dk import fastmath as F  # noqa: E402 -- after the sys.path setup
+from dk import triode as T  # noqa: E402 -- after the sys.path setup
+from dk.triode import DZ_12AX7_RSD1  # noqa: E402 -- after the sys.path setup
 
 DOMAIN = json.load(open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                      "fastmath_domain.json")))
@@ -113,11 +122,11 @@ def currents_err(fast, ref, mu=DZ_12AX7_RSD1["mu"]):
              (fast[2][0][1], J[0][1], 0.0), (fast[2][1][0], J[1][0], abs(dik) + abs(dig)),
              (fast[2][1][1], J[1][1], abs(J[1][1])))
     w = 0.0
-    for f, l, s in pairs:
+    for f, want, s in pairs:
         if s == 0.0:
-            assert f == l, (f, l)
+            assert f == want, (f, want)
             continue
-        w = max(w, abs(f - l) / s)
+        w = max(w, abs(f - want) / s)
     return w
 
 

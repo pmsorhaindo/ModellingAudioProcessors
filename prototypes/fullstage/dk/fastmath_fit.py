@@ -14,7 +14,10 @@ Run from prototypes/fullstage:  python -m dk.fastmath_fit [--exp-deg N] [--log-d
 prints the coefficients as hex literals (paste into dk/fastmath.py; the evaluation in fastmath.py / fastmath.h is
 written out for the committed degrees, 3 and 5) and their errors.
 """
-import argparse, math, os, sys
+import argparse
+import math
+import os
+import sys
 from decimal import Decimal as D, getcontext
 import numpy as np
 from scipy.optimize import linprog

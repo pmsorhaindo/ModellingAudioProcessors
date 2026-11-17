@@ -6,13 +6,17 @@ and checks every component value, the topology (against circuit.netlist()), the 
 .spiceinit. Values are compared to 1e-12 relative (the generator writes 12 significant digits).
 Run from prototypes/fullstage:  python -m pytest -q spice/tests
 """
-import json, math, os, re, sys
+import json
+import math
+import os
+import re
+import sys
 import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
-from dk import circuit
-from dk.triode import DZ_12AX7_RSD1
-from spice import run_refs as R
+from dk import circuit  # noqa: E402 -- after the sys.path setup
+from dk.triode import DZ_12AX7_RSD1  # noqa: E402 -- after the sys.path setup
+from spice import run_refs as R  # noqa: E402 -- after the sys.path setup
 
 SPICE = os.path.join(ROOT, "spice")
 VALUES = circuit.VALUES

@@ -9,29 +9,34 @@ coupling-cap modes integrate it). This script measures, at standard (8x):
      |C++ - Python| and |C++ - Python with the exact matrices|.
 Run from prototypes/fullstage:  python -m cpp.matrix_rounding   (~5 s; builds test_core)
 """
-import os, sys
+import os
+import sys
 from fractions import Fraction as Fr
 import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from dk import circuit
-from dk.stage import Stage
-from cpp import validate_cpp as VC, export_vectors as EV
+from dk import circuit  # noqa: E402 -- after the sys.path setup
+from dk.stage import Stage  # noqa: E402 -- after the sys.path setup
+from cpp import validate_cpp as VC, export_vectors as EV  # noqa: E402 -- after the sys.path setup
 
 
 def exact_build(fs, rk_scale=1.0, prewarp_hz=None):
     """circuit.build's A..K in exact rational arithmetic from the same double conductances, rounded at the end."""
     R, Cs, U, NL, OUT = circuit.netlist(rk_scale)
     nn, nu = len(circuit.NODES), len(U)
-    inc = lambda L: [[Fr(float(v)) for v in row] for row in circuit._inc([(p, q) for p, q, *_ in L])]
+    def inc(L):
+        return [[Fr(float(v)) for v in row] for row in circuit._inc([(p, q) for p, q, *_ in L])]
     Nr, Nx, Nn, No = inc(R), inc(Cs), inc(NL), inc(OUT)
     Nu = [[Fr(int(j == circuit.NODES.index(n))) for j in range(nn)] for n in U]
     gr = [Fr(1.0 / r) for _, _, r in R]
     gx = [Fr(circuit.companion_g(c, fs, prewarp_hz)) for _, _, c in Cs]
-    T = lambda M: [list(r) for r in zip(*M)]
-    mm = lambda A, B: [[sum((A[i][k] * B[k][j] for k in range(len(B))), Fr(0)) for j in range(len(B[0]))]
-                       for i in range(len(A))]
-    dg = lambda d: [[d[i] if i == j else Fr(0) for j in range(len(d))] for i in range(len(d))]
+    def T(M):
+        return [list(r) for r in zip(*M)]
+    def mm(A, B):
+        return [[sum((A[i][k] * B[k][j] for k in range(len(B))), Fr(0)) for j in range(len(B[0]))]
+                           for i in range(len(A))]
+    def dg(d):
+        return [[d[i] if i == j else Fr(0) for j in range(len(d))] for i in range(len(d))]
     Y = [[a + b for a, b in zip(r1, r2)] for r1, r2 in zip(mm(mm(T(Nr), dg(gr)), Nr), mm(mm(T(Nx), dg(gx)), Nx))]
     n = nn + nu
     S = [[Fr(0)] * n for _ in range(n)]
@@ -51,7 +56,8 @@ def exact_build(fs, rk_scale=1.0, prewarp_hz=None):
                 f = A[r][c]
                 A[r] = [a - f * b for a, b in zip(A[r], A[c])]
     Si = [row[n:] for row in A]
-    pad = lambda M: [row + [Fr(0)] * nu for row in M]
+    def pad(M):
+        return [row + [Fr(0)] * nu for row in M]
     Nxp, Nnp, Nop = pad(Nx), pad(Nn), pad(No)
     Nup = [[Fr(0)] * nn + [Fr(int(i == j)) for j in range(nu)] for i in range(nu)]
     XSi = mm(mm(dg([2 * g for g in gx]), Nxp), Si)
@@ -84,7 +90,8 @@ def main():
         se.K = se.m["K"].tolist()
         y_ex = se.process(x)["out"]
         y_c, _, _ = VC.cli(x, 8, 0.0)
-        print(f"  {name}: Python vs Python(exact M) {np.abs(ref - y_ex).max():.2e}   C++ vs Python {np.abs(y_c - ref).max():.2e}"
+        print(f"  {name}: Python vs Python(exact M) {np.abs(ref - y_ex).max():.2e}"
+              f"   C++ vs Python {np.abs(y_c - ref).max():.2e}"
               f"   C++ vs Python(exact M) {np.abs(y_c - y_ex).max():.2e}   (peak {np.abs(ref).max():.1f} V)")
 
 

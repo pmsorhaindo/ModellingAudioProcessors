@@ -9,16 +9,19 @@ checked against Python's sample by sample in cpp/test_core.cpp). compare() lists
 dk/results.json; LIMITS are the tolerances cpp/tests/test_cpp_core.py asserts.
 Run from prototypes/fullstage:  python -m cpp.validate_cpp   (~10 s; builds test_core, writes cpp/results.json)
 """
-import json, os, subprocess, sys
+import json
+import os
+import subprocess
+import sys
 import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
-from dk import circuit, validate
-from dk.resample import Resampler
-from dk.stage import QUALITY
-from dk.triode import DZ_12AX7_RSD1, EVAL
-from cpp.build import CXXFLAGS, compiler, build  # noqa: F401 (re-exported for cpp/tests)
+from dk import circuit, validate  # noqa: E402 -- after the sys.path setup
+from dk.resample import Resampler  # noqa: E402 -- after the sys.path setup
+from dk.stage import QUALITY  # noqa: E402 -- after the sys.path setup
+from dk.triode import DZ_12AX7_RSD1, EVAL  # noqa: E402 -- after the sys.path setup
+from cpp.build import CXXFLAGS, compiler, build  # noqa: E402, F401 -- after the sys.path setup; re-exported for cpp/tests
 
 EXE = None          # test_core used by CppStage (set by run(), or by the caller)
 
@@ -55,10 +58,12 @@ class CppStage:
         self.m["out_names"] = ["out", "g", "k", "a", "gl"]
         self.K = self.m["K"].tolist()
         op = info["op"]
-        self.dc = dict(vgk=op["vgk"], vak=op["vak"], ig=op["ig"], ia=op["ia"], nodes=dict(zip(circuit.NODES, op["nodes"])))
+        self.dc = dict(vgk=op["vgk"], vak=op["vak"], ig=op["ig"], ia=op["ia"],
+                       nodes=dict(zip(circuit.NODES, op["nodes"])))
         # the resampler's analytical response (validate.small_signal) is Python's; the C++ geometry must match it
         self.rs = Resampler(fs, self.os, filt)
-        assert (info["latency_samples"], info["up_delay_internal"]) == (self.rs.latency_samples, self.rs.up_delay_internal)
+        assert (info["latency_samples"], info["up_delay_internal"]) == (self.rs.latency_samples,
+                                                                        self.rs.up_delay_internal)
         self._stats, self._used = None, False
 
     @property
@@ -135,7 +140,8 @@ def compare(c, p):
         h1.append(abs(cs["H_peak_V"][0] / ps["H_peak_V"][0] - 1))
         th.append(abs(cs["thd_pct"] / ps["thd_pct"] - 1))
     d["harm_db"], d["h1_rel"], d["thd_rel"] = max(hd), max(h1), max(th)
-    d["harm_db_all"] = max(abs(x - y) for a in p["sine"] for x, y in zip(c["sine"][a]["H_dBc"][1:], p["sine"][a]["H_dBc"][1:]))
+    d["harm_db_all"] = max(abs(x - y) for a in p["sine"]
+                           for x, y in zip(c["sine"][a]["H_dBc"][1:], p["sine"][a]["H_dBc"][1:]))
     cb, pb = c["burst"], p["burst"]
     d["burst_v"] = max([abs(cb[k] - pb[k]) for k in ("rest_vgk", "min_vgk")] +
                        list(np.abs(np.subtract(cb["traj_vgk"], pb["traj_vgk"]))))
@@ -170,7 +176,8 @@ if __name__ == "__main__":
     ref = json.load(open(os.path.join(ROOT, "dk", "results.json")))
     out = dict(method="python -m cpp.validate_cpp: dk.validate.run with the C++ core (cpp/dk_core.h, test_core cli, "
                       "gcc -O2) in place of dk.stage.Stage; deviations = |C++ - Python| against dk/results.json",
-               compiler=subprocess.run([compiler(), "--version"], capture_output=True, text=True).stdout.splitlines()[0],
+               compiler=subprocess.run([compiler(), "--version"], capture_output=True,
+                                       text=True).stdout.splitlines()[0],
                limits=LIMITS, settings={})
     for q in QUALITY:
         r = run(q)

@@ -53,3 +53,9 @@ Nothing is signed, notarised, published or released.
 - Circuit values in the prototypes are example values, not values from any commercial unit.
 - No code, impulse responses or presets from commercial plugins.
 - Third-party valve models and datasheets are fetched by scripts, not redistributed.
+
+## Lint
+CI runs `ruff check prototypes` (ruff 0.17.3; pyflakes and pycodestyle errors, 120 columns) as a blocking job. The
+settings are in `ruff.toml`. To get the same check on every local commit, install the pre-commit hook once per
+checkout: `pre-commit install` (pre-commit from Homebrew or pipx; `.pre-commit-config.yaml` pins the same ruff).
+`pre-commit run --all-files` checks the whole tree.
