@@ -48,15 +48,13 @@ jobs:
         run: python -m pytest -q
 
   # Apple silicon (#72): the plugin's first target (AU is macOS-only). The same fullstage suite as above, on an
-  # arm64 macOS runner (Apple clang, numpy on Accelerate). Non-blocking until #70 is fixed; then drop
-  # continue-on-error.
+  # arm64 macOS runner (Apple clang, numpy on Accelerate). Blocking since #70 was fixed.
   test-macos:
-    name: test (fullstage, macos arm64, non-blocking)
+    name: test (fullstage, macos arm64)
     # macOS minutes bill at 10x on private repos: run on PRs and manual dispatch, not on pushes to main.
     if: github.event_name != 'push'
     runs-on: macos-15
     timeout-minutes: 20
-    continue-on-error: true
     defaults:
       run:
         working-directory: prototypes/fullstage
