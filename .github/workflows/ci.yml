@@ -70,6 +70,25 @@ jobs:
       - name: Pytest
         run: python -m pytest -q
 
+  # The AU v2 + VST 3 wrapper (#22, plugin/): build the universal bundles, then plugin/tests/run_checks.sh --au
+  # (engine test, Steinberg validator, null renders through both plugins vs the direct core, auval). The SDKs are
+  # fetched by CMake at pinned tags. Same gating as test-macos: PRs and manual dispatch only (macOS bills at 10x).
+  plugin-macos:
+    name: plugin (AU + VST3, macos arm64)
+    if: github.event_name != 'push'
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S plugin -B plugin/build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: >-
+          cmake --build plugin/build -j "$(sysctl -n hw.ncpu)"
+          --target map_vst3 map_au validator map_engine_test map_null_vst3 map_null_au
+      - name: Checks (engine, VST 3 validator, nulls, auval)
+        run: plugin/tests/run_checks.sh plugin/build --au
+
   # Blocking aliasing guard (#35): the lean aliasing subset for every setting x filter at 2 V and 8 V, against
   # the absolute limits (dk/aliasing.py LIMIT_DBC) and the committed baseline ratchet (dk/aliasing_baseline.json,
   # 1.5 dB tolerance). To change the baseline on purpose: python -m dk.aliasing_guard --update-baseline --reason "..."

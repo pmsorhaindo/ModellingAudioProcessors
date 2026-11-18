@@ -16684,12 +16684,12 @@
   }
  },
  "figures": {
-  "f1_plate_curves": "/home/box/sand-data/lab/ohm/results/figs/f1_plate_curves.png",
-  "f2_transfer_vs_bias": "/home/box/sand-data/lab/ohm/results/figs/f2_transfer_vs_bias.png",
-  "f3_thd_vs_drive": "/home/box/sand-data/lab/ohm/results/figs/f3_thd_vs_drive.png",
-  "f4_harmonic_bars": "/home/box/sand-data/lab/ohm/results/figs/f4_harmonic_bars.png",
-  "f5_bias_even_odd": "/home/box/sand-data/lab/ohm/results/figs/f5_bias_even_odd.png",
-  "f6_alias_spectra": "/home/box/sand-data/lab/ohm/results/figs/f6_alias_spectra.png",
-  "f7_alias_summary": "/home/box/sand-data/lab/ohm/results/figs/f7_alias_summary.png"
+  "f1_plate_curves": "<lab-dir>/results/figs/f1_plate_curves.png",
+  "f2_transfer_vs_bias": "<lab-dir>/results/figs/f2_transfer_vs_bias.png",
+  "f3_thd_vs_drive": "<lab-dir>/results/figs/f3_thd_vs_drive.png",
+  "f4_harmonic_bars": "<lab-dir>/results/figs/f4_harmonic_bars.png",
+  "f5_bias_even_odd": "<lab-dir>/results/figs/f5_bias_even_odd.png",
+  "f6_alias_spectra": "<lab-dir>/results/figs/f6_alias_spectra.png",
+  "f7_alias_summary": "<lab-dir>/results/figs/f7_alias_summary.png"
  }
 }

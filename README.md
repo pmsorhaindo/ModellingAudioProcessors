@@ -15,8 +15,9 @@ will not use a brand or device name.
 | `prototypes/research/` | research notes: grid-current models, the panel controls of the unit that inspires the project, 6AS6 / 5725 datasheet survey |
 | `prototypes/fullstage/` | one valve gain stage with its reactive parts: ngspice references, the nodal DK model in Python (`dk/`, `dk6as6/`), demo renders (`demo/`) |
 | `prototypes/fullstage/cpp/` | **the realtime core**: header-only C++17 port of the 12AX7 stage (`dk_core.h`), its tests and CPU benchmark |
+| `plugin/` | the AU v2 + VST 3 wrapper of that core (temporary name), its build, tests and checks (`plugin/README.md`) |
 
-## Status (14 Nov 2026)
+## Status (18 Nov 2026)
 **Done**
 - **Model.** One 12AX7 common-cathode stage (nodal DK method, Dempwolf–Zölzer triode with grid current), checked
   against an ngspice reference that runs the same valve equations. Three quality settings: hq 16×, standard 8×
@@ -31,13 +32,17 @@ will not use a brand or device name.
 - **6AS6.** A datasheet fit that covers the low-current region (`prototypes/fit6as6/README.md`), and a Python DK
   stage that passes the 12AX7 stage's criteria at standard and hq (`prototypes/fullstage/dk6as6/RESULTS.md`). Its
   aliasing is not assessed, and it is not ported to C++.
+- **Plugin, first loadable build** (`plugin/README.md`, #22). AU v2 and VST 3 wrappers of the stereo 12AX7 stage,
+  under a temporary name. Parameters: Drive, Bias, Output, Quality and Bypass. On the M1 it passes the Steinberg
+  validator and `auval`, and offline renders through both plugins null exactly against the C++ core.
 - Research notes: [grid current](prototypes/research/grid-current.md),
   [panel controls](prototypes/research/culture-vulture-controls.md),
   [6AS6 datasheets](prototypes/research/6as6-datasheets.md).
 
 **Not done** (see the issues)
-- **There is no plugin yet.** The AU / VST3 wrapper and its licensing note are #22. Before it can be called done:
-  the v1 scope and a working name (#75), parameter smoothing (#73), host sample rates other than 48 kHz (#74).
+- **The plugin is a first build only.** Still open: a working name, after which the IDs change (#75); bias
+  smoothing (#73); host sample rates other than 48 kHz, which are untested against the reference (#74); and a
+  calibrated mapping from host full scale to the stage's volts (the current one is provisional).
 - Stereo vector maths (#67, draft PR #68) and the x86-64 stereo benchmark (#76).
 - Octatrack effect-slot port: a cut-down table model (#23) and a DSP56300 cycle count (#24). Nothing has run on
   that hardware; by the estimate in `prototypes/fullstage/research/octatrack-budget.md` the full model does not fit
@@ -46,8 +51,8 @@ will not use a brand or device name.
 
 **Known problems**
 - CI runs the Linux jobs on pull requests and pushes to main, and a blocking macOS arm64 fullstage job on pull
-  requests and manual runs (#72, #85). The macOS job is skipped on pushes, including to main, to limit billed macOS
-  minutes.
+  requests and manual runs (#72, #85), plus a macOS plugin build-and-check job with the same gating (#22). The
+  macOS jobs are skipped on pushes, including to main, to limit billed macOS minutes.
 
 Nothing is signed, notarised, published or released.
 
@@ -58,7 +63,7 @@ Nothing is signed, notarised, published or released.
 
 ## Licence
 The project's own code is MIT ([LICENSE](LICENSE)). Third-party SDKs keep their own licences; see
-[docs/licensing-and-wrapper-plan.md](docs/licensing-and-wrapper-plan.md) (#22).
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [docs/licensing-and-wrapper-plan.md](docs/licensing-and-wrapper-plan.md) (#22).
 
 ## Lint
 CI runs `ruff check prototypes` (ruff 0.17.3; pyflakes and pycodestyle errors, 120 columns) as a blocking job. The
