@@ -45,7 +45,9 @@ will not use a brand or device name.
 - WDF version of the stage, for comparison (#12). An exploration; the plugin does not wait for it.
 
 **Known problems**
-- CI runs on x86-64 Linux only; Apple silicon, the first target, is tested by hand (#72).
+- CI runs the Linux jobs on pull requests and pushes to main, and a blocking macOS arm64 fullstage job on pull
+  requests and manual runs (#72, #85). The macOS job is skipped on pushes, including to main, to limit billed macOS
+  minutes.
 
 Nothing is signed, notarised, published or released.
 
@@ -53,6 +55,10 @@ Nothing is signed, notarised, published or released.
 - Circuit values in the prototypes are example values, not values from any commercial unit.
 - No code, impulse responses or presets from commercial plugins.
 - Third-party valve models and datasheets are fetched by scripts, not redistributed.
+
+## Licence
+The project's own code is MIT ([LICENSE](LICENSE)). Third-party SDKs keep their own licences; see
+[docs/licensing-and-wrapper-plan.md](docs/licensing-and-wrapper-plan.md) (#22).
 
 ## Lint
 CI runs `ruff check prototypes` (ruff 0.17.3; pyflakes and pycodestyle errors, 120 columns) as a blocking job. The
