@@ -14,10 +14,57 @@ so high-frequency pre-warping does not apply).
 """
 import math
 import numpy as np
+from scipy.optimize import minimize
+from scipy.signal import lfilter
 import cutdown  # noqa: F401 -- ensures FULLSTAGE_DIR is on sys.path
 from dk.circuit import NODES, VALUES, _inc  # noqa: E402 -- after cutdown path setup
 
 CAP_NAMES = ("Cin", "Ck", "Cout")
+
+
+class FirstOrderSection:
+    """First-order IIR section H(z) = (b0 + b1 z^-1) / (1 - p z^-1)."""
+
+    def __init__(self, b0=1.0, b1=0.0, p=0.0):
+        self.set_coefs(b0, b1, p)
+        self.reset()
+
+    @property
+    def coefs(self):
+        return (self.b0, self.b1, self.p)
+
+    def set_coefs(self, b0, b1, p):
+        self.b0 = float(b0)
+        self.b1 = float(b1)
+        self.p = float(p)
+
+    def reset(self):
+        self.x_prev = 0.0
+        self.y_prev = 0.0
+        self.zi = np.zeros(1, dtype=float)
+
+    def process(self, x):
+        """Filter a 1-D array with persistent state (block-invariant)."""
+        x = np.asarray(x, dtype=float)
+        if len(x) == 0:
+            return np.zeros(0, dtype=float)
+        y, self.zi = lfilter([self.b0, self.b1], [1.0, -self.p], x, zi=self.zi)
+        self.x_prev = float(x[-1])
+        self.y_prev = float(y[-1])
+        return y
+
+    def response(self, f, fs):
+        """Complex frequency response H(e^{j 2 pi f / fs})."""
+        f = np.atleast_1d(np.asarray(f, float))
+        zi = np.exp(-2j * np.pi * f / float(fs))
+        return (self.b0 + self.b1 * zi) / (1.0 - self.p * zi)
+
+    def group_delay(self, f, fs):
+        """Exact analytical group delay in samples at rate fs."""
+        f_arr = np.asarray(f, float)
+        zi = np.exp(-2j * np.pi * f_arr / float(fs))
+        gd = np.real(self.b1 * zi / (self.b0 + self.b1 * zi)) + np.real(self.p * zi / (1.0 - self.p * zi))
+        return float(gd) if np.ndim(f) == 0 else gd
 
 
 def miller_cutoff_hz(J, rk_scale=1.0, v=VALUES):
@@ -42,49 +89,95 @@ def miller_filter_coefs(fc, fs, f_ref=20000.0):
     """First-order (one-pole) IIR LPF H(z) = (b0 + b1 z^-1) / (1 - p z^-1) at rate fs.
 
     Uses the exact continuous-time pole mapping p = exp(-2*pi*fc/fs) and solves the zero weight
-    alpha in b0 = (1-p)*(1-alpha), b1 = (1-p)*alpha so |H(f_ref)| equals 1/sqrt(1 + (f_ref/fc)^2).
+    alpha in b0 = (1-p)*(1-alpha), b1 = (1-p)*alpha so |H(f_eff)| equals 1/sqrt(1 + (f_eff/fc)^2)
+    at f_eff = min(f_ref, 0.45 * fs).
     """
     p = math.exp(-2.0 * math.pi * float(fc) / float(fs))
-    w_ref = 2.0 * math.pi * min(float(f_ref), 0.45 * float(fs)) / float(fs)
+    f_eff = min(float(f_ref), 0.45 * float(fs))
+    w_ref = 2.0 * math.pi * f_eff / float(fs)
     c_w = math.cos(w_ref)
-    target2 = 1.0 / (1.0 + (float(f_ref) / float(fc)) ** 2)
+    target2 = 1.0 / (1.0 + (f_eff / float(fc)) ** 2)
     r_val = target2 * (1.0 + p * p - 2.0 * p * c_w) / ((1.0 - p) ** 2)
     q_val = (1.0 - r_val) / (2.0 * (1.0 - c_w))
-    disc = max(0.0, 1.0 - 4.0 * q_val)
-    alpha = 0.5 * (1.0 - math.sqrt(disc))
+    disc = 1.0 - 4.0 * q_val
+    if disc < -1e-12:
+        raise ValueError(f"Miller LPF target at f_ref={f_eff} Hz is not realisable (disc={disc:.3g})")
+    alpha = 0.5 * (1.0 - math.sqrt(max(0.0, disc)))
     b0 = (1.0 - p) * (1.0 - alpha)
     b1 = (1.0 - p) * alpha
     return b0, b1, p
 
 
-def treble_comp_coefs(fs_base, fs_internal, f_ref=20000.0):
-    """First-order IIR treble shelf H_C(z) = (b0 + b1 z^-1) / (1 - p z^-1) at base rate fs_base.
+def treble_comp_coefs_at(fs_base, fs_internal, f1, f2):
+    """Closed-form 1st-order shelf H_C(z) = (b0 + b1 z^-1)/(1 - p z^-1) matching ADAA1^-1 at (f1, f2).
 
-    Cancels the small-signal droop |H_ADAA1(f)| = cos(pi*f / fs_internal) of first-order ADAA
-    at internal rate fs_internal. Writing |H_C(w)|^2 = (1 + N*x) / (1 + D*x) in x = 1 - cos(w)
-    gives unit DC gain ((b0 + b1) / (1 - p) = 1). Matching 1 / cos^2(pi*f / fs_internal)
-    analytically at f2 = min(f_ref, 0.45 * fs_base) and f1 = f2 / sqrt(2) (the midpoint in f^2,
-    matching the leading quadratic dB droop) yields closed-form (b0, b1, p).
+    Writing |H_C(w)|^2 = (1 + N*x)/(1 + D*x) in x = 1 - cos(w) guarantees unit DC gain
+    ((b0 + b1)/(1 - p) = 1). Solving the 2x2 system at (f1, f2) for T_k = 1/cos^2(pi f_k / fs_internal)
+    yields unique stable minimum-phase (b0, b1, p) whenever realisable.
     """
     fs_base = float(fs_base)
     fs_internal = float(fs_internal)
-    f2 = min(float(f_ref), 0.45 * fs_base)
-    f1 = f2 / math.sqrt(2.0)
-    x1 = 1.0 - math.cos(2.0 * math.pi * f1 / fs_base)
-    x2 = 1.0 - math.cos(2.0 * math.pi * f2 / fs_base)
-    t1 = 1.0 / (math.cos(math.pi * f1 / fs_internal) ** 2)
-    t2 = 1.0 / (math.cos(math.pi * f2 / fs_internal) ** 2)
+    x1 = 1.0 - math.cos(2.0 * math.pi * float(f1) / fs_base)
+    x2 = 1.0 - math.cos(2.0 * math.pi * float(f2) / fs_base)
+    t1 = 1.0 / (math.cos(math.pi * float(f1) / fs_internal) ** 2)
+    t2 = 1.0 / (math.cos(math.pi * float(f2) / fs_internal) ** 2)
     s1 = (t1 - 1.0) / x1
     s2 = (t2 - 1.0) / x2
     d_coef = (s1 - s2) / (t2 - t1)
     n_coef = s2 + t2 * d_coef
+    disc_p = 2.0 * d_coef + 1.0
+    if disc_p <= 1e-12:
+        raise ValueError(f"Treble comp pole unstable/negative discriminant (2D+1={disc_p:.3g})")
     if abs(d_coef) < 1e-15:
         p = 0.0
     else:
-        p = ((d_coef + 1.0) - math.sqrt(max(0.0, 2.0 * d_coef + 1.0))) / d_coef
-    b0 = 0.5 * (1.0 - p) * (1.0 + math.sqrt(max(0.0, 1.0 + 2.0 * n_coef)))
+        p = ((d_coef + 1.0) - math.sqrt(disc_p)) / d_coef
+    disc_b = 1.0 + 2.0 * n_coef
+    if disc_b < -1e-12:
+        raise ValueError(f"Treble comp zero discriminant negative (1+2N={disc_b:.3g})")
+    b0 = 0.5 * (1.0 - p) * (1.0 + math.sqrt(max(0.0, disc_b)))
     b1 = (1.0 - p) - b0
     return b0, b1, p
+
+
+def treble_comp_match_points(fs_base, fs_internal, f_ref=20000.0):
+    """Find minimax match frequencies (f1, f2) in [20 Hz, min(f_ref, 0.49*fs_base)] for ADAA1 droop comp."""
+    fs_base = float(fs_base)
+    fs_internal = float(fs_internal)
+    f_hi = min(float(f_ref), 0.49 * fs_base)
+    fg = np.geomspace(20.0, f_hi, 500)
+    target = np.cos(np.pi * fg / fs_internal)
+    zi = np.exp(-2j * np.pi * fg / fs_base)
+
+    def max_err_db(params):
+        f1, f2 = float(params[0]), float(params[1])
+        if not (20.0 < f1 < f2 <= f_hi):
+            return 1e9
+        try:
+            b0, b1, p = treble_comp_coefs_at(fs_base, fs_internal, f1, f2)
+        except ValueError:
+            return 1e9
+        h = (b0 + b1 * zi) / (1.0 - p * zi)
+        return float(np.max(np.abs(20.0 * np.log10(np.abs(h) * target))))
+
+    res = minimize(
+        max_err_db,
+        [0.72 * f_hi, 0.97 * f_hi],
+        method="Nelder-Mead",
+        options=dict(xatol=0.5, fatol=1e-7),
+    )
+    return float(res.x[0]), float(res.x[1])
+
+
+def treble_comp_coefs(fs_base, fs_internal, f_ref=20000.0):
+    """Minimax first-order IIR treble shelf H_C(z) = (b0 + b1 z^-1) / (1 - p z^-1) at base rate fs_base.
+
+    Cancels the small-signal droop |H_ADAA1(f)| = cos(pi*f / fs_internal) of first-order ADAA over
+    [20 Hz, min(f_ref, 0.49*fs_base)] by choosing the two-point match frequencies (f1, f2) for
+    minimax Chebyshev ripple and solving the closed-form 2-point shelf at (f1, f2).
+    """
+    f1, f2 = treble_comp_match_points(fs_base, fs_internal, f_ref=f_ref)
+    return treble_comp_coefs_at(fs_base, fs_internal, f1, f2)
 
 
 def netlist(rk_scale=1.0, v=VALUES):

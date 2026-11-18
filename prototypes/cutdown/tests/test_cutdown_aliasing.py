@@ -34,26 +34,26 @@ def measure_short(drive, tone, **kw):
     (8.0, 19037, -20.0, -5.0),
 ])
 def test_representative_aliasing_levels(drive, tone, lo, hi):
-    r = measure_short(drive, tone, miller_lpf=False, adaa=0, treble_comp=False)
+    r = measure_short(drive, tone, preset="baseline")
     assert lo < r["total_dbc"] < hi, (drive, tone, r)
     assert r["internal_dbc"] > r["resampler_dbc"] + 20.0
 
 
 @pytest.mark.parametrize("kw,drive,tone,upper_dbc", [
-    (dict(miller_lpf=True, adaa=0, treble_comp=False), 2.0, 16037, -44.0),
-    (dict(miller_lpf=True, adaa=0, treble_comp=False), 2.0, 19037, -51.0),
-    (dict(miller_lpf=True, adaa=0, treble_comp=False), 8.0, 19037, -13.5),
-    (dict(miller_lpf=False, adaa=1, treble_comp=False), 2.0, 19037, -46.0),
-    (dict(miller_lpf=False, adaa=1, treble_comp=False), 8.0, 16037, -28.0),
-    (dict(miller_lpf=False, adaa=1, treble_comp=False), 8.0, 19037, -32.0),
-    (dict(miller_lpf=False, adaa=2, treble_comp=False), 2.0, 19037, -53.0),
-    (dict(miller_lpf=False, adaa=2, treble_comp=False), 8.0, 19037, -32.0),
-    (dict(miller_lpf=True, adaa=1, treble_comp=False), 2.0, 16037, -59.0),
-    (dict(miller_lpf=True, adaa=1, treble_comp=False), 2.0, 19037, -65.0),
-    (dict(miller_lpf=True, adaa=1, treble_comp=False), 8.0, 19037, -31.5),
-    (dict(miller_lpf=True, adaa=1, treble_comp=True), 2.0, 16037, -59.0),
-    (dict(miller_lpf=True, adaa=1, treble_comp=True), 2.0, 19037, -65.0),
-    (dict(miller_lpf=True, adaa=1, treble_comp=True), 8.0, 19037, -31.5),
+    (dict(preset="method_a"), 2.0, 16037, -44.0),
+    (dict(preset="method_a"), 2.0, 19037, -51.0),
+    (dict(preset="method_a"), 8.0, 19037, -13.5),
+    (dict(preset="method_b1"), 2.0, 19037, -46.0),
+    (dict(preset="method_b1"), 8.0, 16037, -28.0),
+    (dict(preset="method_b1"), 8.0, 19037, -32.0),
+    (dict(preset="method_b2"), 2.0, 19037, -53.0),
+    (dict(preset="method_b2"), 8.0, 19037, -32.0),
+    (dict(preset="method_ab1"), 2.0, 16037, -59.0),
+    (dict(preset="method_ab1"), 2.0, 19037, -65.0),
+    (dict(preset="method_ab1"), 8.0, 19037, -31.5),
+    (dict(preset="method_ab1c"), 2.0, 16037, -59.0),
+    (dict(preset="method_ab1c"), 2.0, 19037, -65.0),
+    (dict(preset="method_ab1c"), 8.0, 19037, -31.5),
 ])
 def test_aliasing_methods_improve_over_baseline(kw, drive, tone, upper_dbc):
     r = measure_short(drive, tone, **kw)

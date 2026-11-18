@@ -32,9 +32,7 @@ def miller_response(stage, f):
     f = np.atleast_1d(np.asarray(f, float))
     if not stage.miller_lpf:
         return np.ones_like(f, dtype=complex)
-    b0, b1, p = stage.miller_coefs
-    zi = np.exp(-2j * np.pi * f / stage.fs)
-    return (b0 + b1 * zi) / (1.0 - p * zi)
+    return stage.miller_filter.response(f, stage.fs)
 
 
 def treble_comp_response(stage, f):
@@ -42,9 +40,7 @@ def treble_comp_response(stage, f):
     f = np.atleast_1d(np.asarray(f, float))
     if not stage.treble_comp:
         return np.ones_like(f, dtype=complex)
-    b0, b1, p = stage.treble_comp_coefs
-    zi = np.exp(-2j * np.pi * f / stage.fs_base)
-    return (b0 + b1 * zi) / (1.0 - p * zi)
+    return stage.treble_filter.response(f, stage.fs_base)
 
 
 def adaa_response(stage, f):

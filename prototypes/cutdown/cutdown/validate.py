@@ -17,12 +17,13 @@ from dk import aliasing as AL  # noqa: E402 -- after cutdown path setup
 from dk import validate as DK_V  # noqa: E402 -- after cutdown path setup
 from spice.run_refs import AMPS, burst_metrics  # noqa: E402 -- after cutdown path setup
 from cutdown import linear  # noqa: E402 -- after cutdown path setup
-from cutdown.stage import CutdownStage  # noqa: E402 -- after cutdown path setup
+from cutdown.stage import CutdownStage, DEFAULT_PRESET, PRESETS  # noqa: E402 -- after cutdown path setup
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 RESULTS_JSON = os.path.join(ROOT, "results.json")
 FS = 48000.0
+FS_OCTATRACK = 44100.0
 
 
 def aligned(stage, x, record=("out",)):
@@ -40,16 +41,17 @@ def small_signal(stage, f):
     return 20 * np.log10(Hs), 20 * np.log10(Hc)
 
 
-def run(T=0.5, shape=(128, 32), interp="cubic0_lin1", solver_mode="lut",
-        miller_lpf=False, adaa=0, treble_comp=False):
+def run(fs=FS, T=0.5, shape=(128, 32), interp="cubic0_lin1", solver_mode="lut",
+        preset=DEFAULT_PRESET, miller_lpf=None, adaa=None, treble_comp=None):
     """Run op, AC (20 Hz-20 kHz), sine harmonics (0.05/0.5/2/8 V), and 4 V burst against dz & koren refs."""
+    fs = float(fs)
     kw = dict(shape=shape, interp=interp, solver_mode=solver_mode,
-              miller_lpf=miller_lpf, adaa=adaa, treble_comp=treble_comp)
-    st = CutdownStage(FS, **kw)
+              preset=preset, miller_lpf=miller_lpf, adaa=adaa, treble_comp=treble_comp)
+    st = CutdownStage(fs, **kw)
     tc_gd = st.treble_comp_group_delay_base(1000.0)
     tot_frac = st.miller_group_delay_base(1000.0) + st.adaa_delay_base + tc_gd
     out = dict(
-        fs_base=FS, oversampling=st.os, filter=st.filt, shape=list(shape),
+        fs_base=fs, oversampling=st.os, filter=st.filt, shape=list(shape),
         table_words=st.table.word_count, total_table_words=st.table.total_word_count(st.adaa),
         interp=interp, solver_mode=solver_mode, miller_lpf=st.miller_lpf, adaa=st.adaa,
         treble_comp=st.treble_comp,
@@ -62,7 +64,7 @@ def run(T=0.5, shape=(128, 32), interp="cubic0_lin1", solver_mode="lut",
             adaa_base_samples=st.adaa_delay_base,
             treble_comp_base_samples=tc_gd,
             total_fractional_base_samples=tot_frac,
-            total_fractional_ms=1e3 * tot_frac / FS,
+            total_fractional_ms=1e3 * tot_frac / fs,
         ),
         p_dc=st.p_dc.tolist(),
         p0_range=[st.table.p0_min, st.table.p0_max],
@@ -94,14 +96,14 @@ def run(T=0.5, shape=(128, 32), interp="cubic0_lin1", solver_mode="lut",
     out["ac_gain_1k_db"] = float(small_signal(st, [1000.0])[0][0])
 
     out["sine"], times = {}, {}
-    n = int(T * FS)
+    n = int(T * fs)
     for a in AMPS:
-        s = CutdownStage(FS, **kw)
-        t = np.arange(n + s.latency_samples) / FS
+        s = CutdownStage(fs, **kw)
+        t = np.arange(n + s.latency_samples) / fs
         t0 = time.perf_counter()
         y = aligned(s, float(a) * np.sin(2 * np.pi * 1000 * t))["out"]
-        times[a] = (time.perf_counter() - t0) / (len(t) / FS)
-        h = harmonics(y, FS, 1000.0, 100)
+        times[a] = (time.perf_counter() - t0) / (len(t) / fs)
+        h = harmonics(y, fs, 1000.0, 100)
         out["sine"][a] = dict(H_peak_V=h[:5].tolist(), H_dBc=db_rel(h)[:5].tolist(), thd_pct=100 * thd(h))
     for mname, r in refs.items():
         o = out["vs"][mname]
@@ -121,14 +123,14 @@ def run(T=0.5, shape=(128, 32), interp="cubic0_lin1", solver_mode="lut",
             rows["thd_cutdown_pct"] = out["sine"][a]["thd_pct"]
             o["harm"][a] = rows
 
-    s = CutdownStage(FS, **kw)
-    nb = int(0.12 * FS)
-    tb = np.arange(nb + s.latency_samples) / FS
+    s = CutdownStage(fs, **kw)
+    nb = int(0.12 * fs)
+    tb = np.arange(nb + s.latency_samples) / fs
     xb = 4 * np.sin(2 * np.pi * 1000 * tb) * ((tb > 10e-3) & (tb < 30e-3))
     rb = aligned(s, xb, record=("out", "vgk"))
     vg = rb["_internal"]["vgk"]
     ti = (np.arange(len(vg)) - s.rs.up_delay_internal) / s.fs
-    keep = (ti >= 0) & (ti < nb / FS)
+    keep = (ti >= 0) & (ti < nb / fs)
     vg, ti = vg[keep], ti[keep]
     out["burst"] = burst_metrics(ti, vg)
     for mname, r in refs.items():
@@ -160,34 +162,38 @@ def run(T=0.5, shape=(128, 32), interp="cubic0_lin1", solver_mode="lut",
 
 
 def measure_alias_point(args):
-    """Measure one (label, drive, tone, kw) aliasing point with dk.aliasing's exact offset-tone method."""
+    """Measure one (label, drive, tone, kw[, fs]) aliasing point with dk.aliasing's exact offset-tone method."""
     if len(args) == 3:
         drive, f, kw = args
-        label = "cutdown"
-    else:
+        label, fs = "cutdown", FS
+    elif len(args) == 4:
         label, drive, f, kw = args
+        fs = FS
+    else:
+        label, drive, f, kw, fs = args
+    fs = float(fs)
     t0 = time.perf_counter()
-    n, n0 = int(round(AL.WINDOW_S * FS)), int(round(AL.SETTLE_S * FS))
-    m = AL.tone_bin(f, n, FS)
-    st = CutdownStage(FS, **kw)
+    n, n0 = int(round(AL.WINDOW_S * fs)), int(round(AL.SETTLE_S * fs))
+    m = AL.tone_bin(f, n, fs)
+    st = CutdownStage(fs, **kw)
     L = st.latency_samples
     x = drive * np.sin(2 * np.pi * m * np.arange(n0 + n + L) / n)
     y = st.process(x)["out"][n0 + L:n0 + L + n]
     return dict(
-        setting=label, os=st.os, filt=st.filt, drive=float(drive), tone=int(f),
-        f_hz=m * FS / n, window_s=AL.WINDOW_S, settle_s=AL.SETTLE_S,
+        setting=label, fs_base=fs, os=st.os, filt=st.filt, drive=float(drive), tone=int(f),
+        f_hz=m * fs / n, window_s=AL.WINDOW_S, settle_s=AL.SETTLE_S,
         collision_order=AL.collision_order(m, n),
         cpu_s=time.perf_counter() - t0,
-        **AL.alias_dbc(y, m, FS, st.os),
+        **AL.alias_dbc(y, m, fs, st.os),
     )
 
 
-def aliasing_sweep(workers=None, variants=None, **kw):
+def aliasing_sweep(workers=None, variants=None, fs=FS, **kw):
     """Full 38-point offset-tone sweep (dk.aliasing.SWEEP_HZ x DRIVES) for one or more variants."""
     t0 = time.perf_counter()
     if variants is None:
         variants = [("cutdown", kw)]
-    jobs = [(label, d, f, vkw) for label, vkw in variants for d in AL.DRIVES for f in AL.SWEEP_HZ]
+    jobs = [(label, d, f, vkw, fs) for label, vkw in variants for d in AL.DRIVES for f in AL.SWEEP_HZ]
     if workers and workers > 1:
         with ProcessPoolExecutor(workers) as ex:
             recs = list(ex.map(measure_alias_point, jobs))
@@ -206,6 +212,7 @@ def aliasing_sweep(workers=None, variants=None, **kw):
             )
         worst_by_variant[label] = worst
     out = dict(
+        fs_base=float(fs),
         method=dict(tones=AL.SWEEP_HZ, drives=AL.DRIVES, settle_s=AL.SETTLE_S, window_s=AL.WINDOW_S,
                     band_hz=AL.BAND_HZ, mask_bins=AL.MASK_BINS),
         wall_s=time.perf_counter() - t0,
@@ -218,19 +225,13 @@ def aliasing_sweep(workers=None, variants=None, **kw):
     return out
 
 
-VARIANTS = [
-    ("baseline", dict(miller_lpf=False, adaa=0, treble_comp=False)),
-    ("method_a", dict(miller_lpf=True, adaa=0, treble_comp=False)),
-    ("method_b1", dict(miller_lpf=False, adaa=1, treble_comp=False)),
-    ("method_b2", dict(miller_lpf=False, adaa=2, treble_comp=False)),
-    ("method_ab1", dict(miller_lpf=True, adaa=1, treble_comp=False)),
-    ("method_ab1c", dict(miller_lpf=True, adaa=1, treble_comp=True)),
-]
+VARIANTS = [(name, dict(preset=name)) for name in PRESETS]
 
 
 def paper_opcount_estimate():
-    """Paper arithmetic + memory op-count ESTIMATE per base-rate sample (not a measured 56300 cycle count)."""
+    """Hand-counted paper arithmetic + memory op-count ESTIMATE per base-rate sample (not DSP56300 cycles)."""
     st = CutdownStage(FS)
+    st44 = CutdownStage(FS_OCTATRACK)
     m = st.m
     nz_A = int(np.count_nonzero(np.abs(m["A"]) > 1e-15))
     nz_B0 = int(np.count_nonzero(np.abs(m["B"][:, 0]) > 1e-15))
@@ -240,24 +241,54 @@ def paper_opcount_estimate():
     nz_F0 = int(np.count_nonzero(np.abs(m["F"][0]) > 1e-15))
     nz_G = int(np.count_nonzero(np.abs(m["G"]) > 1e-15))
     nz_H0 = int(np.count_nonzero(np.abs(m["H"][:, 0]) > 1e-15))
-    variants = dict(
+    variants_48k = dict(
         baseline=dict(muls=93, adds=117, arith_ops=210, divs=0, table_words=8192),
         method_a=dict(muls=99, adds=121, arith_ops=220, divs=0, table_words=8192),
-        method_b1=dict(muls=121, adds=137, arith_ops=258, divs=2, table_words=16384),
+        method_b1=dict(muls=109, adds=127, arith_ops=236, divs=0,
+                       worst_case_muls=177, worst_case_adds=205, worst_case_arith_ops=382, worst_case_divs=2,
+                       table_words=16384),
         method_b2=dict(muls=153, adds=171, arith_ops=324, divs=4, table_words=24576),
-        method_ab1=dict(muls=127, adds=141, arith_ops=268, divs=2, table_words=16384),
-        method_ab1c=dict(muls=130, adds=143, arith_ops=273, divs=2, table_words=16384),
+        method_ab1=dict(muls=115, adds=131, arith_ops=246, divs=0,
+                        worst_case_muls=183, worst_case_adds=209, worst_case_arith_ops=392, worst_case_divs=2,
+                        table_words=16384),
+        method_ab1c=dict(muls=118, adds=133, arith_ops=251, divs=0,
+                         worst_case_muls=186, worst_case_adds=211, worst_case_arith_ops=397, worst_case_divs=2,
+                         table_words=16384),
     )
+    variants_44k = {
+        k: {
+            **v,
+            "muls": v["muls"] + 4,
+            "adds": v["adds"] + 8,
+            "arith_ops": v["arith_ops"] + 12,
+            **(
+                {
+                    "worst_case_muls": v["worst_case_muls"] + 4,
+                    "worst_case_adds": v["worst_case_adds"] + 8,
+                    "worst_case_arith_ops": v["worst_case_arith_ops"] + 12,
+                }
+                if "worst_case_arith_ops" in v else {}
+            ),
+        }
+        for k, v in variants_48k.items()
+    }
     return dict(
-        note="ESTIMATE of arithmetic & memory operations (issue #24 measures real DSP56300 cycles).",
+        source="hand count of runtime arithmetic ops (not derived from nonzero_counts; see RESULTS.md)",
+        note=(
+            "ESTIMATE of arithmetic & memory ops; issue #24 applies 1.4-1.6x stalls and measures DSP56300 cycles."
+        ),
+        stall_factor_range=[1.4, 1.6],
         target_cycles_per_base_sample=300,
-        slot_budget_cycles_per_base_sample=411,
+        slot_budget_cycles_per_base_sample_48k=411,
         table_words=st.table.word_count,
         table_shape=list(st.shape),
-        resampler_allpasses_up=st.resampler_macs[0],
-        resampler_allpasses_down=st.resampler_macs[1],
+        resampler_allpasses_up_48k=st.resampler_macs[0],
+        resampler_allpasses_down_48k=st.resampler_macs[1],
+        resampler_allpasses_up_44k=st44.resampler_macs[0],
+        resampler_allpasses_down_44k=st44.resampler_macs[1],
         nonzero_counts=dict(A=nz_A, B0=nz_B0, C=nz_C, D0=nz_D0, E0=nz_E0, F0=nz_F0, G=nz_G, H0=nz_H0),
-        variants=variants,
+        variants=variants_48k,
+        variants_44k=variants_44k,
     )
 
 
@@ -267,11 +298,23 @@ def main():
     args = ap.parse_args()
 
     t0 = time.perf_counter()
-    variant_res = {name: run(**vkw) for name, vkw in VARIANTS}
-    bilinear_res = run(shape=(64, 64), interp="bilinear", solver_mode="lut")
-    newton3_res = run(shape=(128, 32), interp="cubic0_lin1", solver_mode="newton")
+    variant_res = {name: run(fs=FS, **vkw) for name, vkw in VARIANTS}
+    variant_res_44k = {
+        name: run(fs=FS_OCTATRACK, **vkw)
+        for name, vkw in [("baseline", dict(preset="baseline")),
+                          ("method_a", dict(preset="method_a")),
+                          ("method_ab1", dict(preset="method_ab1")),
+                          ("method_ab1c", dict(preset="method_ab1c"))]
+    }
+    bilinear_res = run(fs=FS, shape=(64, 64), interp="bilinear", solver_mode="lut", preset="baseline")
+    newton3_res = run(fs=FS, shape=(128, 32), interp="cubic0_lin1", solver_mode="newton", preset="baseline")
     eco_iir_res = DK_V.run(quality="eco", filt="iir")
-    alias_res = aliasing_sweep(workers=args.workers, variants=VARIANTS)
+    alias_res = aliasing_sweep(workers=args.workers, variants=VARIANTS, fs=FS)
+    alias_res_44k = aliasing_sweep(
+        workers=args.workers,
+        variants=[("method_a", dict(preset="method_a")), ("method_ab1c", dict(preset="method_ab1c"))],
+        fs=FS_OCTATRACK,
+    )
     op_est = paper_opcount_estimate()
 
     full_dk = json.load(open(os.path.join(cutdown.FULLSTAGE_DIR, "dk", "results.json")))
@@ -282,6 +325,7 @@ def main():
         wall_s=time.perf_counter() - t0,
         cutdown=variant_res["method_ab1c"],
         variants=variant_res,
+        variants_44k=variant_res_44k,
         ablations=dict(bilinear_64x64=bilinear_res, newton_3state=newton3_res),
         full_dk_refs=dict(
             standard_fir=full_dk["standard"],
@@ -289,6 +333,7 @@ def main():
             eco_iir=eco_iir_res,
         ),
         aliasing=alias_res,
+        aliasing_44k=alias_res_44k,
         aliasing_table_md=AL.table(combined_recs),
         opcount_estimate=op_est,
     )
@@ -300,7 +345,18 @@ def main():
         dz = vr["vs"]["dz"]
         alw = alias_res["worst_by_variant"][name]
         print(
-            f"{name:11s}: 2V={alw['2V']['worst_dbc']:6.2f}@{alw['2V']['tone']} | "
+            f"48k {name:11s}: 2V={alw['2V']['worst_dbc']:6.2f}@{alw['2V']['tone']} | "
+            f"8V={alw['8V']['worst_dbc']:6.2f}@{alw['8V']['tone']} | "
+            f"ACmax={dz['ac_maxdev_db_chain']:.3f}dB | "
+            f"burst=({100*dz['burst']['min_rel']:.3f}%, {100*dz['burst']['tau_rel']:.3f}%, "
+            f"{100*dz['burst']['traj_rel']:.3f}%)"
+        )
+    for name in ("method_a", "method_ab1c"):
+        vr = variant_res_44k[name]
+        dz = vr["vs"]["dz"]
+        alw = alias_res_44k["worst_by_variant"][name]
+        print(
+            f"44k {name:11s}: 2V={alw['2V']['worst_dbc']:6.2f}@{alw['2V']['tone']} | "
             f"8V={alw['8V']['worst_dbc']:6.2f}@{alw['8V']['tone']} | "
             f"ACmax={dz['ac_maxdev_db_chain']:.3f}dB | "
             f"burst=({100*dz['burst']['min_rel']:.3f}%, {100*dz['burst']['tau_rel']:.3f}%, "

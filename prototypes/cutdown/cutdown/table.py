@@ -62,6 +62,22 @@ def _catmull_rom_int1_weights(t):
     )
 
 
+def _catmull_rom_divdiff_weights(t, s):
+    """Exact divided-difference weights (W_k(t) - W_k(s)) / (t - s) of the Catmull-Rom basis."""
+    a = t + s
+    t2 = t * t
+    s2 = s * s
+    b = t2 + s2
+    d3 = b + t * s
+    d4 = a * b
+    return (
+        -0.25 * a + (1.0 / 3.0) * d3 - 0.125 * d4,
+        1.0 - (5.0 / 6.0) * d3 + 0.375 * d4,
+        0.25 * a + (2.0 / 3.0) * d3 - 0.375 * d4,
+        -(1.0 / 6.0) * d3 + 0.125 * d4,
+    )
+
+
 def _catmull_rom_int2_weights(t):
     """Exact second antiderivative int_0^t W_k(s) ds of the Catmull-Rom basis weights."""
     t2 = t * t
@@ -125,11 +141,19 @@ class SolutionTable:
         ig_raw, ia_raw = self.lookup_raw(float(self.p_dc[0]), float(self.p_dc[1]))
         self.dig_off = float(ig_raw - self.i_dc[0])
         self.dia_off = float(ia_raw - self.i_dc[1])
+        # Deviation-form tables fold (i_dc + d_off) into the grid at build time so rest is 0.
+        self.dtbl_ig = self.tbl_ig - (float(self.i_dc[0]) + self.dig_off)
+        self.dtbl_ia = self.tbl_ia - (float(self.i_dc[1]) + self.dia_off)
+        self._dtig_flat = self.dtbl_ig.ravel().tolist()
+        self._dtia_flat = self.dtbl_ia.ravel().tolist()
+        self.i_dc_cell = min(max(int((float(self.p_dc[0]) - self.p0_min) * self.inv_dp0), 0), n0 - 2)
 
         if self.interp == "cubic0_lin1":
             self._build_antiderivatives()
         else:
             self.s1_ig = self.s1_ia = self.s2_ig = self.s2_ia = None
+            self.ds1_ig = self.ds1_ia = None
+            self._ds1g_flat = self._ds1a_flat = None
 
     def _build_antiderivatives(self):
         """Cumulative 1st and 2nd cell integrals along p0 of the cubic0_lin1 interpolant."""
@@ -140,7 +164,10 @@ class SolutionTable:
         s1_ia = np.zeros((n0, n1), dtype=float)
         s2_ig = np.zeros((n0, n1), dtype=float)
         s2_ia = np.zeros((n0, n1), dtype=float)
+        ds1_ig = np.zeros((n0, n1), dtype=float)
+        ds1_ia = np.zeros((n0, n1), dtype=float)
         tig, tia = self.tbl_ig, self.tbl_ia
+        dtig, dtia = self.dtbl_ig, self.dtbl_ia
         for i in range(n0 - 1):
             im1 = i - 1 if i > 0 else 0
             ip1 = i + 1
@@ -149,8 +176,16 @@ class SolutionTable:
             s1_ia[i + 1] = s1_ia[i] + w1[0] * tia[im1] + w1[1] * tia[i] + w1[2] * tia[ip1] + w1[3] * tia[ip2]
             s2_ig[i + 1] = s2_ig[i] + s1_ig[i] + w2[0] * tig[im1] + w2[1] * tig[i] + w2[2] * tig[ip1] + w2[3] * tig[ip2]
             s2_ia[i + 1] = s2_ia[i] + s1_ia[i] + w2[0] * tia[im1] + w2[1] * tia[i] + w2[2] * tia[ip1] + w2[3] * tia[ip2]
+            ds1_ig[i + 1] = ds1_ig[i] + w1[0] * dtig[im1] + w1[1] * dtig[i] + w1[2] * dtig[ip1] + w1[3] * dtig[ip2]
+            ds1_ia[i + 1] = ds1_ia[i] + w1[0] * dtia[im1] + w1[1] * dtia[i] + w1[2] * dtia[ip1] + w1[3] * dtia[ip2]
+        # Anchor deviation integral to 0 at the DC rest cell so small-signal ds1 stays near 0.
+        ds1_ig -= ds1_ig[self.i_dc_cell:self.i_dc_cell + 1, :]
+        ds1_ia -= ds1_ia[self.i_dc_cell:self.i_dc_cell + 1, :]
         self.s1_ig, self.s1_ia = s1_ig, s1_ia
         self.s2_ig, self.s2_ia = s2_ig, s2_ia
+        self.ds1_ig, self.ds1_ia = ds1_ig, ds1_ia
+        self._ds1g_flat = ds1_ig.ravel().tolist()
+        self._ds1a_flat = ds1_ia.ravel().tolist()
 
     def total_word_count(self, adaa=0):
         """Total scalar table entries including cumulative antiderivative tables for ADAA order."""
@@ -320,3 +355,108 @@ class SolutionTable:
             s2g + fu * s1g + v0 * g[0] + v1 * g[1] + v2 * g[2] + v3 * g[3] - ug2,
             s2a + fu * s1a + v0 * a[0] + v1 * a[1] + v2 * a[2] + v3 * a[3] - ua2,
         )
+
+    def _eval_cell_dev_pair(self, i, j, b0, b1, w):
+        n0, n1 = self.n0, self.n1
+        im1 = (i - 1) if i > 0 else 0
+        ip1 = i + 1
+        ip2 = (i + 2) if (i + 2) < n0 else (n0 - 1)
+        km1, k0, kp1, kp2 = im1 * n1 + j, i * n1 + j, ip1 * n1 + j, ip2 * n1 + j
+        w0, w1, w2, w3 = w
+        dtg, dta = self._dtig_flat, self._dtia_flat
+        dg = (
+            w0 * (b0 * dtg[km1] + b1 * dtg[km1 + 1])
+            + w1 * (b0 * dtg[k0] + b1 * dtg[k0 + 1])
+            + w2 * (b0 * dtg[kp1] + b1 * dtg[kp1 + 1])
+            + w3 * (b0 * dtg[kp2] + b1 * dtg[kp2 + 1])
+        )
+        da = (
+            w0 * (b0 * dta[km1] + b1 * dta[km1 + 1])
+            + w1 * (b0 * dta[k0] + b1 * dta[k0 + 1])
+            + w2 * (b0 * dta[kp1] + b1 * dta[kp1 + 1])
+            + w3 * (b0 * dta[kp2] + b1 * dta[kp2 + 1])
+        )
+        return dg, da
+
+    def _loc_u(self, u):
+        n0m1 = self.n0 - 1
+        if u <= 0.0:
+            return -1, u
+        if u >= n0m1:
+            return n0m1, u - n0m1
+        i = int(u)
+        return i, u - i
+
+    def adaa1_dev(self, u, u_prev, j, fw):
+        """Well-conditioned ADAA1 deviation currents (di_g, di_a) along u at p1 cell (j, fw).
+
+        Uses deviation-form tables (dtbl, rest-anchored ds1), division-free analytical divided
+        differences for same-cell pairs, and cell-boundary splitting with a shared 1/du reciprocal
+        for cross-cell pairs so 24-bit fixed-point / float32 stays conditioned near DC rest.
+        """
+        n0, n1 = self.n0, self.n1
+        n0m1 = n0 - 1
+        b0, b1 = 1.0 - fw, fw
+        dtg, dta = self._dtig_flat, self._dtia_flat
+        i, fu = self._loc_u(u)
+        ip, fup = self._loc_u(u_prev)
+
+        if i == ip:
+            if i == -1:
+                return b0 * dtg[j] + b1 * dtg[j + 1], b0 * dta[j] + b1 * dta[j + 1]
+            if i == n0m1:
+                k = n0m1 * n1 + j
+                return b0 * dtg[k] + b1 * dtg[k + 1], b0 * dta[k] + b1 * dta[k + 1]
+            return self._eval_cell_dev_pair(i, j, b0, b1, _catmull_rom_divdiff_weights(fu, fup))
+
+        du = abs(u - u_prev)
+        if du < ADAA_TOL_1:
+            im, fum = self._loc_u(0.5 * (u + u_prev))
+            if im == -1:
+                return b0 * dtg[j] + b1 * dtg[j + 1], b0 * dta[j] + b1 * dta[j + 1]
+            if im == n0m1:
+                k = n0m1 * n1 + j
+                return b0 * dtg[k] + b1 * dtg[k + 1], b0 * dta[k] + b1 * dta[k + 1]
+            return self._eval_cell_dev_pair(im, j, b0, b1, _catmull_rom_weights(fum))
+
+        if u > u_prev:
+            ia, fa, ib, fb = ip, fup, i, fu
+        else:
+            ia, fa, ib, fb = i, fu, ip, fup
+
+        if ia == -1:
+            lg = -fa * (b0 * dtg[j] + b1 * dtg[j + 1])
+            la = -fa * (b0 * dta[j] + b1 * dta[j + 1])
+            ia_s = 0
+        elif fa == 1.0:
+            lg, la = 0.0, 0.0
+            ia_s = ia + 1
+        else:
+            lg, la = self._eval_cell_dev_pair(ia, j, b0, b1, _catmull_rom_divdiff_weights(1.0, fa))
+            rem = 1.0 - fa
+            lg *= rem
+            la *= rem
+            ia_s = ia + 1
+
+        if ib == n0m1:
+            k = n0m1 * n1 + j
+            hg = fb * (b0 * dtg[k] + b1 * dtg[k + 1])
+            ha = fb * (b0 * dta[k] + b1 * dta[k + 1])
+            ib_e = n0m1
+        elif fb == 0.0:
+            hg, ha = 0.0, 0.0
+            ib_e = ib
+        else:
+            hg, ha = self._eval_cell_dev_pair(ib, j, b0, b1, _catmull_rom_int1_weights(fb))
+            ib_e = ib
+
+        if ib_e != ia_s:
+            ds1g, ds1a = self._ds1g_flat, self._ds1a_flat
+            ka, kb = ia_s * n1 + j, ib_e * n1 + j
+            mg = b0 * (ds1g[kb] - ds1g[ka]) + b1 * (ds1g[kb + 1] - ds1g[ka + 1])
+            ma = b0 * (ds1a[kb] - ds1a[ka]) + b1 * (ds1a[kb + 1] - ds1a[ka + 1])
+        else:
+            mg, ma = 0.0, 0.0
+
+        inv_du = 1.0 / du
+        return (lg + mg + hg) * inv_du, (la + ma + ha) * inv_du

@@ -14,7 +14,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cutdown import linear  # noqa: E402 -- after sys.path setup
-from cutdown.stage import CutdownStage  # noqa: E402 -- after sys.path setup
+from cutdown.stage import CutdownStage, PRESETS  # noqa: E402 -- after sys.path setup
 from cutdown.validate import FS, aligned  # noqa: E402 -- after sys.path setup
 
 WIN_S, SETTLE_S, AMP = 0.1, 0.3, 1e-3
@@ -29,14 +29,7 @@ def linear_chain_shifted(stage, f):
     return linear.stage_response(stage, f) * stage.rs.chain_response(f) * np.exp(2j * np.pi * f * L / stage.fs_base)
 
 
-VARIANTS = [
-    pytest.param(dict(miller_lpf=False, adaa=0, treble_comp=False), id="baseline"),
-    pytest.param(dict(miller_lpf=True, adaa=0, treble_comp=False), id="method_a"),
-    pytest.param(dict(miller_lpf=False, adaa=1, treble_comp=False), id="method_b1"),
-    pytest.param(dict(miller_lpf=False, adaa=2, treble_comp=False), id="method_b2"),
-    pytest.param(dict(miller_lpf=True, adaa=1, treble_comp=False), id="method_ab1"),
-    pytest.param(dict(miller_lpf=True, adaa=1, treble_comp=True), id="method_ab1c"),
-]
+VARIANTS = [pytest.param(dict(preset=name), id=name) for name in PRESETS]
 
 
 @pytest.fixture(scope="module", params=VARIANTS)

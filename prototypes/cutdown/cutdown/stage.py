@@ -9,7 +9,6 @@ Compared to prototypes/fullstage/dk/stage.py:
     prototypes/fullstage/dk/resample.py (6 first-order allpasses per way = 12 MACs/base sample,
     >= 96 dB stopband rejection, 3 base-rate samples nominal latency).
 """
-import math
 import numpy as np
 import cutdown  # noqa: F401 -- ensures FULLSTAGE_DIR is on sys.path
 from dk.resample import Resampler  # noqa: E402 -- after cutdown path setup
@@ -18,7 +17,6 @@ from dk.stage import OperatingPointError  # noqa: E402 -- after cutdown path set
 from dk.triode import DZ_12AX7_RSD1, currents, currents_only  # noqa: E402 -- after cutdown path setup
 from . import circuit  # noqa: E402 -- after cutdown path setup
 from .table import (  # noqa: E402 -- after cutdown path setup
-    ADAA_TOL_1,
     ADAA_TOL_2,
     DEFAULT_P0_SPAN,
     DEFAULT_P1_SPAN,
@@ -31,6 +29,34 @@ OVERSAMPLING = 2
 RESAMPLER_KIND = "iir"
 SOLVER_MODES = ("lut", "newton")
 ADAA_ORDERS = (0, 1, 2)
+PRESETS = {
+    "baseline": dict(miller_lpf=False, adaa=0, treble_comp=False),
+    "method_a": dict(miller_lpf=True, adaa=0, treble_comp=False),
+    "method_b1": dict(miller_lpf=False, adaa=1, treble_comp=False),
+    "method_b2": dict(miller_lpf=False, adaa=2, treble_comp=False),
+    "method_ab1": dict(miller_lpf=True, adaa=1, treble_comp=False),
+    "method_ab1c": dict(miller_lpf=True, adaa=1, treble_comp=True),
+}
+DEFAULT_PRESET = "method_ab1c"
+
+
+def resolve_options(preset=None, miller_lpf=None, adaa=None, treble_comp=None):
+    """Resolve and validate (preset, miller_lpf, adaa, treble_comp) into canonical options."""
+    key = DEFAULT_PRESET if preset is None else preset
+    if key not in PRESETS:
+        raise ValueError(f"preset must be one of {tuple(PRESETS)}, got {preset!r}")
+    base = PRESETS[key]
+    m_lpf = base["miller_lpf"] if miller_lpf is None else bool(miller_lpf)
+    ord_adaa = base["adaa"] if adaa is None else int(adaa)
+    if ord_adaa not in ADAA_ORDERS:
+        raise ValueError(f"adaa must be one of {ADAA_ORDERS}, got {ord_adaa!r}")
+    if treble_comp is None:
+        t_comp = (ord_adaa == 1) if preset is None else base["treble_comp"]
+    else:
+        t_comp = bool(treble_comp)
+    if t_comp and ord_adaa != 1:
+        raise ValueError(f"treble_comp=True requires adaa=1 (got adaa={ord_adaa})")
+    return m_lpf, ord_adaa, t_comp
 
 
 class CutdownStage:
@@ -39,12 +65,10 @@ class CutdownStage:
     def __init__(self, fs, bias=1.0, drive=1.0, output=1.0, triode=DZ_12AX7_RSD1,
                  shape=DEFAULT_SHAPE, p0_span=DEFAULT_P0_SPAN, p1_span=DEFAULT_P1_SPAN,
                  interp="cubic0_lin1", oversampling=OVERSAMPLING, filt=RESAMPLER_KIND,
-                 solver_mode="lut", miller_lpf=True, adaa=1, treble_comp=True):
+                 solver_mode="lut", preset=None, miller_lpf=None, adaa=None, treble_comp=None):
         if solver_mode not in SOLVER_MODES:
             raise ValueError(f"solver_mode must be one of {SOLVER_MODES}, got {solver_mode!r}")
-        adaa = int(adaa)
-        if adaa not in ADAA_ORDERS:
-            raise ValueError(f"adaa must be one of {ADAA_ORDERS}, got {adaa!r}")
+        miller_lpf, adaa, treble_comp = resolve_options(preset, miller_lpf, adaa, treble_comp)
         if adaa > 0 and (solver_mode != "lut" or interp != "cubic0_lin1"):
             raise ValueError("ADAA requires solver_mode='lut' and interp='cubic0_lin1'")
         self.fs_base = float(fs)
@@ -61,9 +85,9 @@ class CutdownStage:
         self.p1_span = tuple(p1_span)
         self.interp = interp
         self.solver_mode = solver_mode
-        self.miller_lpf = bool(miller_lpf)
+        self.miller_lpf = miller_lpf
         self.adaa = adaa
-        self.treble_comp = bool(treble_comp)
+        self.treble_comp = treble_comp
         self.ev = (currents, currents_only)
 
         self.m = circuit.build(self.fs, rk_scale=self.bias)
@@ -71,8 +95,9 @@ class CutdownStage:
         self.dc = self.operating_point()
         self._rest()
         self._build_table()
+        self.miller_filter = circuit.FirstOrderSection()
         self._build_miller_filter()
-        self.treble_comp_coefs = circuit.treble_comp_coefs(self.fs_base, self.fs)
+        self.treble_filter = circuit.FirstOrderSection(*circuit.treble_comp_coefs(self.fs_base, self.fs))
         self.reset()
 
     def operating_point(self):
@@ -113,21 +138,25 @@ class CutdownStage:
     def _build_miller_filter(self):
         J = currents(self.dc["vgk"], self.dc["vak"], self.par)[2]
         self.miller_fc_hz = circuit.miller_cutoff_hz(J, rk_scale=self.bias)
-        self.miller_coefs = circuit.miller_filter_coefs(self.miller_fc_hz, self.fs)
+        self.miller_filter.set_coefs(*circuit.miller_filter_coefs(self.miller_fc_hz, self.fs))
+
+    @property
+    def miller_coefs(self):
+        return self.miller_filter.coefs
+
+    @property
+    def treble_comp_coefs(self):
+        return self.treble_filter.coefs
 
     def reset(self):
         self._rest()
         self.x = np.zeros_like(self.x0)
         self.v = [self.dc["vgk"], self.dc["vak"]]
         self.v_prev = list(self.v)
-        self.lp_x = 0.0
-        self.lp_y = 0.0
-        self.tc_x = 0.0
-        self.tc_y = 0.0
+        self.miller_filter.reset()
+        self.treble_filter.reset()
         self.p_prev = [float(self.p_dc[0]), float(self.p_dc[1])]
         self.p_prev2 = list(self.p_prev)
-        self.j_prev = -1
-        self.pg0 = self.pg1 = self.pa0 = self.pa1 = 0.0
         self.rs.reset()
 
     def swap_bias(self, bias):
@@ -144,7 +173,6 @@ class CutdownStage:
         self._rest()
         self._build_table()
         self._build_miller_filter()
-        self.j_prev = -1
         self.x = self.x + (x0_old - self.x0)
 
     @property
@@ -152,31 +180,17 @@ class CutdownStage:
         """Base-rate delay of process() output vs input (nominal 1 kHz group delay for IIR)."""
         return self.rs.latency_samples
 
-    @staticmethod
-    def _first_order_group_delay(coefs, f, fs):
-        """Group delay (samples at rate fs) of H(z) = (b0 + b1 z^-1) / (1 - p z^-1) at frequency f."""
-        b0, b1, p = coefs
-        df = 1.0
-        w1 = 2.0 * math.pi * (float(f) - df) / float(fs)
-        w2 = 2.0 * math.pi * (float(f) + df) / float(fs)
-        z1 = complex(math.cos(w1), -math.sin(w1))
-        z2 = complex(math.cos(w2), -math.sin(w2))
-        h1 = (b0 + b1 * z1) / (1.0 - p * z1)
-        h2 = (b0 + b1 * z2) / (1.0 - p * z2)
-        dphi = math.atan2((h2 * h1.conjugate()).imag, (h2 * h1.conjugate()).real)
-        return -dphi / (w2 - w1)
-
     def miller_group_delay_base(self, f=1000.0):
         """Group delay (base-rate samples) of the Method A 1-pole IIR LPF at frequency f (0 if disabled)."""
         if not self.miller_lpf:
             return 0.0
-        return self._first_order_group_delay(self.miller_coefs, f, self.fs) / self.os
+        return self.miller_filter.group_delay(f, self.fs) / self.os
 
     def treble_comp_group_delay_base(self, f=1000.0):
         """Group delay (base-rate samples) of the base-rate treble compensator at f (0 if disabled)."""
         if not self.treble_comp:
             return 0.0
-        return self._first_order_group_delay(self.treble_comp_coefs, f, self.fs_base)
+        return self.treble_filter.group_delay(f, self.fs_base)
 
     @property
     def adaa_delay_base(self):
@@ -235,15 +249,13 @@ class CutdownStage:
 
         x0, x1, x2 = float(self.x[0]), float(self.x[1]), float(self.x[2])
         use_lpf = self.miller_lpf
-        lp_b0, lp_b1, lp_p = self.miller_coefs
-        lp_x, lp_y = self.lp_x, self.lp_y
+        lp_b0, lp_b1, lp_p = self.miller_filter.coefs
+        lp_x, lp_y = self.miller_filter.x_prev, self.miller_filter.y_prev
         adaa = self.adaa
         p0_prev, p1_prev = self.p_prev
         p0_prev2, p1_prev2 = self.p_prev2
         u_prev = (p0_prev - p0_min) * inv_dp0
         u_prev2 = (p0_prev2 - p0_min) * inv_dp0
-        j_prev = self.j_prev
-        pg0, pg1, pa0, pa1 = self.pg0, self.pg1, self.pa0, self.pa1
 
         for n, s_val in enumerate(vin):
             s = float(s_val)
@@ -298,6 +310,8 @@ class CutdownStage:
 
                 cig = ig - dig_off
                 cia = ia - dia_off
+                di0 = cig - ig0
+                di1 = cia - ia0
             elif adaa == 1:
                 u = (p0 - p0_min) * inv_dp0
                 p1m = 0.5 * (p1 + p1_prev)
@@ -309,18 +323,10 @@ class CutdownStage:
                 else:
                     j = int(w)
                     fw = w - j
-                if j != j_prev:
-                    pg0, pg1, pa0, pa1 = tbl.f1_slices(u_prev, j)
-                g0, g1, a0, a1 = tbl.f1_slices(u, j)
-                du = u - u_prev
-                if abs(du) < ADAA_TOL_1:
-                    cig, cia = tbl.lookup(0.5 * (p0 + p0_prev), p1m)
-                else:
-                    cig = ((g0 + fw * (g1 - g0)) - (pg0 + fw * (pg1 - pg0))) / du
-                    cia = ((a0 + fw * (a1 - a0)) - (pa0 + fw * (pa1 - pa0))) / du
+                di0, di1 = tbl.adaa1_dev(u, u_prev, j, fw)
+                cig, cia = ig0 + di0, ia0 + di1
                 p0_prev, p1_prev = p0, p1
                 u_prev = u
-                j_prev, pg0, pg1, pa0, pa1 = j, g0, g1, a0, a1
             else:
                 u = (p0 - p0_min) * inv_dp0
                 p1m = (p1 + p1_prev + p1_prev2) / 3.0
@@ -364,9 +370,8 @@ class CutdownStage:
                 p0_prev2, p1_prev2 = p0_prev, p1_prev
                 p0_prev, p1_prev = p0, p1
                 u_prev2, u_prev = u_prev, u
-
-            di0 = cig - ig0
-            di1 = cia - ia0
+                di0 = cig - ig0
+                di1 = cia - ia0
 
             if out_only:
                 out_arr[n] = d00 * x0 + d01 * x1 + d02 * x2 + e00 * s + f00 * di0 + f01 * di1 + ydc0
@@ -384,11 +389,9 @@ class CutdownStage:
             x0, x1, x2 = nx0, nx1, nx2
 
         self.x[0], self.x[1], self.x[2] = x0, x1, x2
-        self.lp_x, self.lp_y = lp_x, lp_y
+        self.miller_filter.x_prev, self.miller_filter.y_prev = lp_x, lp_y
         self.p_prev = [p0_prev, p1_prev]
         self.p_prev2 = [p0_prev2, p1_prev2]
-        self.j_prev = j_prev
-        self.pg0, self.pg1, self.pa0, self.pa1 = pg0, pg1, pa0, pa1
         return rec
 
     def _process_internal_newton(self, vin, record):
@@ -423,18 +426,6 @@ class CutdownStage:
             return self._process_internal_lut(vin, record)
         return self._process_internal_newton(vin, record)
 
-    def _apply_treble_comp(self, y):
-        b0, b1, p = self.treble_comp_coefs
-        tc_x, tc_y = self.tc_x, self.tc_y
-        out = np.empty_like(y)
-        for n, x_val in enumerate(y):
-            xv = float(x_val)
-            yv = b0 * xv + b1 * tc_x + p * tc_y
-            tc_x, tc_y = xv, yv
-            out[n] = yv
-        self.tc_x, self.tc_y = tc_x, tc_y
-        return out
-
     def process(self, vin, record=("out",)):
         """Base-rate in, base-rate out (2x IIR oversampling around the 3-state stage)."""
         vin = self.drive * np.asarray(vin, dtype=float)
@@ -444,7 +435,7 @@ class CutdownStage:
             y = self.rs.down(v, channel=k)
             if k == "out":
                 if self.treble_comp:
-                    y = self._apply_treble_comp(y)
+                    y = self.treble_filter.process(y)
                 out[k] = self.output * y
             else:
                 out[k] = y
