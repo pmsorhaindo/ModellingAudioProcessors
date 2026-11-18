@@ -54,9 +54,11 @@ will not use a brand or device name.
   that hardware; by the estimate in `prototypes/fullstage/research/octatrack-budget.md` the full model does not fit
   a slot at any oversampling factor.
 **Known problems**
-- CI runs the Linux jobs on pull requests and pushes to main, and a blocking macOS arm64 fullstage job on pull
-  requests and manual runs (#72, #85), plus a macOS plugin build-and-check job with the same gating (#22). The
-  macOS jobs are skipped on pushes, including to main, to limit billed macOS minutes.
+- CI runs the Linux jobs on pull requests (including drafts) and on pushes to main. The two blocking macOS
+  jobs — a fullstage test on arm64 (#72, #85) and a plugin build-and-check (#22) — run only on pull requests
+  that are ready for review, and on manual dispatch. They are skipped on draft PRs and on pushes, including
+  to main, because macOS minutes bill at 10× on this private repository. Open PRs as drafts while iterating;
+  mark a PR ready for review to run the macOS jobs.
 
 Nothing is signed, notarised, published or released.
 
