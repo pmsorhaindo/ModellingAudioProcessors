@@ -1,6 +1,6 @@
-/* bench.cpp -- per-instance CPU benchmark of cpp/dk_core.h (#20, stereo SIMD #21). Method, signal and results:
- * cpp/BENCHMARK.md. Normally built and run by cpp/bench.py, which adds the host description and writes the results
- * file.
+/* bench.cpp -- per-instance CPU benchmark of cpp/dk_core.h (#20, stereo SIMD #21, vector maths #67). Method, signal
+ * and results: cpp/BENCHMARK.md. Normally built and run by cpp/bench.py, which adds the host description and
+ * writes the results file.
  *
  *   bench [--seconds S] [--reps R] [--only A,B,...] [--list]
  *     --seconds  length of the test signal per pass (default 2; rounded down to a multiple of 512 samples)
@@ -12,11 +12,17 @@
  * (64 / 512) x mode:
  *   x1  one mono Stage;
  *   x2  two independent mono Stages on one thread, left then right in each block (the stereo-equivalent of #20);
- *   s2  one StereoStage (#21): the same left and right signals as x2, as the two SIMD lanes of one kernel.
+ *   s2  one StereoStage (#21): the same left and right signals as x2, as the two SIMD lanes of one kernel, with the
+ *       per-lane scalar maths (LaneMath::per_lane, the reference);
+ *   v2  (#67, fast math only) the s2 StereoStage with LaneMath::vector (dk/fastmath.h on both lanes at once;
+ *       also the StereoStage default when prepared with TriodeMath::fast). The harness sets each mode explicitly.
  * Each pass resets the instances and runs the whole signal through process() block by block; passes of all
  * configurations are interleaved round-robin so that drift (thermal, background load) spreads over all of them.
  * Output is checked bit-identical across passes (process() is deterministic from reset()). Each s2 row also reports
- * whether its output is bit-identical to its x2 twin's (matches_x2; null if the twin is not in the run).
+ * whether its output is bit-identical to its x2 twin's (matches_x2; null if the twin is not in the run); so does each
+ * v2 row. Newton iterations per internal sample (warm-up pass): newton_mean (left channel / first instance),
+ * newton_mean_r (right / second; null for x1) and, for s2 / v2, newton_mean_max: the iterations the 2-lane kernel
+ * ran, max(itL, itR) per sample (StereoStage::kernel_iterations).
  *
  * Counters, where they exist (else null in the JSON):
  *   macOS:  proc_pid_rusage(RUSAGE_INFO_V6) ri_cycles / ri_instructions / ri_pcycles: the kernel's per-thread
@@ -159,7 +165,8 @@ struct Config {
     TriodeMath math;
     double level;
     int block, inst;
-    bool stereo = false;                       // s2: one StereoStage (inst == 2) instead of inst mono Stages
+    bool stereo = false;                       // s2 / v2: one StereoStage (inst == 2) instead of inst mono Stages
+    bool vec = false;                          // v2: LaneMath::vector
     Stage* s[2] = {nullptr, nullptr};
     StereoStage* st = nullptr;
     const Config* twin = nullptr;              // s2: the x2 configuration with the same settings, if in the run
@@ -167,7 +174,7 @@ struct Config {
     std::vector<double> y[2];
     std::uint64_t checksum = 0;
     bool deterministic = true;
-    double newton_mean = 0.0;
+    double newton_mean = 0.0, newton_mean_r = 0.0, newton_mean_max = 0.0;
     std::uint64_t nonconverged = 0;
     std::vector<double> ns, cpu_frac, cyc, ins, pfrac, ghz, blocks;   // per pass (blocks: per block, all passes)
     bool cyc_ok = true;
@@ -205,6 +212,11 @@ static void pass(Config& c, std::size_t n, std::vector<std::chrono::steady_clock
         c.checksum = h;
         const Stats& left = c.stereo ? c.st->stats(0) : c.s[0]->stats();
         c.newton_mean = double(left.iterations) / double(left.samples);
+        if (c.inst == 2) {
+            const Stats& right = c.stereo ? c.st->stats(1) : c.s[1]->stats();
+            c.newton_mean_r = double(right.iterations) / double(right.samples);
+        }
+        if (c.stereo) c.newton_mean_max = double(c.st->kernel_iterations()) / double(left.samples);
         for (int k = 0; k < c.inst; ++k) c.nonconverged += (c.stereo ? c.st->stats(k) : c.s[k]->stats()).nonconverged;
         return;
     }
@@ -263,7 +275,8 @@ int main(int argc, char** argv) {
         for (TriodeMath m : {TriodeMath::libm, TriodeMath::fast})
             for (double lv : levels)
                 for (int blk : {64, 512})
-                    for (const char* mode : {"x1", "x2", "s2"}) {
+                    for (const char* mode : {"x1", "x2", "s2", "v2"}) {
+                        if (mode[0] == 'v' && m != TriodeMath::fast) continue;   // vector maths: fast only
                         char nm[64];
                         std::snprintf(nm, sizeof nm, "%s_%s_%gV_b%d_%s", q.first, m == TriodeMath::fast ? "fast" : "libm",
                                       lv, blk, mode);
@@ -272,7 +285,7 @@ int main(int argc, char** argv) {
                         if (!keep) continue;
                         Config c;
                         c.name = nm; c.quality = q.first; c.q = q.second; c.math = m; c.level = lv; c.block = blk;
-                        c.inst = mode[1] - '0'; c.stereo = mode[0] == 's';
+                        c.inst = mode[1] - '0'; c.stereo = mode[0] == 's' || mode[0] == 'v'; c.vec = mode[0] == 'v';
                         cfg.push_back(std::move(c));
                     }
     if (list) { for (const auto& c : cfg) std::printf("%s\n", c.name.c_str()); return 0; }
@@ -313,6 +326,7 @@ int main(int argc, char** argv) {
         if (c.stereo) {
             c.st = new StereoStage;
             if (c.st->prepare(FS, c.q, 1.0, c.math) != BuildStatus::ok) { std::fprintf(stderr, "prepare failed\n"); return 3; }
+            c.st->set_lane_math(c.vec ? LaneMath::vector : LaneMath::per_lane);
         }
         for (int k = 0; k < c.inst; ++k) {
             if (!c.stereo) {
@@ -358,7 +372,7 @@ int main(int argc, char** argv) {
         std::printf("%s\n{\"name\": \"%s\", \"quality\": \"%s\", \"os\": %d, \"math\": \"%s\", \"level_v\": %g, "
                     "\"block\": %d, \"instances\": %d, \"path\": \"%s\", ", i ? "," : "", c.name.c_str(), c.quality.c_str(),
                     c.q.os, c.math == TriodeMath::fast ? "fast" : "libm", c.level, c.block, c.inst,
-                    c.stereo ? "stereo_simd" : "mono");
+                    c.vec ? "stereo_simd_vecmath" : c.stereo ? "stereo_simd" : "mono");
         if (c.stereo) std::printf("\"matches_x2\": %s, ", !c.twin ? "null" : c.twin->checksum == c.checksum ? "true" : "false");
         jnum("ns_per_sample", med, "%.1f"); std::printf(", ");
         jnum("ns_min", pct(c.ns, 0.0), "%.1f"); std::printf(", ");
@@ -375,7 +389,9 @@ int main(int argc, char** argv) {
         jnum("p_core_fraction_min", cy ? pct(c.pfrac, 0.0) : nan, "%.4f"); std::printf(", ");
 #endif
         jnum("ghz_on_cpu", cy ? median(c.ghz) : nan, "%.3f"); std::printf(", ");
-        jnum("newton_mean", c.newton_mean, "%.4f");
+        jnum("newton_mean", c.newton_mean, "%.4f"); std::printf(", ");
+        jnum("newton_mean_r", c.inst == 2 ? c.newton_mean_r : nan, "%.4f"); std::printf(", ");
+        jnum("newton_mean_max", c.stereo ? c.newton_mean_max : nan, "%.4f");
         std::printf(", \"nonconverged\": %" PRIu64 ", \"deterministic\": %s}", c.nonconverged, c.deterministic ? "true" : "false");
         std::fprintf(stderr, "%-26s %8.1f ns/sample  %6.2f %% core  p99 block %6.2f %%  cycles %s\n", c.name.c_str(), med,
                      100.0 * med * FS / 1e9, pct(c.blocks, 99.0), cy ? std::to_string(long(median(c.cyc))).c_str() : "-");

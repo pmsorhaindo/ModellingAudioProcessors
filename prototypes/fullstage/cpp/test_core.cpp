@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <new>
 #include <sstream>
@@ -627,9 +628,12 @@ static void test_float_io() {
  * between builds (same pack, same per-sample code; measured 2.7e-11 V over the FMA / non-FMA builds), so the stereo
  * tolerance is the same, with TOL_ITER_FRAC for the Newton statistics. */
 static const double TOL_STEREO_ABS = TOL_PINNED_ABS;
-static bool g_stereo_exact = true;
-static double g_stereo_worst = 0.0;
-static long g_stereo_runs = 0, g_stereo_allocs = 0, g_stereo_lanes_differ = 0;
+/* The vector-math path (#67, LaneMath::vector, VecFastMath) is held to the same rule against two mono fast Stages:
+ * each lane does FastMath's operations in FastMath's order, so it is bit-equal on the same builds, and otherwise
+ * differs by rounding only (TOL_STEREO_ABS, TOL_ITER_FRAC). Its own tallies: g_vec_*. */
+static bool g_stereo_exact = true, g_vec_exact = true;
+static double g_stereo_worst = 0.0, g_vec_worst = 0.0;
+static long g_stereo_runs = 0, g_stereo_allocs = 0, g_stereo_lanes_differ = 0, g_vec_runs = 0, g_vec_lanes_differ = 0;
 
 static bool same_stats(const Stats& a, const Stats& b) {
     return a.samples == b.samples && a.iterations == b.iterations && a.nonconverged == b.nonconverged &&
@@ -638,7 +642,8 @@ static bool same_stats(const Stats& a, const Stats& b) {
 }
 
 // channel ch of a stereo run against its mono reference: output, Stats, final state
-static void compare_channel(const std::string& what, const Vec& ys, const Vec& ym, const StereoStage& s, int ch, const Stage& m) {
+static void compare_channel(const std::string& what, const Vec& ys, const Vec& ym, const StereoStage& s, int ch, const Stage& m,
+                            bool vec) {
     const Stats &a = s.stats(ch), &b = m.stats();
     bool state_eq = true;
     double ds = 0;
@@ -646,8 +651,9 @@ static void compare_channel(const std::string& what, const Vec& ys, const Vec& y
     for (int i = 0; i < 2; ++i) { state_eq = state_eq && s.state_v(ch, i) == m.state_v()[i]; ds = std::max(ds, std::fabs(s.state_v(ch, i) - m.state_v()[i])); }
     const double e = maxdiff(ys.data(), ym.data(), ym.size());
     const bool exact = ys == ym && same_stats(a, b) && state_eq;
-    g_stereo_exact = g_stereo_exact && exact;
-    g_stereo_worst = std::max(g_stereo_worst, e);
+    (vec ? g_vec_exact : g_stereo_exact) &= exact;
+    double& worst = vec ? g_vec_worst : g_stereo_worst;
+    worst = std::max(worst, e);
     const double di = std::fabs(double(a.iterations) - double(b.iterations)) / double(b.iterations);
     const double dn = std::fabs(double(a.nonconverged) - double(b.nonconverged));
     check(e <= TOL_STEREO_ABS && ds <= TOL_STEREO_ABS, what + " output / state abs " + std::to_string(e));
@@ -672,9 +678,11 @@ static Vec other_signal(const Vec& x) {
 
 // One stereo run of case k against two mono runs: L gets x with k's gains, R gets xr with its gains scaled by
 // (dr, orr). Mono runs in blocks of 64, stereo in blocks of sblock (mono is block-size invariant, test_cases).
+// lm: the stereo lane maths (vector: the #67 path; k.fast must be set).
 static void stereo_case(const std::map<std::string, Vec>& V, const std::string& what, const CaseCfg& k, const Vec& x,
-                        const Vec& xr, double dr, double orr, size_t sblock) {
+                        const Vec& xr, double dr, double orr, size_t sblock, LaneMath lm = LaneMath::per_lane) {
     const TriodeMath math = k.fast ? TriodeMath::fast : TriodeMath::libm;
+    const bool vec = lm == LaneMath::vector;
     CaseCfg kr = k;
     kr.drive *= dr; kr.output *= orr;
     Stage* ml = new Stage; Stage* mr = new Stage; StereoStage* s = new StereoStage;
@@ -685,15 +693,22 @@ static void stereo_case(const std::map<std::string, Vec>& V, const std::string& 
     run_case(*mr, V, kr, false, xr, ymr, 64);
     Vec yl(x.size()), yr(x.size());
     s->set_drive(k.drive, kr.drive); s->set_output(k.output, kr.output);
+    s->set_lane_math(lm);
     g_stereo_allocs += run_blocks(*s, V, k, false, x.size(), sblock, [&](size_t i, size_t m) {
         s->process(x.data() + i, xr.data() + i, yl.data() + i, yr.data() + i, m);
     });
-    compare_channel(what + " L", yl, yml, *s, 0, *ml);
-    compare_channel(what + " R", yr, ymr, *s, 1, *mr);
+    compare_channel(what + " L", yl, yml, *s, 0, *ml, vec);
+    compare_channel(what + " R", yr, ymr, *s, 1, *mr, vec);
     check(s->nonconverged_total() == s->stats(0).nonconverged + s->stats(1).nonconverged, what + " nonconverged_total");
+    // the kernel ran max(itL, itR) per sample: between the larger and the sum of the per-channel totals; equal to
+    // them when both lanes got the same problems
+    const std::uint64_t il = s->stats(0).iterations, ir = s->stats(1).iterations, kit = s->kernel_iterations();
+    const bool same = &x == &xr && dr == 1.0 && orr == 1.0;
+    check(kit >= std::max(il, ir) && kit <= il + ir && (!same || (kit == il && il == ir)), what + " kernel_iterations");
     // different iteration-count multisets: some sample had a different count per lane, so the masking was exercised
-    g_stereo_lanes_differ += !std::equal(ml->stats().histogram, ml->stats().histogram + Stats::HIST, mr->stats().histogram);
-    ++g_stereo_runs;
+    (vec ? g_vec_lanes_differ : g_stereo_lanes_differ) +=
+        !std::equal(ml->stats().histogram, ml->stats().histogram + Stats::HIST, mr->stats().histogram);
+    ++(vec ? g_vec_runs : g_stereo_runs);
     delete ml; delete mr; delete s;
 }
 
@@ -708,6 +723,12 @@ static void test_stereo(const std::map<std::string, Vec>& V) {
         stereo_case(V, "stereo " + name + " same", k, x, x, 1.0, 1.0, 64);
         stereo_case(V, "stereo " + name + " diff", k, x, xr, 1.0, 1.0, 64);
         stereo_case(V, "stereo " + name + " gains", k, x, xr, 2.5, 0.4, 37);   // + ragged blocks
+        // the vector-math path (#67) on the same case with fast math, against two mono fast Stages
+        CaseCfg kf = k;
+        kf.fast = true;
+        stereo_case(V, "vector " + name + " same", kf, x, x, 1.0, 1.0, 64, LaneMath::vector);
+        stereo_case(V, "vector " + name + " diff", kf, x, xr, 1.0, 1.0, 64, LaneMath::vector);
+        stereo_case(V, "vector " + name + " gains", kf, x, xr, 2.5, 0.4, 37, LaneMath::vector);
     }
     // capped Newton (3 iterations): the loud lane hits the cap and falls back (#7) while the quiet one converges
     {
@@ -718,6 +739,9 @@ static void test_stereo(const std::map<std::string, Vec>& V) {
         }
         const CaseCfg k{8, 0.0, 1.0, 1.0, 1.0, false, Newton{3, 1e-6, 1e-6}, -1, 1.0, Newton{}};
         stereo_case(V, "stereo capped", k, x, xr, 1.0, 1.0, 64);
+        CaseCfg kf = k;
+        kf.fast = true;
+        stereo_case(V, "vector capped", kf, x, xr, 1.0, 1.0, 64, LaneMath::vector);
         StereoStage* s = new StereoStage;          // the fallback split per lane, checked on a fresh run
         s->prepare(48000.0);
         Coeffs c = s->latest(); c.newton = k.nw; s->publish(c);
@@ -728,10 +752,14 @@ static void test_stereo(const std::map<std::string, Vec>& V) {
         metric("stereo_capped_nonconv_l", double(s->stats(0).nonconverged));
         delete s;
     }
-    check(g_stereo_lanes_differ >= g_stereo_runs / 2, "the lanes ran different Newton iteration counts");
+    check(g_stereo_lanes_differ >= g_stereo_runs / 2 && g_vec_lanes_differ >= g_vec_runs / 2,
+          "the lanes ran different Newton iteration counts");
     metric("stereo_runs", double(g_stereo_runs));
     metric("stereo_lanes_differ_runs", double(g_stereo_lanes_differ));
     metric("stereo_abs_worst", g_stereo_worst);
+    metric("vector_runs", double(g_vec_runs));
+    metric("vector_lanes_differ_runs", double(g_vec_lanes_differ));
+    metric("vector_abs_worst", g_vec_worst);
     metric("stereo_process_allocations", double(g_stereo_allocs));
     check(g_stereo_allocs == 0, "StereoStage::process allocates nothing (" + std::to_string(g_stereo_allocs) + ")");
 }
@@ -761,7 +789,7 @@ static void test_stereo_solve(const std::map<std::string, Vec>& V) {
         size_t j = (i * 37 + 11) % rows.size();                          // a partner with the same Newton settings
         while (rows[j].nw.max_it != a.nw.max_it || rows[j].nw.tol_v != a.nw.tol_v || rows[j].nw.tol_f != a.nw.tol_f) j = (j + 1) % rows.size();
         const P& b = rows[j];
-        const Solution2 s = solve2<LibmMath>(simd::make(a.p0, b.p0), simd::make(a.p1, b.p1), K, simd::make(a.v0, b.v0),
+        const Solution2 s = solve2<PerLane<LibmMath>>(simd::make(a.p0, b.p0), simd::make(a.p1, b.p1), K, simd::make(a.v0, b.v0),
                                              simd::make(a.v1, b.v1), DZ_12AX7_RSD1, a.nw);
         for (int l = 0; l < 2; ++l) {
             const P& q = l ? b : a;
@@ -779,7 +807,7 @@ static void test_stereo_solve(const std::map<std::string, Vec>& V) {
     long fexact = 0, fn = 0;
     for (size_t i = nvec; i + 1 < rows.size(); i += 2) {
         const P &a = rows[i], &b = rows[i + 1];
-        const Solution2 s = solve2<FastMath>(simd::make(a.p0, b.p0), simd::make(a.p1, b.p1), K, simd::make(a.v0, b.v0),
+        const Solution2 s = solve2<PerLane<FastMath>>(simd::make(a.p0, b.p0), simd::make(a.p1, b.p1), K, simd::make(a.v0, b.v0),
                                              simd::make(a.v1, b.v1), DZ_12AX7_RSD1, a.nw);
         for (int l = 0; l < 2; ++l) {
             const P& q = l ? b : a;
@@ -789,6 +817,34 @@ static void test_stereo_solve(const std::map<std::string, Vec>& V) {
             ++fn;
         }
     }
+    // the vector maths (#67) on every problem (the hard ones exercise pnjlim and the line search), against solve<FastMath>
+    long vexact = 0, vn = 0, vit = 0;
+    double vev = 0;
+    for (size_t i = 0; i < rows.size(); ++i) {
+        const P& a = rows[i];
+        size_t j = (i * 37 + 11) % rows.size();
+        while (rows[j].nw.max_it != a.nw.max_it || rows[j].nw.tol_v != a.nw.tol_v || rows[j].nw.tol_f != a.nw.tol_f) j = (j + 1) % rows.size();
+        const P& b = rows[j];
+        const Solution2 s = solve2<VecFastMath>(simd::make(a.p0, b.p0), simd::make(a.p1, b.p1), K, simd::make(a.v0, b.v0),
+                                                simd::make(a.v1, b.v1), DZ_12AX7_RSD1, a.nw);
+        for (int l = 0; l < 2; ++l) {
+            const P& q = l ? b : a;
+            const Solution m = solve<FastMath>(q.p0, q.p1, K, q.v0, q.v1, DZ_12AX7_RSD1, q.nw);
+            const double g[4] = {simd::lane(s.v0, l), simd::lane(s.v1, l), simd::lane(s.ig, l), simd::lane(s.ia, l)};
+            const bool same_it = s.it[l] == m.it && s.ok[l] == m.ok;
+            vexact += same_it && g[0] == m.v0 && g[1] == m.v1 && g[2] == m.ig && g[3] == m.ia;
+            vit += !same_it;
+            if (same_it && m.ok)
+                vev = std::max({vev, std::fabs(g[0] - m.v0), std::fabs(g[1] - m.v1) / std::max(1.0, std::fabs(m.v1))});
+            ++vn;
+        }
+    }
+    g_vec_exact = g_vec_exact && vexact == vn;
+    metric("vector_solve_lanes", double(vn));
+    metric("vector_solve_bit_equal_frac", double(vexact) / double(vn));
+    metric("vector_solve_it_mismatch", double(vit));
+    metric("vector_solve_v_err", vev);
+    check(vev <= TOL_SOLVE && double(vit) <= TOL_ITER_FRAC * double(vn), "solve2<VecFastMath> lanes = solve<FastMath>");
     g_stereo_exact = g_stereo_exact && exact == pairs && fexact == fn;
     metric("stereo_solve_lanes", double(pairs));
     metric("stereo_solve_bit_equal_frac", double(exact) / double(pairs));
@@ -821,6 +877,15 @@ static void test_stereo_misc() {
     a->process(il, ir, il, ir, 480);
     b->process(xl, xr, yl, yr, 480);
     check(std::equal(il, il + 480, yl) && std::equal(ir, ir + 480, yr), "stereo in place");
+    // Default is LaneMath::vector (used with TriodeMath::fast). With libm there is no vector libm, so the
+    // per-lane reference still runs, bit for bit, including after an explicit switch to per_lane.
+    a->reset(); b->reset();
+    check(b->lane_math() == LaneMath::vector, "lane maths default is vector");
+    a->set_lane_math(LaneMath::per_lane);
+    check(a->lane_math() == LaneMath::per_lane && b->lane_math() == LaneMath::vector, "lane maths switch to per_lane");
+    a->process(xl, xr, il, ir, 480);
+    b->process(xl, xr, yl, yr, 480);
+    check(std::equal(il, il + 480, yl) && std::equal(ir, ir + 480, yr), "LaneMath::vector with libm = the per-lane path");
     delete a; delete b;
     StereoStage* s = new StereoStage;
     check(s->prepare(48000.0, STANDARD, 1.0, TriodeMath::libm, Newton{1, 1e-6, 1e-6}) == BuildStatus::dc_nonconvergence &&
@@ -839,13 +904,164 @@ static void test_stereo_misc() {
 #endif
 }
 
+// ---- vector maths (#67): VecFastMath against libm and against the scalar dk/fastmath.h ----------------------------
+/* Accuracy, measured here against this machine's libm: max ulp and max relative error of each VecFastMath function on
+ * dense grids over the arguments the stage actually passes (dk/fastmath_domain.json "ranges", every setting and drive
+ * of dk.validate, extended; cpp/tests checks the cover), and of exp over its whole fast domain. Each lane is also
+ * compared bit for bit with the scalar fm_* (g_vec_exact). The bounds are dk/fastmath.py BOUND (#18 / #60, the scalar
+ * kernels' tested bounds): the vector code computes the same thing. Edges: special and out-of-domain values, mixed
+ * with in-domain ones in the other lane, with and without FTZ: every lane must give the scalar fm_*'s bits (libm's
+ * outside the fast domain; NaN for NaN). */
+static const double BOUND_EXP = 1e-12, BOUND_LOG1P = 3e-13, BOUND_POW = 1e-12;   // dk/fastmath.py BOUND
+struct Domain { const char* name; double lo, hi; bool log; };
+// the grids, in the argument's own units; dk/fastmath_domain.json ranges, rounded outwards (cpp/tests checks it)
+static const Domain VM_EXP = {"exp", -200.0, 1.0, false}, VM_EXP_FULL = {"exp_full", FM_EXP_LO, FM_EXP_HI, false},
+                    VM_LOG1P = {"log1p", 1e-70, 1.0, true}, VM_POW126 = {"pow_g1_26", 1e-20, 2.0, true},
+                    VM_POW1314 = {"pow_g1_314", 1e-70, 1.0, true};
+
+static std::int64_t ordered(double x) {          // doubles -> integers in the same order, adjacent doubles 1 apart
+    std::int64_t i; std::memcpy(&i, &x, 8);
+    return i < 0 ? std::numeric_limits<std::int64_t>::min() - i : i;
+}
+static bool same_bits(double a, double b) { return std::memcmp(&a, &b, 8) == 0 || (std::isnan(a) && std::isnan(b)); }
+
+// n points of d: half a regular grid (linear, or geometric if d.log), half pseudo-random (uniform, or log-uniform)
+static Vec grid(const Domain& d, size_t n) {
+    Vec g(n);
+    std::uint64_t r = 67;
+    for (size_t i = 0; i < n; ++i) {
+        double t = double(i) / double(n / 2 - 1);
+        if (i >= n / 2) { r = r * 6364136223846793005ull + 1442695040888963407ull; t = double(r >> 11) * 0x1p-53; }
+        t = std::min(t, 1.0);
+        g[i] = d.log ? std::exp(std::log(d.lo) + t * (std::log(d.hi) - std::log(d.lo))) : d.lo + t * (d.hi - d.lo);
+    }
+    g[0] = d.lo; g[n / 2 - 1] = d.hi;
+    return g;
+}
+
+template <class FV, class FS, class FL>
+static void vm_measure(const Domain& d, double bound, FV vec, FS scalar, FL libm) {
+    const Vec g = grid(d, 400000);
+    const size_t h = g.size() / 2;
+    double rel = 0;
+    std::int64_t ulp = 0;
+    long eq = 0;
+    for (size_t i = 0; i < h; ++i) {
+        const simd::V2 y = vec(simd::make(g[i], g[i + h]));           // lanes from different halves
+        for (int l = 0; l < 2; ++l) {
+            const double x = g[i + h * size_t(l)], v = simd::lane(y, l), ref = libm(x);
+            rel = std::max(rel, std::fabs(v - ref) / std::fabs(ref));
+            ulp = std::max(ulp, std::abs(ordered(v) - ordered(ref)));
+            eq += same_bits(v, scalar(x));
+        }
+    }
+    const std::string k = std::string("vecmath_") + d.name;
+    metric(k + "_lo", d.lo); metric(k + "_hi", d.hi);
+    metric(k + "_max_rel", rel); metric(k + "_max_ulp", double(ulp));
+    metric(k + "_bit_equal_frac", double(eq) / double(g.size()));
+    g_vec_exact = g_vec_exact && eq == long(g.size());
+    check(rel <= bound, k + " relative error " + std::to_string(rel));
+}
+
+static void test_vecmath() {
+    using simd::V2;
+    const auto vexp = [](V2 x) { return VecFastMath::exp(x); };
+    const auto vlog1p = [](V2 x) { return VecFastMath::log1p(x); };
+    const auto sexp = [](double x) { return fm_exp(x); };
+    const auto slog1p = [](double x) { return fm_log1p(x); };
+    const auto lexp = [](double x) { return std::exp(x); };
+    const auto llog1p = [](double x) { return std::log1p(x); };
+    vm_measure(VM_EXP, BOUND_EXP, vexp, sexp, lexp);
+    vm_measure(VM_EXP_FULL, BOUND_EXP, vexp, sexp, lexp);
+    vm_measure(VM_LOG1P, BOUND_LOG1P, vlog1p, slog1p, llog1p);
+    for (double g : {1.26, 1.314})
+        vm_measure(g == 1.26 ? VM_POW126 : VM_POW1314, BOUND_POW, [g](V2 s) { return VecFastMath::pow(s, g); },
+                   [g](double s) { return fm_pow(s, g); }, [g](double s) { return std::pow(s, g); });
+    check(DZ_12AX7_RSD1.gamma == 1.26 && DZ_12AX7_RSD1.xi == 1.314, "the pow exponents measured are the stage's");
+
+    // edges: every pair of these, in both lanes, with and without FTZ / DAZ
+    const double dmin = std::numeric_limits<double>::min(), dmax = std::numeric_limits<double>::max();
+    const double sp[] = {NAN, -NAN, INFINITY, -INFINITY, 0.0, -0.0, 1e-310, -1e-310, dmin, std::nextafter(dmin, 0.0),
+                         -dmin, dmax, -dmax, 1.0, std::nextafter(1.0, 2.0), std::nextafter(1.0, 0.0), -1.0, 0.5, 2.0,
+                         -183.0, 0.04, 1e-60, 1e300, -1e-300, FM_EXP_LO, std::nextafter(FM_EXP_LO, -1e3), FM_EXP_HI,
+                         std::nextafter(FM_EXP_HI, 1e3), 709.8, 710.0, -745.0, -746.0, -1e4};
+    // a lane whose call left the fast path (either lane out of its domain) must give the scalar bits by construction;
+    // an in-domain pair runs the vector code: bit-equal on the exact builds (g_vec_exact), else within the bound
+    const double bnd[4] = {BOUND_EXP, BOUND_LOG1P, BOUND_POW, BOUND_POW};
+    auto in_dom = [dmin](int f, double v) {
+        return f == 0 ? v >= FM_EXP_LO && v <= FM_EXP_HI : f == 1 ? v > 0.0 && v <= 1.0 : v >= dmin && v < INFINITY;
+    };
+    long bad = 0, n = 0, vec_ne = 0;
+    for (int ftz = 0; ftz < 2; ++ftz) {
+        auto run = [&] {
+            for (double a : sp)
+                for (double b : sp) {
+                    const V2 x = simd::make(a, b);
+                    const V2 r[4] = {VecFastMath::exp(x), VecFastMath::log1p(x), VecFastMath::pow(x, 1.26), VecFastMath::pow(x, 1.314)};
+                    for (int l = 0; l < 2; ++l) {
+                        const double v = l ? b : a;
+                        const double s[4] = {fm_exp(v), fm_log1p(v), fm_pow(v, 1.26), fm_pow(v, 1.314)};
+                        for (int f = 0; f < 4; ++f) {
+                            const double got = simd::lane(r[f], l);
+                            const bool vec_path = in_dom(f, a) && in_dom(f, b), eq = same_bits(got, s[f]);
+                            const bool ok = eq || (vec_path && std::fabs(got - s[f]) <= 2.0 * bnd[f] * std::fabs(s[f]));
+                            bad += !ok; vec_ne += !eq; ++n;
+                            if (!ok) std::fprintf(stderr, "vecmath edge f%d ftz%d lane %d: %a -> %a, scalar %a\n", f, ftz, l, v,
+                                                  got, s[f]);
+                        }
+                    }
+                }
+        };
+        if (ftz) { ScopedFlushDenormals g; run(); } else run();
+    }
+    // outside the fast domain fm_* is libm (no FTZ): so the vector path is too
+    long bad_libm = 0;
+    for (double v : sp) {
+        const bool exp_in = v >= FM_EXP_LO && v <= FM_EXP_HI, log1p_in = v > 0.0 && v <= 1.0, pow_in = v >= dmin && v < INFINITY;
+        const V2 x = simd::splat(v);
+        if (!exp_in) bad_libm += !same_bits(simd::lane(VecFastMath::exp(x), 0), std::exp(v));
+        if (!log1p_in) bad_libm += !same_bits(simd::lane(VecFastMath::log1p(x), 0), std::log1p(v));
+        if (!pow_in) bad_libm += !same_bits(simd::lane(VecFastMath::pow(x, 1.26), 0), std::pow(v, 1.26));
+    }
+    g_vec_exact = g_vec_exact && vec_ne == 0;
+    metric("vecmath_edge_cases", double(n)); metric("vecmath_edge_not_bit_equal", double(vec_ne));
+    check(bad == 0 && bad_libm == 0, "vecmath edges = scalar fm_* (" + std::to_string(bad) + "), = libm outside the domain (" +
+          std::to_string(bad_libm) + ")");
+
+    // pnjlim on two lanes against the scalar one: limited and unlimited steps, both branches, mixed lanes
+    const double vt = 1.0 / DZ_12AX7_RSD1.Cg;
+    Vec vs;
+    for (double v = -3.0; v <= 3.0; v += 0.0625) vs.push_back(v);
+    for (double v : {-1e-3, 1e-3, vt, 2 * vt, 3 * vt, 10.0, 100.0, double(NAN), double(INFINITY), -double(INFINITY)}) vs.push_back(v);
+    long pb = 0, pn = 0, limited = 0;
+    double pe = 0;
+    for (size_t i = 0; i < vs.size(); ++i)
+        for (size_t j = 0; j < vs.size(); ++j) {
+            const size_t i2 = (i * 7 + 3) % vs.size(), j2 = (j * 5 + 1) % vs.size();
+            const V2 r = VecFastMath::pnjlim(simd::make(vs[i], vs[i2]), simd::make(vs[j], vs[j2]), vt);
+            for (int l = 0; l < 2; ++l) {
+                const double vn = l ? vs[i2] : vs[i], vo = l ? vs[j2] : vs[j], s = detail::pnjlim(vn, vo, vt);
+                pb += !same_bits(simd::lane(r, l), s); ++pn;
+                if (!std::isnan(s)) pe = std::max(pe, std::fabs(simd::lane(r, l) - s) / std::max(1.0, std::fabs(s)));
+                limited += !same_bits(s, vn);
+            }
+        }
+    metric("vecmath_pnjlim_cases", double(pn)); metric("vecmath_pnjlim_limited", double(limited));
+    metric("vecmath_pnjlim_mismatch", double(pb));
+    g_vec_exact = g_vec_exact && pb == 0;
+    check(limited > pn / 10, "pnjlim cases include limited steps");
+    check(pe <= 1e-14, "VecFastMath::pnjlim = detail::pnjlim (rounding only) " + std::to_string(pe));
+}
+
 static void run_stereo_tests(const std::map<std::string, Vec>& V) {
+    test_vecmath();
     test_stereo(V);
     test_stereo_solve(V);
     test_stereo_misc();
     g_json << (g_json.tellp() > 0 ? ", " : "") << "\"simd\": \"" << simd::NAME << "\", \"compiler\": \"" << __VERSION__ << "\"";
     metric("fma", simd::FMA ? 1 : 0);
     metric("stereo_exact", g_stereo_exact ? 1 : 0);
+    metric("vector_exact", g_vec_exact ? 1 : 0);
 }
 
 // ---- cli ---------------------------------------------------------------------------------------------------

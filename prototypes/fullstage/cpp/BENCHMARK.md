@@ -7,6 +7,15 @@
 > **#21 (12 Nov 2026): the M1 stereo SIMD run is below** ("Stereo SIMD results (#21)", `cpp/bench_apple_m1_stereo.json`).
 > One StereoStage costs 1.25–1.35 × one mono instance with fast math and 1.57–1.67 × with libm, so the 1.1–1.3 ×
 > estimate does not hold; it is 0.63–0.83 × two mono instances. The x86-64 stereo run is still PENDING.
+>
+> **#67 (13 Nov 2026): the M1 vector-maths run is below** ("Vector-maths stereo results (#67)",
+> `cpp/bench_apple_m1_simd_math.json`). With `LaneMath::vector` one StereoStage costs 1.13–1.21 × one mono instance
+> (fast math), against 1.27–1.35 × for the #21 path in the same run; the ~1.1 × goal is not met.
+>
+> **Default (18 Nov 2026):** with `TriodeMath::fast`, `StereoStage` now defaults to `LaneMath::vector` (the v2 path
+> measured above). `LaneMath::per_lane` remains the bit-exact reference, and the libm path is unchanged (there is no
+> vector libm). The M1 figures still compare the two fast-math options. Accuracy and CPU of vector vs per-lane
+> fast math vs libm still need a dedicated comparison across platforms.
 
 | file | what |
 |---|---|
@@ -15,6 +24,7 @@
 | `build.py` | the shared compile helper (also used by `validate_cpp.py` and the tests) |
 | `bench_apple_m1.json`, `bench_x86_64_linux.json` | committed official #20 results, one file per machine |
 | `bench_apple_m1_stereo.json` | committed official #21 stereo run (x1 + x2 + s2, 108 rows), M1 |
+| `bench_apple_m1_simd_math.json` | committed official #67 run (x1 + x2 + s2 + v2, 126 rows), M1 |
 
 ## What is measured
 
@@ -31,8 +41,13 @@ configuration runs three ways:
   The row's `matches_x2` records whether it did in that run. The question it answers is #21's: s2 / x2 (2 × mono
   costs 1.00 here), and s2 / x1 (the budget note's estimate is 1.1–1.3; an estimate to test, not a result).
   Both ratios come from the same run.
+- `v2` (#67, fast math only), the **vector-maths stereo path**: the `s2` StereoStage with
+  `set_lane_math(LaneMath::vector)`, i.e. `dk/fastmath.h` on both lanes at once (cpp/README.md, "Vector maths").
+  This is also the default for a `StereoStage` prepared with `TriodeMath::fast`. The harness still sets the mode
+  explicitly so that s2 and v2 can be compared in one run. The same signals; `matches_x2` again. Its question is
+  #67's: v2 / x1 against the ~1.1 × goal, and v2 / s2.
 
-**Matrix: 108 configurations** (#20 records: 72, without `s2`), all at 48 kHz, bias 1, drive 1, output 1, default
+**Matrix: 126 configurations** (#20 records: 72, without `s2`; #21 records: 108, without `v2`), all at 48 kHz, bias 1, drive 1, output 1, default
 Newton settings:
 
 | axis | values | why |
@@ -41,7 +56,7 @@ Newton settings:
 | math | `libm` (default), `fast` (`dk/fastmath.h`, #18) | the two triode math paths |
 | input peak | 0.5 V, 2 V, 8 V | clean / edge of breakup / driven; cost follows the Newton iteration count, which follows the level |
 | block | 64, 512 samples (1.33 ms, 10.67 ms) | 64: a common low-latency tracking buffer, where the deadline is tightest. 512: a common mixing default. Per-block work in `process()` is constant (FTZ set and restore, the triple-buffer check, two relaxed atomic loads, the math dispatch), so two sizes bracket that overhead. The per-sample work does not depend on the block size. |
-| mode | `x1`, `x2`, `s2` | above |
+| mode | `x1`, `x2`, `s2`, `v2` (fast math only: 18 rows) | above |
 
 ## Signal
 
@@ -113,8 +128,8 @@ near silence. It is still synthetic, not a recorded performance.
 
 | field | meaning |
 |---|---|
-| `instances`, `path` | 1 or 2 channels; `mono` (x1, x2) or `stereo_simd` (s2). The #20 records have no `path`: mono |
-| `matches_x2` | s2 only: output bit-identical to the x2 row with the same settings (`null` if that row is not in the run) |
+| `instances`, `path` | 1 or 2 channels; `mono` (x1, x2), `stereo_simd` (s2) or `stereo_simd_vecmath` (v2). The #20 records have no `path`: mono |
+| `matches_x2` | s2 and v2 only: output bit-identical to the x2 row with the same settings (`null` if that row is not in the run) |
 | `ns_per_sample`, `ns_min`, `ns_max` | wall ns per base-rate sample frame (for `x2` and `s2`, both channels), median / min / max over the passes |
 | `pct_core` | `ns_per_sample` × 48 000 / 10⁹ × 100: **% of one core at real time** (median) |
 | `block_pct_p50`, `_p99`, `_max` | one block's wall time as % of its real-time period, over all blocks of all passes |
@@ -123,6 +138,7 @@ near silence. It is still synthetic, not a recorded performance.
 | `ghz_on_cpu` | cycles / thread CPU ns (median): a clock sanity check (P-core max on the M1 is 3.2 GHz) |
 | `p_core_fraction`, `_min` | macOS: the share of the cycles counted on P-cores (median, worst pass) |
 | `newton_mean`, `nonconverged` | the mean Newton iterations per internal sample (left instance / channel), and the non-converged samples (warm-up pass) |
+| `newton_mean_r`, `newton_mean_max` | #67 records: the right instance / channel's mean (`null` for x1), and for s2 / v2 the iterations the 2-lane kernel ran, per sample max(itL, itR) (`StereoStage::kernel_iterations`; `null` for mono) |
 | `deterministic` | always true in a written file |
 
 ## Caveats
@@ -189,9 +205,18 @@ x86-64 Linux, on the VM: `taskset -c 2 python3 -m cpp.bench --flags=-O3 --second
 cpp/bench_x86_64_linux_stereo.json`, then `--table`. Expect about 9–11 minutes by the same arithmetic; #20 took
 6 min 34 s there.
 
+**#67 run (126 configurations, x1 + x2 + s2 + v2).** Again into a new file, the #20 and #21 records stay as they
+are; all four modes in one round-robin run:
+```bash
+cd ~/Developer/ModellingAudioProcessors/prototypes/fullstage
+python3 -m cpp.bench --flags=-O3 --seconds 2 --reps 11 --out cpp/bench_apple_m1_simd_math.json
+python3 -m cpp.bench --table cpp/bench_apple_m1_simd_math.json
+```
+
 **File names.** Results files are named `cpp/bench_<machine>[_<variant>].json`. `test_bench_records` checks every
-`cpp/bench_*.json`: all 72 rows (#20 schema, no `path`) or all 108 rows (#21 schema, every `s2` row with a
-`matches_x2`), deterministic, at least 5 repetitions, not dirty.
+`cpp/bench_*.json`: all 72 rows (#20 schema, no `path`), all 108 rows (#21 schema, every `s2` row with a
+`matches_x2`) or all 126 rows (#67 schema, also 18 `v2` rows with `matches_x2`, and `newton_mean_r` /
+`newton_mean_max` consistent with max(itL, itR)), deterministic, at least 5 repetitions, not dirty.
 
 **Not for the record.** `--only` subsets and the functional smoke (`--seconds 0.011 --reps 1`, which is what
 `test_bench_smoke` runs in CI) produce numbers that mean nothing. CI checks that the harness builds and is
@@ -588,6 +613,256 @@ JSON):
 |---|---|---|
 | Apple M1 MacBook Air | `cpp/bench_apple_m1_stereo.json` | recorded 12 Nov 2026 (above) |
 | x86-64 Linux VM | `cpp/bench_x86_64_linux_stereo.json` | PENDING, not run |
+
+### Vector-maths stereo results (#67)
+
+#### Apple silicon — Apple M1 MacBook Air (MacBookAir10,1), macOS 15.6.1 (24G90), Apple clang 17.0.0
+
+Recorded 13 Nov 2026, 09:22:43–09:33:11 CET (10 min 28 s), from `cpp/bench_apple_m1_simd_math.json`. Git
+`04fb85c`, `build.dirty` false. 126 configurations: x1, x2, s2 (the #21 per-lane path, the reference) and v2 (the
+same StereoStage with `LaneMath::vector`, fast math only) in one round-robin run, so every ratio below compares rows
+of the same passes.
+
+- **CPU / compiler / harness:** as for #21 above (Apple clang 17.0.0 as `/usr/bin/g++`, `-std=c++17 -Wall -Wextra
+  -pedantic -pthread -O3`; 11 timed passes after one warm-up, 1.99467 s per pass). `meta.simd` = `neon`,
+  `meta.fma` = true. `sizeof(StereoStage)` 45 280 B (+16 B for the lane-maths switch and the kernel counter).
+- **Scheduling:** `QOS_CLASS_USER_INTERACTIVE`, a normal user-priority thread, not a realtime audio thread. No pinning.
+- **Correctness:** all 126 rows deterministic. Every s2 and every v2 row has `matches_x2: true`: on these signals the
+  vector-maths stereo output was bit-identical to two mono fast Stages. Non-converged samples: 0 in every row.
+- **Power:** AC power, battery 100 % and charged (not charging) before and after, Low Power Mode off. `pmset -g therm`
+  recorded no thermal, performance or CPU-power warning, before or after.
+- **Load: the machine was in interactive use, apps not closed.** Load average 1.69, 1.86, 1.92 at the start
+  (`state_before`; `uptime` in the run log 8 s earlier: 1.62, 1.86, 1.91) and 3.60, 2.69, 2.27 at the end (both
+  `state_after` and `uptime` right after the `--table` call). The process list taken just before the run (run log,
+  `ps` %CPU): WindowServer 25.2, Grok Bot Helper 22.4, Grok Bot Helper (Renderer) 21.7, coreaudiod 15.1, zsh 5.5,
+  claude 4.8, Camo Studio 1.5, all others ≤ 1.1. Lighter than during #21 (load 2.9 → 8.1, OBS running), but not idle.
+- **Clock and preemption:** `ghz_on_cpu` 3.150–3.173, `cpu_on_fraction` 0.9965–0.9989. `p_core_fraction_min`
+  0.933–0.9999 over all rows, 0.945 or more over the v2 rows; cycle figures marked * had a pass under 99 % on P-cores.
+- **Same code, same cost as #21:** the x1, x2 and s2 rows are the #21 code (mono and the per-lane path are
+  bit-identical to main). Their cycles per sample are within −1.7 / +2.9 % of the #21 run, except one row (+5.7 %, below).
+
+**Standard 8× (the default), fast math** — ns per base-rate sample frame / % of one core at 48 kHz (median; both
+channels for x2, s2 and v2):
+
+| peak | block | x1 | x2 | s2 (#21 path) | v2 (vector maths) | v2 / x1 | s2 / x1 | v2 / x2 | v2 / s2 |
+|---|---|---|---|---|---|---|---|---|---|
+| 0.5 V | 64 | 2312 / 11.10 | 4620 / 22.18 | 3028 / 14.54 | 2730 / 13.10 | 1.18 | 1.31 | 0.59 | 0.90 |
+| 0.5 V | 512 | 2312 / 11.10 | 4626 / 22.20 | 3036 / 14.57 | 2723 / 13.07 | 1.18 | 1.31 | 0.59 | 0.90 |
+| 2 V | 64 | 2421 / 11.62 | 4832 / 23.20 | 3211 / 15.41 | 2888 / 13.86 | 1.19 | 1.33 | 0.60 | 0.90 |
+| 2 V | 512 | 2415 / 11.59 | 4844 / 23.25 | 3210 / 15.41 | 2879 / 13.82 | 1.19 | 1.33 | 0.59 | 0.90 |
+| 8 V | 64 | 2744 / 13.17 | 5468 / 26.25 | 3695 / 17.74 | 3316 / 15.92 | 1.21 | 1.35 | 0.61 | 0.90 |
+| 8 V | 512 | 2744 / 13.17 | 5462 / 26.22 | 3707 / 17.80 | 3314 / 15.91 | 1.21 | 1.35 | 0.61 | 0.89 |
+
+**Ranges over drive (0.5 / 2 / 8 V) and block (64 / 512)**, fast math, median ns ratios from this run (cycle ratios
+agree within 0.005 per row):
+
+| quality | v2 % core | v2 / x1 ("× mono") | s2 / x1 (#21 path, this run) | v2 / x2 | v2 / s2 |
+|---|---|---|---|---|---|
+| eco 4× | 7.06–8.71 | 1.13–1.21 | 1.27–1.35 | 0.60–0.61 | 0.89–0.90 |
+| standard 8× | 13.07–15.92 | 1.18–1.21 | 1.31–1.35 | 0.59–0.61 | 0.89–0.90 |
+| hq 16× | 25.29–28.23 | 1.14–1.18 | 1.27–1.32 | 0.57–0.59 | 0.89–0.90 |
+
+libm, for reference (s2 only; v2 does not apply to libm): s2 / x1 1.57–1.67, s2 / x2 0.78–0.84, as in #21.
+
+The eco 4× low end (1.13) is one row, eco / fast / 8 V / b512, and comes from its x1 denominator: that x1 row took
+1608 ns (min 1604 over 11 passes) against 1522 ns for the same row at b64, and 6 % more cycles than in #21, on
+P-cores (0.9997). It was not investigated (the per-sample work does not depend on the block). Without it eco is
+1.19–1.21.
+
+**Newton iterations** per internal sample (warm-up pass, v2 rows, b64; identical in x2 / s2 / v2 and at b512), left
+channel, right channel, and what the 2-lane kernel ran (per sample max(itL, itR)):
+
+| quality | peak | left | right | kernel max | max / left | max / max(left, right) |
+|---|---|---|---|---|---|---|
+| eco | 0.5 V | 2.222 | 2.198 | 2.295 | 1.033 | 1.033 |
+| eco | 2 V | 2.564 | 2.541 | 2.708 | 1.056 | 1.056 |
+| eco | 8 V | 2.967 | 2.949 | 3.118 | 1.051 | 1.051 |
+| standard | 0.5 V | 2.041 | 2.033 | 2.058 | 1.009 | 1.009 |
+| standard | 2 V | 2.179 | 2.158 | 2.240 | 1.028 | 1.028 |
+| standard | 8 V | 2.599 | 2.574 | 2.771 | 1.066 | 1.066 |
+| hq | 0.5 V | 2.000 | 1.999 | 2.001 | 1.000 | 1.000 |
+| hq | 2 V | 2.032 | 2.025 | 2.047 | 1.007 | 1.007 |
+| hq | 8 V | 2.253 | 2.229 | 2.363 | 1.049 | 1.049 |
+
+**Where the cost goes** (counters of this run):
+- **The vector maths removes the duplicated maths.** v2 executes 0.61–0.63 × s2's instructions and only 1.09–1.14 ×
+  one mono instance's (s2: 1.76–1.84 ×). But its IPC is 2.69–2.85, against 3.93–4.05 for s2 and 2.72–3.01 for x1:
+  s2's two independent scalar lanes gave the core parallel work that v2 has fused into one dependency chain per
+  call (the table lookups need vector-to-integer moves and per-lane loads on that chain). So the cycles fall less
+  than the instructions: v2 / s2 = 0.89–0.90.
+- **max(itL, itR).** The kernel runs 1.00–1.07 × the left channel's iterations (here the left is always the larger). If
+  the cost were all Newton iterations, that would account for at most 0–7 % of v2 / x1. The rest (about 1.10–1.15 ×)
+  is the vector maths and the per-sample work around it. That split is an estimate from the iteration counts, not a
+  measurement: the cost per sample is not purely proportional to the iterations (resampler, matrices).
+- **libm spill (#21 hypothesis):** see cpp/README.md "Vector maths (#67)". The static disassembly agrees (the per-lane
+  libm kernel spills and reloads 128-bit registers around its 48 libm call sites, mono libm spills only 64-bit ones),
+  but no counter measured the spills' cost. The libm path is unchanged by #67.
+
+**Verdict against the #67 goal (stereo ≈ 1.1 × one mono instance, fast math): not met on the M1.** The vector-maths
+path costs **1.13–1.21 × one mono instance** (1.14–1.21 excluding the eco 8 V b512 outlier, 3 of 18 rows ≤ 1.15,
+none ≤ 1.10). That is down from 1.27–1.35 × for the #21 per-lane path in the same run (v2 / s2 = 0.89–0.90),
+and **0.57–0.61 × two mono instances** (#21: 0.63–0.67). At the default (standard, fast) a stereo instance takes
+13.1–15.9 % of a core, against 14.5–17.8 % with the #21 path and 22.2–26.3 % as two mono Stages.
+
+**Against the #21 numbers** (`bench_apple_m1_stereo.json`, 12 Nov): #21 measured s2 / x1 1.25–1.35 (fast) and
+1.57–1.67 (libm), s2 / x2 0.63–0.67 (fast) and 0.78–0.83 (libm). This run reproduces those for s2 (fast 1.27–1.35,
+libm 1.57–1.67) and adds v2 at 1.13–1.21 / 0.57–0.61.
+
+Caveats specific to this run: one machine, one compiler, a normal user-priority thread on a machine in interactive
+use (load 1.7 → 3.6, the apps above running). It is a fanless M1 Air on AC power. The per-block percentiles are wall
+time under that load and bound a realtime thread's view from above only. The x86-64 stereo run (SSE2) has still not
+been made, for #21 or for #67.
+
+`--table` output, verbatim from the run log (the per-block table is x1 only; the s2 / v2 per-block figures are in
+the JSON):
+
+**one mono instance** — % of one core at 48 kHz real time (median), ns per base-rate sample (median, min–max over passes), cycles per base-rate sample (median; * = not all on P-cores)
+
+| setting | math | peak | % core b64 | % core b512 | ns b64 | ns b512 | cycles b64 | cycles b512 | Newton it. |
+|---|---|---|---|---|---|---|---|---|---|
+| eco 4× | libm | 0.5 V | 6.48 | 6.46 | 1349 (1347–1610) | 1346 (1340–1580) | 4272* | 4265* | 2.22 |
+| eco 4× | libm | 2 V | 7.12 | 7.11 | 1484 (1479–1753) | 1482 (1475–1730) | 4694* | 4692* | 2.56 |
+| eco 4× | libm | 8 V | 7.88 | 7.85 | 1642 (1634–1868) | 1636 (1633–1663) | 5195* | 5184 | 2.97 |
+| eco 4× | fast | 0.5 V | 5.92 | 5.92 | 1233 (1232–1257) | 1232 (1230–1280) | 3907 | 3905 | 2.22 |
+| eco 4× | fast | 2 V | 6.56 | 6.54 | 1367 (1361–1628) | 1363 (1360–1387) | 4322* | 4314 | 2.56 |
+| eco 4× | fast | 8 V | 7.30 | 7.72 | 1522 (1519–1532) | 1608 (1604–1620) | 4815 | 5094 | 2.97 |
+| standard 8× | libm | 0.5 V | 12.23 | 12.14 | 2548 (2536–2573) | 2529 (2525–2790) | 8054 | 8007* | 2.04 |
+| standard 8× | libm | 2 V | 12.66 | 12.65 | 2638 (2635–2874) | 2635 (2626–2656) | 8354* | 8338 | 2.18 |
+| standard 8× | libm | 8 V | 14.22 | 14.18 | 2963 (2954–3233) | 2953 (2942–2985) | 9376* | 9346 | 2.60 |
+| standard 8× | fast | 0.5 V | 11.10 | 11.10 | 2312 (2306–2573) | 2312 (2306–2571) | 7324* | 7316* | 2.04 |
+| standard 8× | fast | 2 V | 11.62 | 11.59 | 2421 (2415–2616) | 2415 (2406–2439) | 7658 | 7644 | 2.18 |
+| standard 8× | fast | 8 V | 13.17 | 13.17 | 2744 (2728–3008) | 2744 (2730–2966) | 8667* | 8660* | 2.60 |
+| hq 16× | libm | 0.5 V | 24.08 | 24.06 | 5017 (4996–5301) | 5013 (5005–5260) | 15886* | 15868* | 2.00 |
+| hq 16× | libm | 2 V | 24.34 | 24.32 | 5071 (5048–5330) | 5066 (5046–5355) | 16014* | 16013* | 2.03 |
+| hq 16× | libm | 8 V | 25.79 | 25.83 | 5373 (5359–5395) | 5381 (5361–5695) | 17001 | 16976* | 2.25 |
+| hq 16× | fast | 0.5 V | 22.18 | 22.05 | 4621 (4606–4875) | 4593 (4588–4614) | 14620* | 14550 | 2.00 |
+| hq 16× | fast | 2 V | 22.39 | 22.28 | 4665 (4634–4894) | 4642 (4612–4913) | 14695* | 14653* | 2.03 |
+| hq 16× | fast | 8 V | 23.95 | 23.88 | 4991 (4956–5219) | 4976 (4952–5244) | 15721* | 15701* | 2.25 |
+
+**two mono instances, one after the other (stereo-equivalent)** — % of one core at 48 kHz real time (median), ns per base-rate sample (median, min–max over passes), cycles per base-rate sample (median; * = not all on P-cores)
+
+| setting | math | peak | % core b64 | % core b512 | ns b64 | ns b512 | cycles b64 | cycles b512 | Newton it. |
+|---|---|---|---|---|---|---|---|---|---|
+| eco 4× | libm | 0.5 V | 13.34 | 12.89 | 2779 (2771–2804) | 2686 (2678–2986) | 8797 | 8501* | 2.22 / 2.20 |
+| eco 4× | libm | 2 V | 14.24 | 14.16 | 2967 (2953–3210) | 2951 (2943–2980) | 9373* | 9345 | 2.56 / 2.54 |
+| eco 4× | libm | 8 V | 15.78 | 16.12 | 3287 (3268–3426) | 3359 (3352–3566) | 10357* | 10629* | 2.97 / 2.95 |
+| eco 4× | fast | 0.5 V | 11.81 | 11.80 | 2460 (2452–2489) | 2458 (2453–2693) | 7789 | 7775* | 2.22 / 2.20 |
+| eco 4× | fast | 2 V | 13.05 | 13.06 | 2719 (2717–2747) | 2720 (2709–2965) | 8613 | 8600* | 2.56 / 2.54 |
+| eco 4× | fast | 8 V | 14.58 | 14.54 | 3037 (3030–3063) | 3028 (3020–3051) | 9606 | 9591 | 2.97 / 2.95 |
+| standard 8× | libm | 0.5 V | 24.30 | 24.28 | 5063 (5052–5328) | 5059 (5050–5078) | 16012* | 15997 | 2.04 / 2.03 |
+| standard 8× | libm | 2 V | 25.32 | 25.50 | 5274 (5252–5549) | 5312 (5280–5544) | 16659* | 16763* | 2.18 / 2.16 |
+| standard 8× | libm | 8 V | 28.36 | 28.39 | 5909 (5884–5971) | 5915 (5890–6264) | 18670 | 18674* | 2.60 / 2.57 |
+| standard 8× | fast | 0.5 V | 22.18 | 22.20 | 4620 (4602–4901) | 4626 (4599–4876) | 14621* | 14596* | 2.04 / 2.03 |
+| standard 8× | fast | 2 V | 23.20 | 23.25 | 4832 (4825–4873) | 4844 (4814–5109) | 15301 | 15283* | 2.18 / 2.16 |
+| standard 8× | fast | 8 V | 26.25 | 26.22 | 5468 (5445–5710) | 5462 (5437–5730) | 17266* | 17243* | 2.60 / 2.57 |
+| hq 16× | libm | 0.5 V | 48.43 | 48.29 | 10090 (10072–10501) | 10060 (10025–10347) | 31868* | 31777* | 2.00 / 2.00 |
+| hq 16× | libm | 2 V | 48.65 | 48.55 | 10135 (10097–10444) | 10115 (10082–10405) | 32007 | 31947* | 2.03 / 2.02 |
+| hq 16× | libm | 8 V | 51.58 | 51.39 | 10746 (10725–10984) | 10706 (10694–10973) | 33944* | 33845 | 2.25 / 2.23 |
+| hq 16× | fast | 0.5 V | 44.12 | 44.03 | 9192 (9168–9451) | 9173 (9140–9434) | 29022 | 28987* | 2.00 / 2.00 |
+| hq 16× | fast | 2 V | 44.54 | 44.52 | 9279 (9257–9520) | 9276 (9236–9554) | 29328 | 29273* | 2.03 / 2.02 |
+| hq 16× | fast | 8 V | 47.62 | 47.69 | 9921 (9886–10259) | 9936 (9888–10187) | 31326* | 31390* | 2.25 / 2.23 |
+
+**stereo SIMD: one StereoStage, the x2 signals as two lanes of one kernel (#21)** — % of one core at 48 kHz real time (median), ns per base-rate sample (median, min–max over passes), cycles per base-rate sample (median; * = not all on P-cores)
+
+| setting | math | peak | % core b64 | % core b512 | ns b64 | ns b512 | cycles b64 | cycles b512 | Newton it. |
+|---|---|---|---|---|---|---|---|---|---|
+| eco 4× | libm | 0.5 V | 10.56 | 10.56 | 2201 (2186–2249) | 2199 (2187–2440) | 6956 | 6945* | 2.22 / 2.20 / 2.29 |
+| eco 4× | libm | 2 V | 11.90 | 11.84 | 2479 (2463–2725) | 2467 (2463–2496) | 7829* | 7819 | 2.56 / 2.54 / 2.71 |
+| eco 4× | libm | 8 V | 13.04 | 13.03 | 2717 (2708–2950) | 2715 (2705–2742) | 8588* | 8582 | 2.97 / 2.95 / 3.12 |
+| eco 4× | fast | 0.5 V | 7.92 | 7.88 | 1650 (1637–1913) | 1643 (1636–1912) | 5202* | 5192* | 2.22 / 2.20 / 2.29 |
+| eco 4× | fast | 2 V | 8.83 | 8.82 | 1839 (1832–1846) | 1838 (1829–2081) | 5819 | 5815* | 2.56 / 2.54 / 2.71 |
+| eco 4× | fast | 8 V | 9.75 | 9.78 | 2031 (2024–2062) | 2038 (2031–2296) | 6422 | 6434* | 2.97 / 2.95 / 3.12 |
+| standard 8× | libm | 0.5 V | 19.52 | 19.48 | 4066 (4042–4318) | 4057 (4040–4455) | 12827* | 12810* | 2.04 / 2.03 / 2.06 |
+| standard 8× | libm | 2 V | 20.66 | 20.61 | 4304 (4275–4629) | 4293 (4271–4524) | 13567* | 13551* | 2.18 / 2.16 / 2.24 |
+| standard 8× | libm | 8 V | 23.65 | 23.58 | 4928 (4886–5144) | 4913 (4885–5199) | 15529* | 15506* | 2.60 / 2.57 / 2.77 |
+| standard 8× | fast | 0.5 V | 14.54 | 14.57 | 3028 (3020–3303) | 3036 (3017–3279) | 9583* | 9578* | 2.04 / 2.03 / 2.06 |
+| standard 8× | fast | 2 V | 15.41 | 15.41 | 3211 (3192–3492) | 3210 (3193–3439) | 10139* | 10119* | 2.18 / 2.16 / 2.24 |
+| standard 8× | fast | 8 V | 17.74 | 17.80 | 3695 (3689–3736) | 3707 (3688–3976) | 11711 | 11694* | 2.60 / 2.57 / 2.77 |
+| hq 16× | libm | 0.5 V | 37.85 | 37.82 | 7886 (7857–8236) | 7879 (7848–8128) | 24909 | 24880* | 2.00 / 2.00 / 2.00 |
+| hq 16× | libm | 2 V | 38.34 | 38.33 | 7988 (7954–8247) | 7986 (7942–8252) | 25227* | 25197* | 2.03 / 2.02 / 2.05 |
+| hq 16× | libm | 8 V | 41.67 | 41.48 | 8682 (8635–8951) | 8641 (8598–8915) | 27393 | 27254* | 2.25 / 2.23 / 2.36 |
+| hq 16× | fast | 0.5 V | 28.13 | 28.55 | 5861 (5838–6159) | 5947 (5839–6150) | 18515* | 18512* | 2.00 / 2.00 / 2.00 |
+| hq 16× | fast | 2 V | 28.58 | 28.59 | 5955 (5929–6224) | 5955 (5919–6214) | 18790* | 18772* | 2.03 / 2.02 / 2.05 |
+| hq 16× | fast | 8 V | 31.44 | 31.45 | 6550 (6511–6878) | 6552 (6508–6832) | 20655* | 20630* | 2.25 / 2.23 / 2.36 |
+
+**stereo SIMD with vector maths: the s2 StereoStage with LaneMath::vector (#67)** — % of one core at 48 kHz real time (median), ns per base-rate sample (median, min–max over passes), cycles per base-rate sample (median; * = not all on P-cores)
+
+| setting | math | peak | % core b64 | % core b512 | ns b64 | ns b512 | cycles b64 | cycles b512 | Newton it. |
+|---|---|---|---|---|---|---|---|---|---|
+| eco 4× | fast | 0.5 V | 7.09 | 7.06 | 1478 (1471–1730) | 1471 (1467–1498) | 4668* | 4658 | 2.22 / 2.20 / 2.29 |
+| eco 4× | fast | 2 V | 7.91 | 7.90 | 1647 (1643–1675) | 1645 (1641–1900) | 5214 | 5204* | 2.56 / 2.54 / 2.71 |
+| eco 4× | fast | 8 V | 8.71 | 8.71 | 1815 (1809–2172) | 1816 (1811–2198) | 5752* | 5746* | 2.97 / 2.95 / 3.12 |
+| standard 8× | fast | 0.5 V | 13.10 | 13.07 | 2730 (2722–2987) | 2723 (2718–2754) | 8630* | 8618 | 2.04 / 2.03 / 2.06 |
+| standard 8× | fast | 2 V | 13.86 | 13.82 | 2888 (2867–3216) | 2879 (2860–2901) | 9108* | 9096 | 2.18 / 2.16 / 2.24 |
+| standard 8× | fast | 8 V | 15.92 | 15.91 | 3316 (3311–3344) | 3314 (3304–3583) | 10500 | 10483* | 2.60 / 2.57 / 2.77 |
+| hq 16× | fast | 0.5 V | 25.39 | 25.29 | 5290 (5246–5589) | 5269 (5253–5291) | 16677* | 16662 | 2.00 / 2.00 / 2.00 |
+| hq 16× | fast | 2 V | 25.75 | 25.76 | 5366 (5337–5610) | 5367 (5322–5628) | 16930* | 16910* | 2.03 / 2.02 / 2.05 |
+| hq 16× | fast | 8 V | 28.23 | 28.18 | 5881 (5856–6182) | 5871 (5850–6108) | 18568* | 18543* | 2.25 / 2.23 / 2.36 |
+
+**vector-maths stereo cost (#67)** — v2 / x1, v2 / x2 and v2 / s2 from the same run: median ns per base-rate sample, and cycles where counted (1.00 = one mono instance for v2/x1); matches x2 = v2 output bit-identical to x2's
+
+| setting | math | peak | ns v2/x1 b64 | ns v2/x1 b512 | ns v2/x2 b64 | ns v2/x2 b512 | ns v2/s2 b64 | ns v2/s2 b512 | cycles v2/x1 b64 | cycles v2/s2 b64 | matches x2 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| eco 4× | fast | 0.5 V | 1.20 | 1.19 | 0.60 | 0.60 | 0.90 | 0.90 | 1.19 | 0.90 | yes |
+| eco 4× | fast | 2 V | 1.20 | 1.21 | 0.61 | 0.60 | 0.90 | 0.90 | 1.21 | 0.90 | yes |
+| eco 4× | fast | 8 V | 1.19 | 1.13 | 0.60 | 0.60 | 0.89 | 0.89 | 1.19 | 0.90 | yes |
+| standard 8× | fast | 0.5 V | 1.18 | 1.18 | 0.59 | 0.59 | 0.90 | 0.90 | 1.18 | 0.90 | yes |
+| standard 8× | fast | 2 V | 1.19 | 1.19 | 0.60 | 0.59 | 0.90 | 0.90 | 1.19 | 0.90 | yes |
+| standard 8× | fast | 8 V | 1.21 | 1.21 | 0.61 | 0.61 | 0.90 | 0.89 | 1.21 | 0.90 | yes |
+| hq 16× | fast | 0.5 V | 1.14 | 1.15 | 0.58 | 0.57 | 0.90 | 0.89 | 1.14 | 0.90 | yes |
+| hq 16× | fast | 2 V | 1.15 | 1.16 | 0.58 | 0.58 | 0.90 | 0.90 | 1.15 | 0.90 | yes |
+| hq 16× | fast | 8 V | 1.18 | 1.18 | 0.59 | 0.59 | 0.90 | 0.90 | 1.18 | 0.90 | yes |
+
+**stereo SIMD cost** — s2 / x1 and s2 / x2 from the same run: median ns per base-rate sample, and cycles where counted (2.00 = two mono instances, 1.00 = one); matches x2 = s2 output bit-identical to x2's
+
+| setting | math | peak | ns s2/x1 b64 | ns s2/x1 b512 | ns s2/x2 b64 | ns s2/x2 b512 | cycles s2/x1 b64 | cycles s2/x2 b64 | matches x2 |
+|---|---|---|---|---|---|---|---|---|---|
+| eco 4× | libm | 0.5 V | 1.63 | 1.63 | 0.79 | 0.82 | 1.63 | 0.79 | yes |
+| eco 4× | libm | 2 V | 1.67 | 1.67 | 0.84 | 0.84 | 1.67 | 0.84 | yes |
+| eco 4× | libm | 8 V | 1.66 | 1.66 | 0.83 | 0.81 | 1.65 | 0.83 | yes |
+| eco 4× | fast | 0.5 V | 1.34 | 1.33 | 0.67 | 0.67 | 1.33 | 0.67 | yes |
+| eco 4× | fast | 2 V | 1.35 | 1.35 | 0.68 | 0.68 | 1.35 | 0.68 | yes |
+| eco 4× | fast | 8 V | 1.33 | 1.27 | 0.67 | 0.67 | 1.33 | 0.67 | yes |
+| standard 8× | libm | 0.5 V | 1.60 | 1.60 | 0.80 | 0.80 | 1.59 | 0.80 | yes |
+| standard 8× | libm | 2 V | 1.63 | 1.63 | 0.82 | 0.81 | 1.62 | 0.81 | yes |
+| standard 8× | libm | 8 V | 1.66 | 1.66 | 0.83 | 0.83 | 1.66 | 0.83 | yes |
+| standard 8× | fast | 0.5 V | 1.31 | 1.31 | 0.66 | 0.66 | 1.31 | 0.66 | yes |
+| standard 8× | fast | 2 V | 1.33 | 1.33 | 0.66 | 0.66 | 1.32 | 0.66 | yes |
+| standard 8× | fast | 8 V | 1.35 | 1.35 | 0.68 | 0.68 | 1.35 | 0.68 | yes |
+| hq 16× | libm | 0.5 V | 1.57 | 1.57 | 0.78 | 0.78 | 1.57 | 0.78 | yes |
+| hq 16× | libm | 2 V | 1.58 | 1.58 | 0.79 | 0.79 | 1.58 | 0.79 | yes |
+| hq 16× | libm | 8 V | 1.62 | 1.61 | 0.81 | 0.81 | 1.61 | 0.81 | yes |
+| hq 16× | fast | 0.5 V | 1.27 | 1.29 | 0.64 | 0.65 | 1.27 | 0.64 | yes |
+| hq 16× | fast | 2 V | 1.28 | 1.28 | 0.64 | 0.64 | 1.28 | 0.64 | yes |
+| hq 16× | fast | 8 V | 1.31 | 1.32 | 0.66 | 0.66 | 1.31 | 0.66 | yes |
+
+**one mono instance, per block** — block time as % of the block's real-time period (b64 = 1.33 ms, b512 = 10.67 ms), p50 / p99 over all blocks of all passes
+
+| setting | math | peak | b64 p50 | b64 p99 | b512 p50 | b512 p99 |
+|---|---|---|---|---|---|---|
+| eco | libm | 0.5 V | 6.2 | 8.4 | 6.2 | 8.3 |
+| eco | libm | 2 V | 7.2 | 9.9 | 7.2 | 8.5 |
+| eco | libm | 8 V | 7.8 | 10.5 | 7.8 | 9.9 |
+| eco | fast | 0.5 V | 5.7 | 7.5 | 5.7 | 7.4 |
+| eco | fast | 2 V | 6.7 | 8.3 | 6.6 | 7.7 |
+| eco | fast | 8 V | 7.2 | 9.4 | 7.7 | 9.5 |
+| standard | libm | 0.5 V | 11.9 | 14.9 | 12.0 | 14.5 |
+| standard | libm | 2 V | 12.2 | 16.1 | 12.2 | 15.6 |
+| standard | libm | 8 V | 14.3 | 17.9 | 14.3 | 17.1 |
+| standard | fast | 0.5 V | 10.8 | 13.8 | 10.9 | 13.5 |
+| standard | fast | 2 V | 11.2 | 14.8 | 11.2 | 14.5 |
+| standard | fast | 8 V | 13.3 | 17.1 | 13.3 | 15.9 |
+| hq | libm | 0.5 V | 23.8 | 27.4 | 23.9 | 26.3 |
+| hq | libm | 2 V | 23.8 | 29.0 | 23.9 | 28.5 |
+| hq | libm | 8 V | 25.1 | 31.8 | 25.2 | 31.8 |
+| hq | fast | 0.5 V | 21.9 | 24.6 | 21.9 | 23.3 |
+| hq | fast | 2 V | 21.8 | 26.9 | 21.9 | 26.1 |
+| hq | fast | 8 V | 23.2 | 30.0 | 23.2 | 29.4 |
+
+| machine | file | status |
+|---|---|---|
+| Apple M1 MacBook Air | `cpp/bench_apple_m1_simd_math.json` | recorded 13 Nov 2026 (above) |
+| x86-64 Linux VM | — | not run |
 
 ## The earlier informal number (#19) is not this benchmark
 
