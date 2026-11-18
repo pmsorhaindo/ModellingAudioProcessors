@@ -12,8 +12,8 @@ Every pull request is reviewed by a different model from the one that implemente
 | Cursor cloud agent | Codex |
 
 1. **Draft first.** Open the PR as a draft while iterating, and mark it ready for review when the work is done. The
-   macOS CI jobs are meant to run only on ready PRs, so drafts don't spend macOS minutes; the workflow change for
-   that is #99 (PR #100), so until it merges they still run on every PR push.
+   macOS CI jobs run only on ready PRs (and manual dispatch), not on drafts or pushes to main, so drafts don't spend
+   macOS minutes (#99).
 2. **Review.** The reviewer posts its findings on the PR with `gh pr review --comment` and inline comments
    (`gh api repos/{owner}/{repo}/pulls/{n}/comments`). Start every review body and comment with
    `Review by <model name>` (for example `Review by Claude Opus 5.5`). Look for, in order:
