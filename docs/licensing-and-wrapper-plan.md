@@ -4,7 +4,7 @@ Research fetched 18 Nov 2026. Every licence term, date, price and version below 
 URL cited next to it. Licences, EULAs and prices change: read them again before any distribution.
 
 **This is not legal advice.** It is an engineering summary of published terms. A lawyer should review it before
-anything is distributed (see [Decisions still for Michael](#decisions-still-for-michael)).
+anything is distributed (see [Decisions (18 Nov 2026)](#decisions-18-nov-2026)).
 
 ## 1. Purpose and scope
 
@@ -24,8 +24,8 @@ Already decided by Michael (18 Nov 2026), not reopened here:
 ## 2. Repository licence
 
 Main (86c8cf4) has no `LICENSE` file, and GitHub reports no licence for the repository. This PR adds `LICENSE` at the
-root with the standard MIT text and the proposed line `Copyright (c) 2026 Michael Sorhaindo`. Michael can correct
-the legal name on that line (decision 1 below).
+root with the standard MIT text and the line `Copyright (c) 2026 Paul-Michael Sorhaindo` (confirmed 18 Nov 2026;
+see [Decisions (18 Nov 2026)](#decisions-18-nov-2026)).
 
 The root `LICENSE` covers this project's own code only. Third-party code keeps its own licence:
 
@@ -101,12 +101,34 @@ Section 1 of the guidelines ties referring to the VST trademark (not only showin
 Whether a plain factual format name such as "VST 3 plug-in" on a download page needs the logo under that wording is a
 question for the lawyer.
 
-Recommended practice until Michael decides otherwise (decision 2):
+On 18 Nov 2026 Michael decided to use the Steinberg VST Compatible Logo on the product page. Once the logo or the
+"VST" trademark is used, following the guidelines is mandatory, not optional (licence page: "if you choose to use it,
+trademark compliance is mandatory"). The MIT licence page also says, of the SDK licence itself, "Neither fees nor
+memberships are required" and "No need to sign any documents." Those statements are about the MIT licence, not a
+waiver of trademark rules. A separate signed trademark agreement for VST 3 logo use was not found on the official
+licence, FAQ or usage-guidelines pages fetched on 18 Nov 2026; questions can be sent to reception@steinberg.de
+(guidelines section 16). (The old VST 2 licence did require a signed agreement; VST 2 is not covered by the VST 3 MIT
+licence.)
 
-- Do not use the VST Compatible Logo, and do not put "VST" in the product name, company name, domain or social handles.
-- In this repository's engineering docs, use "VST 3" only factually (the SDK and plugin format), with ® on the first
-  use and the attribution sentence above. This document does so (first use in section 1, sentence in the footer).
-- Before any public product page, packaging or About box mentions VST, decide whether to follow the full guidelines.
+What the guidelines require, applied to a product page and to any later public materials:
+
+- Use only the official VST Compatible Logo from the SDK (`VST_SDK/VST3_SDK/vst3_doc/artwork`). Respect the stated
+  minimum sizes (20 x 18,7 mm and 15 x 10 mm) in digital and printed use.
+- The logo must be visible on **every** web page that references or promotes a product using or created with the
+  VST SDK, or that displays the term "VST". A site-wide footer or imprint alone is not sufficient. Putting the logo
+  only on one product page is not enough if other pages also mention the product or "VST".
+- The same logo (or, where space is genuinely insufficient, the text attribution) is also required on packaging,
+  documentation, marketing materials, the product UI About box or equivalent, and relevant legal/imprint pages.
+- The first use of "VST" in any product-related material must include the ® symbol. All product credits and
+  documentation must include: "VST is a registered trademark of Steinberg Media Technologies GmbH."
+- If "VST" appears in a product name, it must be plain text denoting compatibility (their example: "MyCoolEngine for
+  VST"), with the logo in immediate visual proximity, and must not be stylised or merged into the core product brand.
+  "VST" in a company name or company logo is prohibited. Do not invent variants such as "VSTi".
+- Compatibility claims are allowed only if the product is compatible, was built with the SDK, and the logo is near
+  the claim on the same page or surface.
+
+In this repository's engineering docs, continue to use "VST 3" only factually (the SDK and plugin format), with ® on
+the first use and the attribution sentence in the footer. This document does so.
 
 ### 3.2 Apple AudioUnitSDK (Apache License 2.0)
 
@@ -115,8 +137,10 @@ Sources: [AudioUnitSDK repository and readme](https://github.com/apple/AudioUnit
 [release AudioUnitSDK-1.4.0](https://github.com/apple/AudioUnitSDK/releases/tag/AudioUnitSDK-1.4.0),
 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).
 
-- **Licence.** Apache License, Version 2.0 (`LICENSE.txt` starts "Copyright (C) 2023 Apple Inc. All rights
-  reserved."; GitHub identifies it as Apache-2.0).
+- **Licence.** Apache License, Version 2.0. `LICENSE.txt` in the AudioUnitSDK repository is the Apache 2.0 legal
+  text; it begins with the licence title ("Apache License / Version 2.0, January 2004"), not an Apple copyright
+  line. The repository readme carries "Copyright (C) 2023 Apple Inc. All rights reserved." GitHub identifies the
+  licence as Apache-2.0.
 - **Obligations when redistributing (section 4).** (a) give recipients a copy of the licence; (b) modified files must
   carry prominent notices that they were changed; (c) keep all copyright, patent, trademark and attribution notices in
   the source form; (d) if the work includes a `NOTICE` file, reproduce its attribution notices. On 18 Nov 2026 the
@@ -276,21 +300,31 @@ Open issues the wrapper will meet:
 
 ## 7. Naming rule
 
-No brand or device names in the product name; "inspired by" only (#75, #22). Following the recommendation in 3.1, no
-"VST" in the product name either.
+No brand or device names in the product name; "inspired by" only (#75, #22). The product name itself is still to be
+decided (#75). If it later includes "VST", section 3.1 and Steinberg's usage guidelines apply (plain text, logo in
+immediate proximity, not merged into the brand).
 
-## Decisions still for Michael
+## Decisions (18 Nov 2026)
 
-1. **Legal name on the copyright line.** This PR adds `LICENSE` with the proposed line
-   `Copyright (c) 2026 Michael Sorhaindo`. Correct it if the legal name or rights holder differs.
-2. **VST trademark and logo.** Recommended default: no logo and no "VST" in product names; factual use with the
-   attribution in docs only. Following Steinberg's full guidelines is the alternative.
-3. **Product name and v1 scope** (#75).
-4. **Apple Developer Program, signing, notarising, publishing:** whether and when. Blocked until he says go.
-5. **Repository visibility.** The repository is private today. Decide whether it will be public; MIT allows either.
-6. **CLAP** in a later version, or not.
-7. **Legal review.** Confirm that a lawyer reviews the licences, the trademark question in 3.1 and the third-party
-   notice before any distribution.
+Recorded from Michael the same day. These supersede the earlier open questions on the same topics.
+
+1. **Copyright line.** `LICENSE` uses `Copyright (c) 2026 Paul-Michael Sorhaindo`.
+2. **Product name and v1 scope** (#75). Decide later.
+3. **Apple Developer Program.** Michael will sign up after payday. Signing, notarisation and publishing stay blocked
+   until then. Local build and load on this Mac do not need membership (section 5).
+4. **Repository visibility.** The repository stays private for now. It will go public later, after more of the
+   project has been implemented and tested. Do not change visibility in this work.
+5. **VST Compatible Logo.** It will be used on the product page. That means following Steinberg's current VST
+   usage guidelines, summarised in section 3.1
+   ([source](https://steinbergmedia.github.io/vst3_dev_portal/pages/VST+3+Licensing/Usage+guidelines.html)).
+   The logo must also appear on every other page that references the product or the term "VST", not only on one
+   product page.
+
+Still open:
+
+- Whether to add CLAP in a later version.
+- Lawyer review of the licences, the trademark obligations in 3.1, and the third-party notice, before any
+  distribution.
 
 ---
 
