@@ -1,5 +1,7 @@
 # DK stage — validation of the quality settings (4 Nov 2026)
 
+Host-rate extension: [#74 results](#host-sample-rates-74-18-nov-2026), including the unchanged-limit failures at 44.1 kHz.
+
 `python -m dk.validate` → `results.json` (one entry per setting, plus the aliasing sweep); `python -m pytest -q dk/tests`
 → **124 passed, all criteria pass for every setting** (criteria tightened in #5, aliasing limits from #6, CI guard #35, small-signal budget #38, below).
 
@@ -581,3 +583,212 @@ non-transcendental arithmetic and call overhead. No float fast path (not needed 
 - Speed: standard 8× costs 2.98–3.64 µs per base sample, one channel (5.7–7.0× realtime; Python 6.4 s/s). libm time /
   fast time is 0.96–1.06× there (0.94–1.21× over all settings), so the core's default stays libm, as in the Python
   stage.
+
+## Host sample rates (#74, 18 Nov 2026)
+
+The shipped quality policy stays **fixed factor** at every tested host rate: HQ 16× without pre-warp, standard 8×
+without pre-warp, eco 4× with the existing 17,300 Hz small-cap pre-warp. The 48 kHz settings, coefficients and
+output are unchanged. The alternative internal-rate policy was measured separately below; it is not enabled by
+`Stage` or `prepare()`.
+
+**Method and scope.** `python -m dk.sample_rates --workers 8` and, serially, `python -m dk.sample_rates --backend
+cpp --resume` write `dk/results_sample_rates.json` and `cpp/results_sample_rates.json`. Each calls the existing
+`dk.validate.run(fs=...)`: operating point, 20 Hz–20 kHz analytical small signal (stage and full chain), 0.5 s 1
+kHz sines at 0.05 / 0.5 / 2 / 8 V (last 100 cycles, H2–H5 above −90 dBc), and the 4 V, 10–30 ms burst followed
+through 120 ms. All `validate.CRIT` thresholds are unchanged. The ngspice DZ reference (ii) remains the test
+reference; Koren remains informational. These references describe the analog circuit, rather than a 48 kHz discrete
+signal. A 100-cycle 1 kHz window has an integer sample count at every listed rate, and H2–H5 are below every base
+Nyquist, so this harmonic comparison is fair at every rate. No new harmonic reference was made.
+
+Every setting also starts with 100 ms of silence from prepare/reset, measuring the maximum over the entire startup
+and the last 10 ms against the existing #70 **1e-9 V** rest criterion (stricter than the 1e-6 V startup criterion).
+The full offset sweep is 1037, 2037, …, 19037 Hz × 2 / 8 V, 0.25 s settling and 1 s analysis, periodic Hann, ±3-bin
+harmonic masks and total non-harmonic energy in 20 Hz–20 kHz, exactly as in `dk.aliasing`. Its
+coherent-bin/collision-order safeguard is retained; records include actual `f_hz` and collision order. Latency
+compensation is the existing extended-input/drop-output method. Each backend measures 114 sweep points per rate,
+684 in total. The C++ time-domain data are actual `process()` output; its small-signal analysis uses C++ matrices
+with the shared Python analytical code, as before.
+
+This extension measures **FIR / libm / double precision**, the common Python/C++ path, Drive = Bias = Output = 1.
+The full reference checks and offset sweeps are mono. C++ native prepare/process tests additionally cover
+mono/stereo and libm/fast at all rates. Full fast-math and Python IIR reference/aliasing validation at the new
+rates, demo renders, live rate switching, and other platforms were not measured. The existing 48 kHz IIR checks and
+aliasing guard remain. No timed benchmarks were run; `validate.run` timing is now opt-in (`measure_cpu=True`, CLI
+`--measure-cpu`).
+
+**Aliasing policy.** Apply the existing `aliasing.LIMIT_DBC` unchanged at all rates: FIR HQ −118.2 / −63.0,
+standard −118.3 / −48.6, eco −72.7 / −29.6 dBc at 2 / 8 V. These are acceptance checks against the existing 48 kHz
+budget, not newly fitted rate-specific limits. No failed limit was raised and no new 3 dB margin was added. The
+validators finish all rates, record the failed measurements and return nonzero when a criterion fails.
+`dk/aliasing_64x.json` is still a 48 kHz reference; it is not a ground truth for another rate. No new 64× sweep was
+run, so the very low high-rate readings should not be taken as a newly established accuracy floor or a comparison
+against high-rate ground truth.
+
+ Measured environment: `macOS-15.6.1-arm64-arm-64bit-Mach-O`, Python 3.15.2, NumPy 2.5.4, SciPy 1.18.1; C++ `Apple
+clang version 17.0.0 (clang-1700.6.3.2)`, `-O2` with the existing `cpp.build` warning flags.
+
+ **Fixed quality definitions.** All internal rates in kHz; pre-warp is none / none / 17.3 kHz for HQ / standard /
+eco.
+
+| host kHz | HQ factor / internal kHz | standard factor / internal kHz | eco factor / internal kHz |
+|---|---|---|---|
+| 44.1 | 16× / 705.6 | 8× / 352.8 | 4× / 176.4 |
+| 48 | 16× / 768 | 8× / 384 | 4× / 192 |
+| 88.2 | 16× / 1411.2 | 8× / 705.6 | 4× / 352.8 |
+| 96 | 16× / 1536 | 8× / 768 | 4× / 384 |
+| 176.4 | 16× / 2822.4 | 8× / 1411.2 | 4× / 705.6 |
+| 192 | 16× / 3072 | 8× / 1536 | 4× / 768 |
+
+ **Reference validation.** Each paired cell is **Python / C++**. AC and tested H2–H5 errors are maxima in dB;
+limits are 0.1 dB. Burst is shift / recovery τ / trajectory error in %, limits 0.5 / 1 / 0.5 %.
+
+| host kHz | setting | AC stage dB P / C | AC chain dB P / C | H2–H5 dB P / C | burst % Python | burst % C++ |
+|---|---|---|---|---|---|---|
+| 44.1 | hq | 0.01525 / 0.01525 | 0.01492 / 0.01492 | 0.000247 / 0.000247 | 0.0633 / 0.0400 / 0.0063 | 0.0633 / 0.0400 / 0.0063 |
+| 44.1 | standard | 0.06152 / 0.06152 | 0.06085 / 0.06085 | 0.000877 / 0.000877 | 0.0630 / 0.0622 / 0.0079 | 0.0630 / 0.0622 / 0.0079 |
+| 44.1 | eco | 0.06421 / 0.06421 | 0.06359 / 0.06359 | 0.019561 / 0.019561 | 0.0977 / 0.0400 / 0.0168 | 0.0977 / 0.0400 / 0.0168 |
+| 48 | hq | 0.01287 / 0.01287 | 0.01331 / 0.01331 | 0.000228 / 0.000228 | 0.0308 / 0.0408 / 0.0035 | 0.0308 / 0.0408 / 0.0035 |
+| 48 | standard | 0.05184 / 0.05184 | 0.05196 / 0.05196 | 0.000760 / 0.000760 | 0.0306 / 0.0408 / 0.0034 | 0.0306 / 0.0408 / 0.0034 |
+| 48 | eco | 0.05371 / 0.05371 | 0.05380 / 0.05380 | 0.016495 / 0.016495 | 0.0091 / 0.0408 / 0.0078 | 0.0091 / 0.0408 / 0.0078 |
+| 88.2 | hq | 0.00381 / 0.00381 | 0.00417 / 0.00417 | 0.000197 / 0.000197 | 0.0022 / 0.0178 / 0.0023 | 0.0022 / 0.0178 / 0.0023 |
+| 88.2 | standard | 0.01525 / 0.01525 | 0.01547 / 0.01547 | 0.000213 / 0.000213 | 0.0355 / 0.0178 / 0.0038 | 0.0355 / 0.0178 / 0.0038 |
+| 88.2 | eco | 0.01563 / 0.01563 | 0.01529 / 0.01529 | 0.004900 / 0.004900 | 0.0289 / 0.0178 / 0.0057 | 0.0289 / 0.0178 / 0.0057 |
+| 96 | hq | 0.00321 / 0.00321 | 0.00367 / 0.00367 | 0.000195 / 0.000195 | 0.0075 / 0.0102 / 0.0011 | 0.0075 / 0.0102 / 0.0011 |
+| 96 | standard | 0.01287 / 0.01287 | 0.01320 / 0.01320 | 0.000184 / 0.000184 | 0.0074 / 0.0102 / 0.0009 | 0.0074 / 0.0102 / 0.0009 |
+| 96 | eco | 0.01319 / 0.01319 | 0.01296 / 0.01296 | 0.004171 / 0.004171 | 0.0018 / 0.0204 / 0.0022 | 0.0018 / 0.0204 / 0.0022 |
+| 176.4 | hq | 0.00095 / 0.00095 | 0.00143 / 0.00143 | 0.000179 / 0.000179 | 0.0045 / 0.0067 / 0.0013 | 0.0045 / 0.0067 / 0.0013 |
+| 176.4 | standard | 0.00381 / 0.00381 | 0.00425 / 0.00425 | 0.000176 / 0.000176 | 0.0045 / 0.0067 / 0.0020 | 0.0045 / 0.0067 / 0.0020 |
+| 176.4 | eco | 0.00389 / 0.00389 | 0.00410 / 0.00410 | 0.001357 / 0.001357 | 0.0272 / 0.0067 / 0.0032 | 0.0272 / 0.0067 / 0.0032 |
+| 192 | hq | 0.00080 / 0.00080 | 0.00123 / 0.00123 | 0.000183 / 0.000183 | 0.0018 / 0.0026 / 0.0009 | 0.0018 / 0.0026 / 0.0009 |
+| 192 | standard | 0.00321 / 0.00321 | 0.00360 / 0.00360 | 0.000180 / 0.000180 | 0.0018 / 0.0051 / 0.0005 | 0.0018 / 0.0051 / 0.0005 |
+| 192 | eco | 0.00329 / 0.00329 | 0.00347 / 0.00347 | 0.001180 / 0.001180 | 0.0004 / 0.0000 / 0.0005 | 0.0004 / 0.0000 / 0.0005 |
+
+ All reference criteria pass in both backends at all rates. Worst operating-point error (Va / Vk / Ia / Vgk, all
+settings and rates) is 2.15e-09 relative, against 0.001. No reference-validation or rest sample failed Newton
+convergence.
+
+ **Startup and rest.** Worst over the three settings, volts; all pass 1e-9 V.
+
+| host kHz | 100 ms max Python | 100 ms max C++ | last 10 ms max Python | last 10 ms max C++ |
+|---|---|---|---|---|
+| 44.1 | 3.37e-14 | 0 | 2.5e-14 | 0 |
+| 48 | 0 | 1.22e-13 | 0 | 8.93e-15 |
+| 88.2 | 3.21e-14 | 0 | 7.31e-16 | 0 |
+| 96 | 0 | 1.37e-13 | 0 | 8.79e-15 |
+| 176.4 | 0 | 2.29e-13 | 0 | 7.55e-16 |
+| 192 | 0 | 0 | 0 | 0 |
+
+ **Full aliasing sweep.** Each cell is Python / C++ worst total dBc, with tone in Hz. The verdict uses the
+unchanged limit at that drive.
+
+| host kHz | setting | 2 V dBc P / C (tones P / C) | 2 V | 8 V dBc P / C (tones P / C) | 8 V |
+|---|---|---|---|---|---|
+| 44.1 | hq | -112.51 / -112.51 (19037 / 19037) | **FAIL** | -64.59 / -64.59 (19037 / 19037) | pass |
+| 44.1 | standard | -112.61 / -112.61 (19037 / 19037) | **FAIL** | -47.53 / -47.53 (16037 / 16037) | **FAIL** |
+| 44.1 | eco | -68.22 / -68.22 (13037 / 13037) | **FAIL** | -29.74 / -29.74 (18037 / 18037) | pass |
+| 48 | hq | -121.22 / -121.22 (19037 / 19037) | pass | -66.03 / -66.03 (19037 / 19037) | pass |
+| 48 | standard | -121.36 / -121.36 (19037 / 19037) | pass | -51.70 / -51.70 (19037 / 19037) | pass |
+| 48 | eco | -75.74 / -75.74 (16037 / 16037) | pass | -32.65 / -32.65 (19037 / 19037) | pass |
+| 88.2 | hq | -149.07 / -149.07 (15037 / 15037) | pass | -79.69 / -79.69 (19037 / 19037) | pass |
+| 88.2 | standard | -149.29 / -149.29 (15037 / 15037) | pass | -64.59 / -64.59 (19037 / 19037) | pass |
+| 88.2 | eco | -123.75 / -123.75 (11037 / 11037) | pass | -47.52 / -47.52 (16037 / 16037) | pass |
+| 96 | hq | -152.95 / -152.95 (16037 / 16037) | pass | -81.55 / -81.55 (19037 / 19037) | pass |
+| 96 | standard | -153.19 / -153.19 (16037 / 16037) | pass | -66.03 / -66.03 (19037 / 19037) | pass |
+| 96 | eco | -131.06 / -131.06 (11037 / 11037) | pass | -51.74 / -51.74 (19037 / 19037) | pass |
+| 176.4 | hq | -173.88 / -173.88 (1037 / 1037) | pass | -99.68 / -99.68 (19037 / 19037) | pass |
+| 176.4 | standard | -173.88 / -173.88 (1037 / 1037) | pass | -79.69 / -79.69 (19037 / 19037) | pass |
+| 176.4 | eco | -173.87 / -173.87 (1037 / 1037) | pass | -64.57 / -64.57 (19037 / 19037) | pass |
+| 192 | hq | -173.88 / -173.88 (1037 / 1037) | pass | -102.77 / -102.77 (19037 / 19037) | pass |
+| 192 | standard | -173.88 / -173.88 (1037 / 1037) | pass | -81.55 / -81.55 (19037 / 19037) | pass |
+| 192 | eco | -173.87 / -173.87 (1037 / 1037) | pass | -66.02 / -66.02 (19037 / 19037) | pass |
+
+ At **44.1 kHz**, HQ / 2 V, standard / 2 V and 8 V, and eco / 2 V fail. The unchanged limits are exceeded by
+approximately 5.69, 5.69, 1.07 and 4.48 dB respectively. Eco / 8 V passes with only 0.14 dB margin. All other
+rate/setting/drive combinations pass. The records retain the internal / resampler / other attribution from the
+existing method. At 44.1 kHz the HQ and standard 2 V worst cases are dominated by the resampler share: the fixed
+127-tap first FIR has a narrower 20 kHz-to-Nyquist transition than at 48 kHz. The 8 V standard and 2 V eco failures
+contain internal folding. Retuning eco pre-warp does not address that filter transition or substitute for more
+oversampling. A 44.1 kHz FIR redesign and renewed sweeps would be needed before claiming the existing aliasing
+budget at that rate.
+
+ **Eco pre-warp.** Existing `validate.prewarp_minimax(fs=...)`, same DZ grid and band edges, bounded minimisation
+(1 Hz search tolerance), FIR and factor 4.
+
+| host kHz | internal kHz | optimum Hz | worst dB at optimum | worst dB at 17300 Hz | without pre-warp dB |
+|---|---|---|---|---|---|
+| 44.1 | 176.4 | 17302.0 | 0.063550 | 0.063594 | 0.253891 |
+| 48 | 192 | 17309.7 | 0.053621 | 0.053803 | 0.213409 |
+| 88.2 | 352.8 | 17296.5 | 0.015275 | 0.015285 | 0.061400 |
+| 96 | 384 | 17309.1 | 0.012919 | 0.012960 | 0.051851 |
+| 176.4 | 705.6 | 17478.5 | 0.003864 | 0.004101 | 0.015552 |
+| 192 | 768 | 17475.3 | 0.003278 | 0.003475 | 0.013136 |
+
+ At **176.4 kHz internal** (44.1 kHz × 4), the optimum is 17,302 Hz: keeping 17,300 Hz costs only about 0.000044 dB
+in worst error and passes 0.1 dB. Keep 17.3 kHz. At host rates 88.2 kHz and above (eco internal rate ≥ 352.8 kHz),
+even plain trapezoidal passes; the optimum drifts slightly as FIR ripple becomes more significant, with no accuracy
+requirement to retune.
+
+ **Oversampling recommendation: retain the fixed factors in this change.** The alternative below keeps internal
+rates close to the original 768 / 384 / 192 kHz, with the existing minimum factor 2 and eco pre-warp still 17.3
+kHz. It was measured with C++ at all four high rates using the same complete reference, rest and offset-sweep
+validation (`cpp/results_internal_rate_proposal.json`); its minimax search uses the Python analytical stage at the
+proposed eco factor. HQ / standard / eco order throughout:
+
+| host kHz | proposed factors | internal kHz | worst AC chain dB | H2–H5 max dB | aliasing failures |
+|---|---|---|---|---|---|
+| 88.2 | 8 / 4 / 2 | 705.6 / 352.8 / 176.4 | 0.01547 / 0.06140 / 0.06415 | 0.00021 / 0.00084 / 0.01960 | standard 8V, eco 2V |
+| 96 | 8 / 4 / 2 | 768 / 384 / 192 | 0.01320 / 0.05185 / 0.05370 | 0.00018 / 0.00068 / 0.01658 | none |
+| 176.4 | 4 / 2 / 2 | 705.6 / 352.8 / 352.8 | 0.01555 / 0.06148 / 0.01563 | 0.00016 / 0.00071 / 0.00503 | standard 8V |
+| 192 | 4 / 2 / 2 | 768 / 384 / 384 | 0.01314 / 0.05179 / 0.01319 | 0.00017 / 0.00056 / 0.00428 | none |
+
+ The 44.1 / 48 kHz proposal retains 16 / 8 / 4 and the existing pre-warp values. The proposal passes the reference
+and rest criteria at each high rate, but **fails the unchanged aliasing limits at 88.2 kHz (standard / 8 V, eco / 2
+V) and 176.4 kHz (standard / 8 V)**. At the proposed 88.2 kHz × 2, also 176.4 kHz internal, the minimax frequency
+is 17,321 Hz; worst error is 0.063688 dB at the optimum and 0.064146 dB at 17,300 Hz. The difference from 44.1 kHz
+× 4 comes from the changed resampler cascade/normalised frequencies. This also supports keeping 17.3 kHz; its
+measured aliasing failure remains. Merely matching a nearby internal rate does not preserve the aliasing budget:
+folding depends on the actual internal rate and tone, as the offset sweep shows. 96 and 192 kHz are promising for a
+later selective reduction: HQ/standard at both rates, and eco at 96 kHz, can match their validated 48 kHz internal
+rates exactly. That selective policy still needs Python time-domain/sweep validation and a decision on eco at 176.4
+/ 192 kHz: factor 1 is unsupported by the current core, so eco at factor 2 costs the same internal steps as
+standard (and retains its distinct pre-warp). The unimplemented proposal does not include those missing Python
+sweeps.
+
+ With fixed factors, internal steps per second scale with host rate: 88.2 / 96 / 176.4 / 192 kHz require 1.8375 / 2
+/ 3.675 / 4 times the 48 kHz internal samples. Those are sample counts, not measured CPU ratios. The proposed
+reductions halve that count at 88.2 / 96 kHz and quarter HQ/standard at 176.4 / 192 kHz; eco is limited to factor
+2. No performance claim is inferred from an unrun benchmark.
+
+ **Latency.** The fixed FIR geometry gives HQ / standard / eco = **73 / 72 / 69 base-rate samples at every rate**,
+checked in Python and native C++ mono/stereo tests. The host must use `latency_samples()` after prepare;
+milliseconds change with the session rate:
+
+| host kHz | HQ ms | standard ms | eco ms |
+|---|---|---|---|
+| 44.1 | 1.6553 | 1.6327 | 1.5646 |
+| 48 | 1.5208 | 1.5000 | 1.4375 |
+| 88.2 | 0.8277 | 0.8163 | 0.7823 |
+| 96 | 0.7604 | 0.7500 | 0.7188 |
+| 176.4 | 0.4138 | 0.4082 | 0.3912 |
+| 192 | 0.3802 | 0.3750 | 0.3594 |
+
+ A future factor mapping changes the sample count as well: factor 8 / 4 / 2 reports 72 / 69 / 63 samples. A host
+must refresh its reported delay after any prepare that changes the factor or rate; converting the old 48 kHz
+milliseconds to samples would be wrong. No wrapper changes or live transition behavior are part of this
+measurement.
+
+**C++ / Python agreement.** All 18 reference-result comparisons pass the existing `cpp.validate_cpp.LIMITS`.
+Worst AC difference is 1.26e-7 dB (limit 1e-6); tested H2–H5 difference 9.12e-8 dB (limit 1e-5), H1 relative
+1.80e-9 (limit 1e-7), THD relative 1.97e-9 (limit 1e-6), and burst voltage difference 5.00e-9 V (limit 1e-6 V).
+Burst minimum times and recovery times match exactly, as do all Newton histograms. Over all 684 offset-sweep
+points, the largest difference in total dBc is 6.48e-6 dB; both backends give the same pass/fail decisions.
+These are reproduction differences, separate from the analog-reference errors and aliasing acceptance limits.
+
+**Verification on this host.** `python -m pytest -q dk/tests cpp/tests -k 'not bench_smoke'`: **227 passed,
+2 skipped** (the x86-only C++ builds on arm64), **1 deselected** (the timed benchmark smoke test, not run).
+This includes the new Python rate/minimax/rest/metric checks, C++/Python short waveform parity at every rate,
+and native C++ mono/stereo prepare/process, rest, convergence, latency and allocation checks at all six rates
+with libm and fast math. `python -m dk.aliasing_guard --workers 8` passes every existing 48 kHz FIR/IIR limit
+and baseline ratchet. The multi-rate validators return 1 for the four genuine 44.1 kHz aliasing failures;
+the experimental factor proposal returns 1 for its three documented failures. All numerical suites ran serially.
+Ruff 0.17.3 passes with the unchanged 120-character E/F configuration.

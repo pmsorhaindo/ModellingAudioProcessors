@@ -26,11 +26,11 @@ from cpp.build import CXXFLAGS, compiler, build  # noqa: E402, F401 -- after the
 EXE = None          # test_core used by CppStage (set by run(), or by the caller)
 
 
-def cli(vin, os_, prewarp_hz, bias=1.0, drive=1.0, output=1.0, math="libm", vgk=False, exe=None):
+def cli(vin, os_, prewarp_hz, bias=1.0, drive=1.0, output=1.0, math="libm", vgk=False, exe=None, fs=48000.0):
     """Stage::process on vin through `test_core cli`: (out, internal Vgk or None, info dict)."""
     vin = np.ascontiguousarray(vin, dtype=np.float64)
     args = [exe or EXE, "cli", str(os_), repr(float(prewarp_hz or 0.0)), repr(float(bias)), repr(float(drive)),
-            repr(float(output)), math] + (["vgk"] if vgk else [])
+            repr(float(output)), math] + (["vgk"] if vgk else []) + [f"fs={float(fs)!r}"]
     p = subprocess.run(args, input=vin.tobytes(), capture_output=True)
     if p.returncode != 0:
         raise RuntimeError(f"test_core cli failed ({p.returncode}): {p.stderr.decode()[-500:]}")
@@ -47,12 +47,12 @@ class CppStage:
 
     def __init__(self, fs, bias=1.0, drive=1.0, output=1.0, triode=DZ_12AX7_RSD1, quality="standard", filt="fir",
                  newton=None, triode_math="libm"):
-        if fs != 48000.0 or filt != "fir" or newton is not None or triode is not DZ_12AX7_RSD1:
-            raise NotImplementedError("CppStage: 48 kHz, fir, default Newton settings and triode only")
+        if filt != "fir" or newton is not None or triode is not DZ_12AX7_RSD1:
+            raise NotImplementedError("CppStage: fir, default Newton settings and triode only")
         self.fs_base, self.bias, self.drive, self.output, self.par = fs, bias, drive, output, triode
         self.os, self.prewarp_hz = QUALITY[quality] if isinstance(quality, str) else quality
         self.triode_math, self.ev = triode_math, EVAL[triode_math]
-        _, _, info = cli(np.zeros(0), self.os, self.prewarp_hz, bias, drive, output, triode_math)
+        _, _, info = cli(np.zeros(0), self.os, self.prewarp_hz, bias, drive, output, triode_math, fs=fs)
         self.info, self.fs = info, info["fs"]
         self.m = {k: np.array(info[k]).reshape(s) for k, s in self.SHAPES.items()}
         self.m["out_names"] = ["out", "g", "k", "a", "gl"]
@@ -79,7 +79,7 @@ class CppStage:
             raise RuntimeError("CppStage: one process() call per instance")
         self._used = True
         y, vgk, info = cli(vin, self.os, self.prewarp_hz, self.bias, self.drive, self.output, self.triode_math,
-                           vgk="vgk" in record)
+                           vgk="vgk" in record, fs=self.fs_base)
         self._stats = info["stats"]
         out = {"out": y, "_internal": {}}
         if vgk is not None:
@@ -93,14 +93,14 @@ class CppStage:
                     histogram={int(k): v for k, v in s["histogram"].items()})
 
 
-def run(quality="standard", triode_math="libm", exe=None):
-    """dk.validate.run(quality) with the C++ core in place of the Python Stage."""
+def run(quality="standard", triode_math="libm", exe=None, fs=validate.FS, measure_cpu=False):
+    """dk.validate.run(quality, fs=fs) with the C++ core in place of the Python Stage."""
     global EXE
     EXE = exe or EXE or build()
     saved = validate.Stage
     validate.Stage = CppStage
     try:
-        return validate.run(quality=quality, triode_math=triode_math)
+        return validate.run(quality=quality, triode_math=triode_math, fs=fs, measure_cpu=measure_cpu)
     finally:
         validate.Stage = saved
 
@@ -153,8 +153,9 @@ def compare(c, p):
     for k, pi in p["iterations"].items():
         ci = c["iterations"][k]
         assert ci["samples"] == pi["samples"] and ci["nonconverged"] == pi["nonconverged"] == 0, k
-        keys = set(ci["histogram"]) | set(map(int, pi["histogram"]))
-        l1 = sum(abs(ci["histogram"].get(int(b), 0) - pi["histogram"].get(str(b), 0)) for b in keys)
+        ch = {int(k): v for k, v in ci["histogram"].items()}
+        ph = {int(k): v for k, v in pi["histogram"].items()}
+        l1 = sum(abs(ch.get(b, 0) - ph.get(b, 0)) for b in set(ch) | set(ph))
         hist.append(l1 / pi["samples"])
     d["iter_hist_frac"] = max(hist)
     d["resampler_equal"] = (c["resampler"]["latency_samples"] == p["resampler"]["latency_samples"]

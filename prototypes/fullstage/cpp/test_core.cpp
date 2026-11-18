@@ -2,7 +2,8 @@
  * properties: no allocation in process(), FTZ/DAZ scoping, the lock-free coefficient swap and the #7 fallback.
  *
  *   test_core [vectors.txt]        run every test; prints one JSON line of measured errors; exit 1 on any failure
- *   test_core cli OS PREWARP BIAS DRIVE OUTPUT MATH [vgk]
+ *   test_core rates              prepare/process at six host rates, all qualities, mono/stereo and libm/fast
+ *   test_core cli OS PREWARP BIAS DRIVE OUTPUT MATH [vgk] [fs=HZ]
  *                                  stdin: float64 base-rate input; stdout: float64 output (then, with "vgk", the
  *                                  internal-rate Vgk); stderr: one JSON line (pack, op point, latency, stats).
  *                                  Used by cpp/tests/test_cpp_core.py to run dk.validate on the core.
@@ -522,6 +523,58 @@ static void test_silence() {
         metric(std::string("silence_abs_") + names[k], e);
         check(e <= TOL_PINNED_ABS, std::string("silence stays at the operating point, ") + names[k] + " " + std::to_string(e));
         delete s;
+    }
+}
+
+// #74: actual prepare/process at each supported host rate, all fixed quality settings, mono and stereo.
+// Keep the existing rest and mono/stereo tolerance (TOL_PINNED_ABS). Full reference sweeps are offline.
+static void test_sample_rates() {
+    for (double fs : {44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0}) {
+        for (Quality q : {ECO, STANDARD, HQ}) {
+            for (TriodeMath math : {TriodeMath::libm, TriodeMath::fast}) {
+                Stage* mono = new Stage;
+                StereoStage* stereo = new StereoStage;
+                check(mono->prepare(fs, q, 1.0, math) == BuildStatus::ok, "host-rate mono prepare");
+                check(stereo->prepare(fs, q, 1.0, math) == BuildStatus::ok, "host-rate stereo prepare");
+                const int latency = q.os == 4 ? 69 : q.os == 8 ? 72 : 73;
+                check(mono->latency_samples() == latency && stereo->latency_samples() == latency,
+                      "host-rate latency in base samples");
+                Vec x(size_t(fs * 0.1), 0.0), y(x.size()), l(x.size()), r(x.size());
+                mono->process(x.data(), y.data(), x.size());
+                stereo->process(x.data(), x.data(), l.data(), r.data(), x.size());
+                double rest = 0.0;
+                for (size_t i = 0; i < x.size(); ++i)
+                    rest = std::max({rest, std::fabs(y[i]), std::fabs(l[i]), std::fabs(r[i])});
+                check(rest <= TOL_PINNED_ABS, "host-rate startup/rest");
+                x.resize(size_t(fs * 0.02));
+                for (size_t i = 0; i < x.size(); ++i) x[i] = 8.0 * std::sin(2 * PI * 1000.0 * i / fs);
+                for (size_t i = 0; i < x.size(); i += 64) {
+                    const size_t n = std::min(size_t(64), x.size() - i);
+                    long allocations;
+                    {
+                        CountAllocs ca;
+                        mono->process(x.data() + i, y.data() + i, n);
+                        stereo->process(x.data() + i, x.data() + i, l.data() + i, r.data() + i, n);
+                        allocations = ca.n();
+                    }
+                    check(allocations == 0, "host-rate process allocation");
+                }
+                double peak = 0.0, err = 0.0;
+                for (size_t i = 0; i < x.size(); ++i) {
+                    check(std::isfinite(y[i]) && std::isfinite(l[i]) && std::isfinite(r[i]), "host-rate finite");
+                    peak = std::max(peak, std::fabs(y[i]));
+                    err = std::max({err, std::fabs(y[i] - l[i]), std::fabs(y[i] - r[i])});
+                }
+                check(peak > 1.0 && err <= TOL_PINNED_ABS, "host-rate signal and mono/stereo agreement");
+                check(mono->stats().nonconverged == 0 && stereo->nonconverged_total() == 0,
+                      "host-rate Newton convergence");
+                const std::string name = "rate_" + std::to_string(int(fs)) + "_" + std::to_string(q.os) +
+                                         (math == TriodeMath::fast ? "_fast" : "_libm");
+                metric(name + "_rest_v", rest);
+                metric(name + "_stereo_diff_v", err);
+                delete mono; delete stereo;
+            }
+        }
     }
 }
 
@@ -1109,14 +1162,21 @@ static int cli_triode() {
 }
 
 static int cli(int argc, char** argv) {
-    if (argc < 8) { std::fprintf(stderr, "usage: test_core cli OS PREWARP BIAS DRIVE OUTPUT MATH [vgk]\n"); return 2; }
+    if (argc < 8) { std::fprintf(stderr, "usage: test_core cli OS PREWARP BIAS DRIVE OUTPUT MATH [vgk] [fs=HZ]\n"); return 2; }
     const int os = std::atoi(argv[2]);
     const double pw = std::atof(argv[3]), bias = std::atof(argv[4]), dr = std::atof(argv[5]), og = std::atof(argv[6]);
     const TriodeMath math = std::string(argv[7]) == "fast" ? TriodeMath::fast : TriodeMath::libm;
-    const bool rec_vgk = argc > 8 && std::string(argv[8]) == "vgk";
+    bool rec_vgk = false;
+    double fs_base = 48000.0;
+    for (int i = 8; i < argc; ++i) {
+        const std::string arg(argv[i]);
+        if (arg == "vgk") rec_vgk = true;
+        else if (arg.rfind("fs=", 0) == 0) fs_base = std::atof(argv[i] + 3);
+        else return 2;
+    }
     const std::vector<double> in = read_stdin();
     Stage* s = new Stage;
-    const BuildStatus st = s->prepare(48000.0, Quality{os, pw}, bias, math);
+    const BuildStatus st = s->prepare(fs_base, Quality{os, pw}, bias, math);
     if (st != BuildStatus::ok) { std::fprintf(stderr, "{\"status\": \"%s\"}\n", to_string(st)); return 3; }
     s->set_drive(dr); s->set_output(og);
     std::vector<double> out(in.size()), vgk;
@@ -1164,6 +1224,12 @@ int main(int argc, char** argv) {
         std::printf("{%s, \"failures\": %d}\n", g_json.str().c_str(), g_fail);
         return g_fail ? 1 : 0;
     }
+    if (argc > 1 && std::string(argv[1]) == "rates") {
+        test_sample_rates();
+        metric("failures", g_fail);
+        std::printf("{%s}\n", g_json.str().c_str());
+        return g_fail ? 1 : 0;
+    }
     const std::string path = argc > 1 ? argv[1] : "vectors.txt";
     const auto V = load(path);
     test_taps(V);
@@ -1175,6 +1241,7 @@ int main(int argc, char** argv) {
     test_cases(V);
     test_nonconvergence();
     test_silence();
+    test_sample_rates();
     test_denormals();
     test_swap_threads();
     test_float_io();

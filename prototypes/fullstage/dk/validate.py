@@ -60,23 +60,24 @@ def small_signal(stage, f):
     return 20 * np.log10(Hs), 20 * np.log10(Hc)
 
 
-def prewarp_minimax(factor=4, lo=10e3, hi=20e3):
+def prewarp_minimax(factor=4, lo=10e3, hi=20e3, fs=FS):
     """The pre-warp frequency that minimises the worst small-signal deviation (whole chain) from (ii) over
-    CRIT["ac_band"] at `factor`x oversampling: how stage.PREWARP_HZ was chosen."""
+    CRIT["ac_band"] at `fs` base rate and `factor`x oversampling: how stage.PREWARP_HZ was chosen."""
     r = ref("dz")
     f = np.array(r["ac"]["f"])
     sel = (f >= CRIT["ac_band"][0]) & (f <= CRIT["ac_band"][1])
     def worst(f0):
-        return float(np.max(np.abs(small_signal(Stage(FS, quality=(factor, f0)), f[sel])[1]
+        return float(np.max(np.abs(small_signal(Stage(fs, quality=(factor, f0)), f[sel])[1]
                                                - np.array(r["ac"]["db"])[sel])))
     m = minimize_scalar(worst, bounds=(lo, hi), method="bounded", options=dict(xatol=1.0))
-    return dict(oversampling=factor, prewarp_hz=float(m.x), ac_maxdev_db_chain=float(m.fun),
+    return dict(fs_base=fs, oversampling=factor, prewarp_hz=float(m.x), ac_maxdev_db_chain=float(m.fun),
                 without_prewarp_db=worst(None))
 
 
-def run(T=0.5, quality="standard", filt="fir", triode_math="libm"):
-    st = Stage(FS, quality=quality, filt=filt, triode_math=triode_math)
-    out = dict(criteria=CRIT, fs_base=FS, quality=quality, oversampling=st.os, prewarp_hz=st.prewarp_hz, filter=filt,
+def run(T=0.5, quality="standard", filt="fir", triode_math="libm", fs=FS, measure_cpu=False):
+    """Existing analog-reference criteria at base rate fs; process timing is opt-in."""
+    st = Stage(fs, quality=quality, filt=filt, triode_math=triode_math)
+    out = dict(criteria=CRIT, fs_base=fs, quality=quality, oversampling=st.os, prewarp_hz=st.prewarp_hz, filter=filt,
                triode_math=triode_math)
     out["resampler"] = dict(latency_samples=st.latency_samples, latency_ms=st.rs.latency_ms,
                             macs_up_down=st.resampler_macs)
@@ -103,14 +104,15 @@ def run(T=0.5, quality="standard", filt="fir", triode_math="libm"):
     out["ac_gain_1k_db"] = float(small_signal(st, [1000.0])[0][0])
 
     out["sine"], times, its = {}, {}, {}
-    n = int(T * FS)
+    n = int(T * fs)
     for a in AMPS:
-        s = Stage(FS, quality=quality, filt=filt, triode_math=triode_math)
-        t = np.arange(n + s.latency_samples) / FS
-        t0 = time.perf_counter()
+        s = Stage(fs, quality=quality, filt=filt, triode_math=triode_math)
+        t = np.arange(n + s.latency_samples) / fs
+        t0 = time.perf_counter() if measure_cpu else None
         y = aligned(s, float(a) * np.sin(2 * np.pi * 1000 * t))["out"]
-        times[a] = (time.perf_counter() - t0) / (len(t) / FS)
-        h = harmonics(y, FS, 1000.0, 100)
+        if measure_cpu:
+            times[a] = (time.perf_counter() - t0) / (len(t) / fs)
+        h = harmonics(y, fs, 1000.0, 100)
         out["sine"][a] = dict(H_peak_V=h[:5].tolist(), H_dBc=db_rel(h)[:5].tolist(), thd_pct=100 * thd(h))
         its[a] = s.iteration_stats()
     for mname, r in R.items():
@@ -128,14 +130,14 @@ def run(T=0.5, quality="standard", filt="fir", triode_math="libm"):
             rows["thd_dk_pct"] = out["sine"][a]["thd_pct"]
             o["harm"][a] = rows
 
-    s = Stage(FS, quality=quality, filt=filt, triode_math=triode_math)
-    nb = int(0.12 * FS)
-    tb = np.arange(nb + s.latency_samples) / FS
+    s = Stage(fs, quality=quality, filt=filt, triode_math=triode_math)
+    nb = int(0.12 * fs)
+    tb = np.arange(nb + s.latency_samples) / fs
     xb = 4 * np.sin(2 * np.pi * 1000 * tb) * ((tb > 10e-3) & (tb < 30e-3))
     rb = aligned(s, xb, record=("out", "vgk"))
     vg = rb["_internal"]["vgk"]
     ti = (np.arange(len(vg)) - s.rs.up_delay_internal) / s.fs   # Vgk is seen after the interpolator only
-    keep = (ti >= 0) & (ti < nb / FS)
+    keep = (ti >= 0) & (ti < nb / fs)
     vg, ti = vg[keep], ti[keep]
     out["burst"] = burst_metrics(ti, vg)
     its["burst"] = s.iteration_stats()
@@ -151,10 +153,11 @@ def run(T=0.5, quality="standard", filt="fir", triode_math="libm"):
                           t_min_diff_ms=1e3 * (out["burst"]["t_min"] - rb_["t_min"]),
                           ref=dict(rest=rb_["rest_vgk"], min=rb_["min_vgk"], tau=rb_["recovery_tau_s"]))
     out["iterations"] = its
-    out["cpu"] = dict(method=f"time.perf_counter around Stage.process (pure Python, one core, 48 kHz base, "
-                             f"{st.os}x OS, "
-                             f"{filt} half-band resampling included); value = seconds of CPU per second of audio",
-                      seconds_per_second=times)
+    if measure_cpu:
+        out["cpu"] = dict(method=f"time.perf_counter around Stage.process (pure Python, one core, {fs:g} Hz base, "
+                                 f"{st.os}x OS, "
+                                 f"{filt} half-band resampling included); value = seconds of CPU per second of audio",
+                          seconds_per_second=times)
     o = out["vs"]["dz"]
     out["pass_vs_dz"] = dict(
         op=all(v < CRIT["op_rel"] for v in o["op_rel"].values()),
@@ -199,7 +202,8 @@ def summary(res):
                                              if isinstance(v, dict) else round(v, 3)
                                             for k, v in o["harm"][a].items()}))
     lines.append(str({k: (round(v["mean"], 2), v["max"], v["nonconverged"]) for k, v in res["iterations"].items()}))
-    lines.append(str(res["cpu"]["seconds_per_second"]))
+    if "cpu" in res:
+        lines.append(str(res["cpu"]["seconds_per_second"]))
     lines.append(str({k: res["burst"][k] for k in ("rest_vgk", "min_vgk", "t_min", "recovery_tau_s")}))
     return "\n".join(lines)
 
@@ -207,19 +211,20 @@ def summary(res):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--workers", type=int, default=os.cpu_count(), help="processes for the aliasing sweep")
+    ap.add_argument("--measure-cpu", action="store_true", help="opt in to the informational process timing")
     ap.add_argument("--triode-math", default="libm", choices=("libm", "fast"),
                     help="fast (#18): every setting with dk/fastmath.py's exp/log1p/pow against the same criteria, "
                          "-> dk/results_fastmath.json (no aliasing sweep or prewarp search; results.json untouched)")
     args = ap.parse_args()
     if args.triode_math == "fast":
-        res = {q: run(quality=q, triode_math="fast") for q in QUALITY}
+        res = {q: run(quality=q, triode_math="fast", measure_cpu=args.measure_cpu) for q in QUALITY}
         json.dump(res, open(os.path.join(HERE, "results_fastmath.json"), "w"), indent=1, default=float)
         for q in QUALITY:
             print(f"== {q} (triode_math=fast)")
             print(summary(res[q]))
         bad = [q for q in QUALITY if not all(res[q]["pass_vs_dz"].values())]
         sys.exit(f"criteria failed with fast math: {bad}" if bad else 0)
-    res = {q: run(quality=q) for q in QUALITY}
+    res = {q: run(quality=q, measure_cpu=args.measure_cpu) for q in QUALITY}
     res["prewarp_minimax"] = prewarp_minimax()
     res["aliasing"] = aliasing(args.workers)
     json.dump(res, open(os.path.join(HERE, "results.json"), "w"), indent=1, default=float)
