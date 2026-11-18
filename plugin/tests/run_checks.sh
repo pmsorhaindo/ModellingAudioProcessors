@@ -6,8 +6,8 @@
 #                                                     (the user's own folder), auval, AU null (arm64, and x86_64
 #                                                     under Rosetta when it is installed)
 #
-# Exits non-zero at the first failure. Nothing is signed beyond the linker's automatic ad-hoc signature, and
-# nothing is published.
+# Exits non-zero at the first failure. No signing identity is used (only ad-hoc signatures: the linker's, and the
+# VST 3 SDK's post-build one on the .vst3), and nothing is published.
 set -euo pipefail
 BUILD="${1:-$(cd "$(dirname "$0")/.." && pwd)/build}"
 AU=0

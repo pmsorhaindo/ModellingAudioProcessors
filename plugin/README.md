@@ -5,7 +5,10 @@ The first loadable plugin. It wraps `dkcore::StereoStage` from
 common-cathode stage, #75 option A. The wrapper is a thin one of our own, written directly against the Steinberg
 VST® 3 SDK and Apple's AudioUnitSDK ([licensing plan](../docs/licensing-and-wrapper-plan.md), section 6). It does not
 use iPlug2, JUCE, VSTGUI or Steinberg's AUWrapper. The host shows its generic parameter UI; there is no custom GUI.
-Nothing is signed (beyond the linker's automatic ad-hoc signature), notarised or published.
+Nothing is notarised or published, and no signing identity is used. The only signatures are ad-hoc, with no
+identity: the linker's automatic one on both binaries, and the VST 3 SDK's post-build `codesign --sign -` of the
+.vst3 bundle (its "Adhoc codesign workaround for Xcode 15" in `smtg_add_vst3plugin`). The AU is not signed
+beyond the linker's signature, and auval did not need more.
 
 **The name is temporary.** "MAP Valve Stage (temporary)" is a placeholder until #75 picks a name. Every identifier
 lives in one file, [`src/map_identity.h`](src/map_identity.h): names, bundle identifiers, AU type / subtype /
