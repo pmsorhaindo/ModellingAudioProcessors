@@ -27,12 +27,53 @@ def linearised(stage):
     )
 
 
+def miller_response(stage, f):
+    """Complex small-signal response of the Method A 1-pole Miller LPF at internal rate stage.fs (1 if disabled)."""
+    f = np.atleast_1d(np.asarray(f, float))
+    if not stage.miller_lpf:
+        return np.ones_like(f, dtype=complex)
+    b0, b1, p = stage.miller_coefs
+    zi = np.exp(-2j * np.pi * f / stage.fs)
+    return (b0 + b1 * zi) / (1.0 - p * zi)
+
+
+def adaa_response(stage, f):
+    """Small-signal linearised frequency response of ADAA at internal rate stage.fs."""
+    f = np.atleast_1d(np.asarray(f, float))
+    if stage.adaa == 0:
+        return np.ones_like(f, dtype=complex)
+    zi = np.exp(-2j * np.pi * f / stage.fs)
+    if stage.adaa == 1:
+        return 0.5 * (1.0 + zi)
+    return (1.0 + zi + zi * zi) / 3.0
+
+
 def stage_response(stage, f):
-    """Complex small-signal response of the 3-state stage alone at internal rate stage.fs."""
-    Al, Bl, Cl, Dl = linearised(stage)
-    I = np.eye(Al.shape[0])  # noqa: E741 -- the identity matrix I of the DK equations
-    z = np.exp(2j * np.pi * np.atleast_1d(np.asarray(f, float)) / stage.fs)
-    return np.array([(Cl @ np.linalg.solve(zz * I - Al, Bl) + Dl)[0, 0] for zz in z])
+    """Complex small-signal response of the 3-state stage (with Method A / ADAA if enabled) at internal rate."""
+    f = np.atleast_1d(np.asarray(f, float))
+    z = np.exp(2j * np.pi * f / stage.fs)
+    hlp = miller_response(stage, f)
+    if stage.adaa == 0:
+        Al, Bl, Cl, Dl = linearised(stage)
+        I = np.eye(Al.shape[0])  # noqa: E741 -- the identity matrix I of the DK equations
+        return np.array([hlp[k] * (Cl @ np.linalg.solve(zz * I - Al, Bl) + Dl)[0, 0] for k, zz in enumerate(z)])
+
+    m = stage.m
+    Mp0 = jacobian_p(stage)
+    A, B, C = m["A"], m["B"][:, :1], m["C"]
+    D, E, F = m["D"][:1], m["E"][:1, :1], m["F"][:1]
+    G, H = m["G"], m["H"][:, :1]
+    I = np.eye(A.shape[0])  # noqa: E741 -- the identity matrix I of the DK equations
+    ha = adaa_response(stage, f)
+    out = np.empty(len(f), dtype=complex)
+    for k, zz in enumerate(z):
+        Mp = Mp0 * ha[k]
+        Al = A + C @ Mp @ G
+        Bl = B + C @ Mp @ H
+        Cl = D + F @ Mp @ G
+        Dl = E + F @ Mp @ H
+        out[k] = hlp[k] * (Cl @ np.linalg.solve(zz * I - Al, Bl) + Dl)[0, 0]
+    return out
 
 
 def analog_response(stage, f):

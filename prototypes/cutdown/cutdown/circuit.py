@@ -12,11 +12,49 @@ state transition matrix A is diagonal and B0, C, D, E0, F, G, H0 are sparse. Pla
 discretisation (Gc = 2 C fs) is used for all three states (these large caps set sub-10 Hz poles,
 so high-frequency pre-warping does not apply).
 """
+import math
 import numpy as np
 import cutdown  # noqa: F401 -- ensures FULLSTAGE_DIR is on sys.path
 from dk.circuit import NODES, VALUES, _inc  # noqa: E402 -- after cutdown path setup
 
 CAP_NAMES = ("Cin", "Ck", "Cout")
+
+
+def miller_cutoff_hz(J, rk_scale=1.0, v=VALUES):
+    """Open-circuit time-constant (OCTC) cutoff Hz of the dropped pF valve caps (CCG, CGP, CCP).
+
+    Assumes Cin, Ck, Cout are AC shorts at HF so cathode is AC ground:
+      Rg_th = Rgs + (Rs || Rg)
+      R_plate = (1/gds) || Ra || Rl
+      tau_octc = CCG * Rg_th + CGP * (Rg_th + R_plate + gm * Rg_th * R_plate) + CCP * R_plate
+    """
+    J_arr = np.asarray(J, float)
+    gm = float(J_arr[1, 0])
+    gds = float(J_arr[1, 1])
+    r_plate = 1.0 / (gds + 1.0 / v["Ra"] + 1.0 / v["Rl"])
+    rg_th = v["Rgs"] + 1.0 / (1.0 / v["Rs"] + 1.0 / v["Rg"])
+    r_gp0 = rg_th + r_plate + gm * rg_th * r_plate
+    tau = v["CCG"] * rg_th + v["CGP"] * r_gp0 + v["CCP"] * r_plate
+    return 1.0 / (2.0 * math.pi * tau)
+
+
+def miller_filter_coefs(fc, fs, f_ref=20000.0):
+    """First-order (one-pole) IIR LPF H(z) = (b0 + b1 z^-1) / (1 - p z^-1) at rate fs.
+
+    Uses the exact continuous-time pole mapping p = exp(-2*pi*fc/fs) and solves the zero weight
+    alpha in b0 = (1-p)*(1-alpha), b1 = (1-p)*alpha so |H(f_ref)| equals 1/sqrt(1 + (f_ref/fc)^2).
+    """
+    p = math.exp(-2.0 * math.pi * float(fc) / float(fs))
+    w_ref = 2.0 * math.pi * min(float(f_ref), 0.45 * float(fs)) / float(fs)
+    c_w = math.cos(w_ref)
+    target2 = 1.0 / (1.0 + (float(f_ref) / float(fc)) ** 2)
+    r_val = target2 * (1.0 + p * p - 2.0 * p * c_w) / ((1.0 - p) ** 2)
+    q_val = (1.0 - r_val) / (2.0 * (1.0 - c_w))
+    disc = max(0.0, 1.0 - 4.0 * q_val)
+    alpha = 0.5 * (1.0 - math.sqrt(disc))
+    b0 = (1.0 - p) * (1.0 - alpha)
+    b1 = (1.0 - p) * alpha
+    return b0, b1, p
 
 
 def netlist(rk_scale=1.0, v=VALUES):

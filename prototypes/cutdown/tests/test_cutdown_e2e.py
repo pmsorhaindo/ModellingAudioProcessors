@@ -29,10 +29,19 @@ def linear_chain_shifted(stage, f):
     return linear.stage_response(stage, f) * stage.rs.chain_response(f) * np.exp(2j * np.pi * f * L / stage.fs_base)
 
 
-@pytest.fixture(scope="module")
-def measured():
+VARIANTS = [
+    pytest.param(dict(miller_lpf=False, adaa=0), id="baseline"),
+    pytest.param(dict(miller_lpf=True, adaa=0), id="method_a"),
+    pytest.param(dict(miller_lpf=False, adaa=1), id="method_b1"),
+    pytest.param(dict(miller_lpf=False, adaa=2), id="method_b2"),
+    pytest.param(dict(miller_lpf=True, adaa=1), id="method_ab1"),
+]
+
+
+@pytest.fixture(scope="module", params=VARIANTS)
+def measured(request):
     n0, N = int(SETTLE_S * FS), int(WIN_S * FS)
-    st = CutdownStage(FS)
+    st = CutdownStage(FS, **request.param)
     t = np.arange(n0 + N + st.latency_samples) / FS
     ph = np.random.default_rng(0).uniform(0, 2 * np.pi, len(TONES))
     x = sum(AMP * np.sin(2 * np.pi * f * t + p) for f, p in zip(TONES, ph))

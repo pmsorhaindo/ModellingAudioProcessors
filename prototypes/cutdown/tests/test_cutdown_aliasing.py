@@ -16,11 +16,11 @@ from dk import aliasing as AL  # noqa: E402 -- after sys.path setup
 FS = AL.FS
 
 
-def measure_short(drive, tone):
+def measure_short(drive, tone, **kw):
     n = int(round(AL.CI_WINDOW_S * FS))
     n0 = int(round(AL.CI_SETTLE_S * FS))
     m = AL.tone_bin(tone, n, FS)
-    st = CutdownStage(FS)
+    st = CutdownStage(FS, **kw)
     L = st.latency_samples
     x = drive * np.sin(2 * np.pi * m * np.arange(n0 + n + L) / n)
     y = st.process(x)["out"][n0 + L:n0 + L + n]
@@ -36,4 +36,23 @@ def measure_short(drive, tone):
 def test_representative_aliasing_levels(drive, tone, lo, hi):
     r = measure_short(drive, tone)
     assert lo < r["total_dbc"] < hi, (drive, tone, r)
+    assert r["internal_dbc"] > r["resampler_dbc"] + 20.0
+
+
+@pytest.mark.parametrize("kw,drive,tone,upper_dbc", [
+    (dict(miller_lpf=True, adaa=0), 2.0, 16037, -44.0),
+    (dict(miller_lpf=True, adaa=0), 2.0, 19037, -51.0),
+    (dict(miller_lpf=True, adaa=0), 8.0, 19037, -13.5),
+    (dict(miller_lpf=False, adaa=1), 2.0, 19037, -46.0),
+    (dict(miller_lpf=False, adaa=1), 8.0, 16037, -28.0),
+    (dict(miller_lpf=False, adaa=1), 8.0, 19037, -32.0),
+    (dict(miller_lpf=False, adaa=2), 2.0, 19037, -53.0),
+    (dict(miller_lpf=False, adaa=2), 8.0, 19037, -32.0),
+    (dict(miller_lpf=True, adaa=1), 2.0, 16037, -59.0),
+    (dict(miller_lpf=True, adaa=1), 2.0, 19037, -65.0),
+    (dict(miller_lpf=True, adaa=1), 8.0, 19037, -31.5),
+])
+def test_aliasing_methods_improve_over_baseline(kw, drive, tone, upper_dbc):
+    r = measure_short(drive, tone, **kw)
+    assert r["total_dbc"] < upper_dbc, (kw, drive, tone, r)
     assert r["internal_dbc"] > r["resampler_dbc"] + 20.0

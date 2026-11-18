@@ -185,3 +185,86 @@ def test_table_domain_covers_8V_20Hz_and_clamping_is_finite():
     st.reset()
     y_ext = st.process(20.0 * np.sin(2 * np.pi * 1000 * np.arange(4800) / FS))["out"]
     assert np.all(np.isfinite(y_ext))
+
+
+@pytest.mark.parametrize("kw", [
+    dict(miller_lpf=True, adaa=0),
+    dict(miller_lpf=False, adaa=1),
+    dict(miller_lpf=False, adaa=2),
+    dict(miller_lpf=True, adaa=1),
+])
+def test_variants_silence_and_block_invariance(kw):
+    st_sil = CutdownStage(FS, **kw)
+    assert np.max(np.abs(st_sil.process(np.zeros(480))["out"])) < 1e-9
+
+    # Burst followed by silence must decay cleanly back to DC rest (ADAA du->0 fallback).
+    x_tail = np.r_[3.0 * np.sin(2 * np.pi * 1000 * np.arange(960) / FS), np.zeros(int(1.0 * FS))]
+    y_tail = st_sil.process(x_tail)["out"]
+    assert np.max(np.abs(y_tail[-480:])) < 1e-6
+
+    t = np.arange(2400) / FS
+    x = 3.0 * np.sin(2 * np.pi * 997 * t) + 0.5 * np.random.default_rng(5).standard_normal(len(t))
+    ref = CutdownStage(FS, **kw).process(x, record=("out", "vgk"))
+    st = CutdownStage(FS, **kw)
+    sizes = np.r_[1, 7, 1, 7, np.random.default_rng(6).integers(1, 257, 200)]
+    out, vg, i = [], [], 0
+    for n in sizes:
+        if i >= len(x):
+            break
+        r = st.process(x[i:i + n], record=("out", "vgk"))
+        i += min(n, len(x) - i)
+        out.append(r["out"])
+        vg.append(r["vgk"])
+    assert i == len(x)
+    scale = np.max(np.abs(ref["out"]))
+    assert np.max(np.abs(np.concatenate(out) - ref["out"])) < 1e-9 * scale
+    assert np.max(np.abs(np.concatenate(vg) - ref["vgk"])) < 1e-9
+
+
+def test_miller_cutoff_and_unit_dc_gain():
+    st = CutdownStage(FS, miller_lpf=True)
+    assert 13500.0 < st.miller_fc_hz < 15000.0
+    b0, b1, p = st.miller_coefs
+    assert abs((b0 + b1) / (1.0 - p) - 1.0) < 1e-14
+    assert 0.0 < st.miller_group_delay_base(1000.0) < 1.0
+
+
+def test_antiderivatives_match_lut_derivatives():
+    st = CutdownStage(FS, adaa=2)
+    tbl = st.table
+    eps = 1e-6
+    for p0 in (-17.0, -5.0, float(st.p_dc[0]), 0.5, 9.0):
+        u = (p0 - tbl.p0_min) * tbl.inv_dp0
+        j, fw = 15, 0.35
+        b0, b1 = 1.0 - fw, fw
+        p1 = tbl.p1_min + (j + fw) / tbl.inv_dp1
+        fp = tbl.f1_f2(u + eps, j, b0, b1)
+        fm = tbl.f1_f2(u - eps, j, b0, b1)
+        fc = tbl.f1_f2(u, j, b0, b1)
+        lig, lia = tbl.lookup(p0, p1)
+        assert abs((fp[0] - fm[0]) / (2 * eps) - lig) < 1e-10
+        assert abs((fp[1] - fm[1]) / (2 * eps) - lia) < 1e-9
+        assert abs((fp[2] - fm[2]) / (2 * eps) - fc[0]) < 1e-10
+        assert abs((fp[3] - fm[3]) / (2 * eps) - fc[1]) < 1e-8
+
+
+def test_method_a_restores_miller_ac_and_burst():
+    res_a = V.run(miller_lpf=True, adaa=0)
+    o = res_a["vs"]["dz"]
+    assert o["ac_maxdev_db_chain"] < dk_validate.CRIT["ac_db"]
+    assert o["burst"]["min_rel"] < dk_validate.CRIT["burst_min_rel"]
+    assert o["burst"]["tau_rel"] < dk_validate.CRIT["burst_tau_rel"]
+    assert o["burst"]["traj_rel"] < dk_validate.CRIT["burst_traj_rel"]
+
+
+def test_swap_bias_updates_miller_and_adaa_cleanly():
+    st = CutdownStage(FS, miller_lpf=True, adaa=1)
+    fc1 = st.miller_fc_hz
+    t = np.arange(1000) / FS
+    st.process(2.0 * np.sin(2 * np.pi * 500 * t))
+    x_abs_before = st.x0 + st.x
+    st.swap_bias(1.5)
+    assert np.allclose(st.x0 + st.x, x_abs_before, rtol=0, atol=1e-12)
+    assert st.miller_fc_hz != fc1
+    st.reset()
+    assert np.max(np.abs(st.process(np.zeros(480))["out"])) < 1e-9

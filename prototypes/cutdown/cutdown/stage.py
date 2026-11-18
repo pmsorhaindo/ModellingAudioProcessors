@@ -9,6 +9,7 @@ Compared to prototypes/fullstage/dk/stage.py:
     prototypes/fullstage/dk/resample.py (6 first-order allpasses per way = 12 MACs/base sample,
     >= 96 dB stopband rejection, 3 base-rate samples nominal latency).
 """
+import math
 import numpy as np
 import cutdown  # noqa: F401 -- ensures FULLSTAGE_DIR is on sys.path
 from dk.resample import Resampler  # noqa: E402 -- after cutdown path setup
@@ -17,6 +18,8 @@ from dk.stage import OperatingPointError  # noqa: E402 -- after cutdown path set
 from dk.triode import DZ_12AX7_RSD1, currents, currents_only  # noqa: E402 -- after cutdown path setup
 from . import circuit  # noqa: E402 -- after cutdown path setup
 from .table import (  # noqa: E402 -- after cutdown path setup
+    ADAA_TOL_1,
+    ADAA_TOL_2,
     DEFAULT_P0_SPAN,
     DEFAULT_P1_SPAN,
     DEFAULT_SHAPE,
@@ -27,6 +30,7 @@ from .table import (  # noqa: E402 -- after cutdown path setup
 OVERSAMPLING = 2
 RESAMPLER_KIND = "iir"
 SOLVER_MODES = ("lut", "newton")
+ADAA_ORDERS = (0, 1, 2)
 
 
 class CutdownStage:
@@ -35,9 +39,14 @@ class CutdownStage:
     def __init__(self, fs, bias=1.0, drive=1.0, output=1.0, triode=DZ_12AX7_RSD1,
                  shape=DEFAULT_SHAPE, p0_span=DEFAULT_P0_SPAN, p1_span=DEFAULT_P1_SPAN,
                  interp="cubic0_lin1", oversampling=OVERSAMPLING, filt=RESAMPLER_KIND,
-                 solver_mode="lut"):
+                 solver_mode="lut", miller_lpf=False, adaa=0):
         if solver_mode not in SOLVER_MODES:
             raise ValueError(f"solver_mode must be one of {SOLVER_MODES}, got {solver_mode!r}")
+        adaa = int(adaa)
+        if adaa not in ADAA_ORDERS:
+            raise ValueError(f"adaa must be one of {ADAA_ORDERS}, got {adaa!r}")
+        if adaa > 0 and (solver_mode != "lut" or interp != "cubic0_lin1"):
+            raise ValueError("ADAA requires solver_mode='lut' and interp='cubic0_lin1'")
         self.fs_base = float(fs)
         self.os = int(oversampling)
         self.filt = filt
@@ -52,6 +61,8 @@ class CutdownStage:
         self.p1_span = tuple(p1_span)
         self.interp = interp
         self.solver_mode = solver_mode
+        self.miller_lpf = bool(miller_lpf)
+        self.adaa = adaa
         self.ev = (currents, currents_only)
 
         self.m = circuit.build(self.fs, rk_scale=self.bias)
@@ -59,6 +70,7 @@ class CutdownStage:
         self.dc = self.operating_point()
         self._rest()
         self._build_table()
+        self._build_miller_filter()
         self.reset()
 
     def operating_point(self):
@@ -96,11 +108,22 @@ class CutdownStage:
             interp=self.interp,
         )
 
+    def _build_miller_filter(self):
+        J = currents(self.dc["vgk"], self.dc["vak"], self.par)[2]
+        self.miller_fc_hz = circuit.miller_cutoff_hz(J, rk_scale=self.bias)
+        self.miller_coefs = circuit.miller_filter_coefs(self.miller_fc_hz, self.fs)
+
     def reset(self):
         self._rest()
         self.x = np.zeros_like(self.x0)
         self.v = [self.dc["vgk"], self.dc["vak"]]
         self.v_prev = list(self.v)
+        self.lp_x = 0.0
+        self.lp_y = 0.0
+        self.p_prev = [float(self.p_dc[0]), float(self.p_dc[1])]
+        self.p_prev2 = list(self.p_prev)
+        self.j_prev = -1
+        self.pg0 = self.pg1 = self.pa0 = self.pa1 = 0.0
         self.rs.reset()
 
     def swap_bias(self, bias):
@@ -116,12 +139,35 @@ class CutdownStage:
         self.m, self.K, self.dc = m, m["K"].tolist(), dc
         self._rest()
         self._build_table()
+        self._build_miller_filter()
+        self.j_prev = -1
         self.x = self.x + (x0_old - self.x0)
 
     @property
     def latency_samples(self):
         """Base-rate delay of process() output vs input (nominal 1 kHz group delay for IIR)."""
         return self.rs.latency_samples
+
+    def miller_group_delay_base(self, f=1000.0):
+        """Group delay (base-rate samples) of the Method A 1-pole IIR LPF at frequency f (0 if disabled)."""
+        if not self.miller_lpf:
+            return 0.0
+        b0, b1, p = self.miller_coefs
+        df = 1.0
+        w1 = 2.0 * math.pi * (float(f) - df) / self.fs
+        w2 = 2.0 * math.pi * (float(f) + df) / self.fs
+        z1 = complex(math.cos(w1), -math.sin(w1))
+        z2 = complex(math.cos(w2), -math.sin(w2))
+        h1 = (b0 + b1 * z1) / (1.0 - p * z1)
+        h2 = (b0 + b1 * z2) / (1.0 - p * z2)
+        ph1 = math.atan2(h1.imag, h1.real)
+        ph2 = math.atan2(h2.imag, h2.real)
+        return (-(ph2 - ph1) / (w2 - w1)) / self.os
+
+    @property
+    def adaa_delay_base(self):
+        """Nominal small-signal fractional delay (base-rate samples) added by ADAA."""
+        return 0.5 * self.adaa / self.os
 
     @property
     def resampler_macs(self):
@@ -174,55 +220,137 @@ class CutdownStage:
             idx_map = [(n, m["out_names"].index(n)) for n in record if n in m["out_names"]]
 
         x0, x1, x2 = float(self.x[0]), float(self.x[1]), float(self.x[2])
+        use_lpf = self.miller_lpf
+        lp_b0, lp_b1, lp_p = self.miller_coefs
+        lp_x, lp_y = self.lp_x, self.lp_y
+        adaa = self.adaa
+        p0_prev, p1_prev = self.p_prev
+        p0_prev2, p1_prev2 = self.p_prev2
+        u_prev = (p0_prev - p0_min) * inv_dp0
+        u_prev2 = (p0_prev2 - p0_min) * inv_dp0
+        j_prev = self.j_prev
+        pg0, pg1, pa0, pa1 = self.pg0, self.pg1, self.pa0, self.pa1
 
         for n, s_val in enumerate(vin):
             s = float(s_val)
+            if use_lpf:
+                lp_y = lp_b0 * s + lp_b1 * lp_x + lp_p * lp_y
+                lp_x = s
+                s = lp_y
             p0 = g00 * x0 + g01 * x1 + g02 * x2 + h00 * s + pdc0
             p1 = g10 * x0 + g11 * x1 + g12 * x2 + h10 * s + pdc1
 
-            u = (p0 - p0_min) * inv_dp0
-            w = (p1 - p1_min) * inv_dp1
-            if u <= 0.0:
-                i, fu = 0, 0.0
-            elif u >= n0m1:
-                i, fu = n0m2, 1.0
-            else:
-                i = int(u)
-                fu = u - i
-            if w <= 0.0:
-                j, fw = 0, 0.0
-            elif w >= n1m1:
-                j, fw = n1m2, 1.0
-            else:
-                j = int(w)
-                fw = w - j
+            if adaa == 0:
+                u = (p0 - p0_min) * inv_dp0
+                w = (p1 - p1_min) * inv_dp1
+                if u <= 0.0:
+                    i, fu = 0, 0.0
+                elif u >= n0m1:
+                    i, fu = n0m2, 1.0
+                else:
+                    i = int(u)
+                    fu = u - i
+                if w <= 0.0:
+                    j, fw = 0, 0.0
+                elif w >= n1m1:
+                    j, fw = n1m2, 1.0
+                else:
+                    j = int(w)
+                    fw = w - j
 
-            b0, b1 = 1.0 - fw, fw
-            if is_bilinear:
-                a0, a1 = 1.0 - fu, fu
-                k0 = i * n1 + j
-                k1 = k0 + n1
-                ig = a0 * (b0 * tig_flat[k0] + b1 * tig_flat[k0 + 1]) + a1 * (
-                    b0 * tig_flat[k1] + b1 * tig_flat[k1 + 1])
-                ia = a0 * (b0 * tia_flat[k0] + b1 * tia_flat[k0 + 1]) + a1 * (
-                    b0 * tia_flat[k1] + b1 * tia_flat[k1 + 1])
-            else:
-                im1 = (i - 1) if i > 0 else 0
-                ip1 = i + 1
-                ip2 = (i + 2) if (i + 2) < n0 else n0m1
-                w0, w1, w2, w3 = _catmull_rom_weights(fu)
-                km1, k0, kp1, kp2 = im1 * n1 + j, i * n1 + j, ip1 * n1 + j, ip2 * n1 + j
-                ig = (w0 * (b0 * tig_flat[km1] + b1 * tig_flat[km1 + 1])
-                      + w1 * (b0 * tig_flat[k0] + b1 * tig_flat[k0 + 1])
-                      + w2 * (b0 * tig_flat[kp1] + b1 * tig_flat[kp1 + 1])
-                      + w3 * (b0 * tig_flat[kp2] + b1 * tig_flat[kp2 + 1]))
-                ia = (w0 * (b0 * tia_flat[km1] + b1 * tia_flat[km1 + 1])
-                      + w1 * (b0 * tia_flat[k0] + b1 * tia_flat[k0 + 1])
-                      + w2 * (b0 * tia_flat[kp1] + b1 * tia_flat[kp1 + 1])
-                      + w3 * (b0 * tia_flat[kp2] + b1 * tia_flat[kp2 + 1]))
+                b0, b1 = 1.0 - fw, fw
+                if is_bilinear:
+                    a0, a1 = 1.0 - fu, fu
+                    k0 = i * n1 + j
+                    k1 = k0 + n1
+                    ig = a0 * (b0 * tig_flat[k0] + b1 * tig_flat[k0 + 1]) + a1 * (
+                        b0 * tig_flat[k1] + b1 * tig_flat[k1 + 1])
+                    ia = a0 * (b0 * tia_flat[k0] + b1 * tia_flat[k0 + 1]) + a1 * (
+                        b0 * tia_flat[k1] + b1 * tia_flat[k1 + 1])
+                else:
+                    im1 = (i - 1) if i > 0 else 0
+                    ip1 = i + 1
+                    ip2 = (i + 2) if (i + 2) < n0 else n0m1
+                    w0, w1, w2, w3 = _catmull_rom_weights(fu)
+                    km1, k0, kp1, kp2 = im1 * n1 + j, i * n1 + j, ip1 * n1 + j, ip2 * n1 + j
+                    ig = (w0 * (b0 * tig_flat[km1] + b1 * tig_flat[km1 + 1])
+                          + w1 * (b0 * tig_flat[k0] + b1 * tig_flat[k0 + 1])
+                          + w2 * (b0 * tig_flat[kp1] + b1 * tig_flat[kp1 + 1])
+                          + w3 * (b0 * tig_flat[kp2] + b1 * tig_flat[kp2 + 1]))
+                    ia = (w0 * (b0 * tia_flat[km1] + b1 * tia_flat[km1 + 1])
+                          + w1 * (b0 * tia_flat[k0] + b1 * tia_flat[k0 + 1])
+                          + w2 * (b0 * tia_flat[kp1] + b1 * tia_flat[kp1 + 1])
+                          + w3 * (b0 * tia_flat[kp2] + b1 * tia_flat[kp2 + 1]))
 
-            cig = ig - dig_off
-            cia = ia - dia_off
+                cig = ig - dig_off
+                cia = ia - dia_off
+            elif adaa == 1:
+                u = (p0 - p0_min) * inv_dp0
+                p1m = 0.5 * (p1 + p1_prev)
+                w = (p1m - p1_min) * inv_dp1
+                if w <= 0.0:
+                    j, fw = 0, 0.0
+                elif w >= n1m1:
+                    j, fw = n1m2, 1.0
+                else:
+                    j = int(w)
+                    fw = w - j
+                if j != j_prev:
+                    pg0, pg1, pa0, pa1 = tbl.f1_slices(u_prev, j)
+                g0, g1, a0, a1 = tbl.f1_slices(u, j)
+                du = u - u_prev
+                if abs(du) < ADAA_TOL_1:
+                    cig, cia = tbl.lookup(0.5 * (p0 + p0_prev), p1m)
+                else:
+                    cig = ((g0 + fw * (g1 - g0)) - (pg0 + fw * (pg1 - pg0))) / du
+                    cia = ((a0 + fw * (a1 - a0)) - (pa0 + fw * (pa1 - pa0))) / du
+                p0_prev, p1_prev = p0, p1
+                u_prev = u
+                j_prev, pg0, pg1, pa0, pa1 = j, g0, g1, a0, a1
+            else:
+                u = (p0 - p0_min) * inv_dp0
+                p1m = (p1 + p1_prev + p1_prev2) / 3.0
+                w = (p1m - p1_min) * inv_dp1
+                if w <= 0.0:
+                    j, fw = 0, 0.0
+                elif w >= n1m1:
+                    j, fw = n1m2, 1.0
+                else:
+                    j = int(w)
+                    fw = w - j
+                b0, b1 = 1.0 - fw, fw
+                du2 = 0.5 * (u - u_prev2)
+                if abs(du2) < ADAA_TOL_2:
+                    u_bar = 0.5 * (u + u_prev2)
+                    du_a = u_bar - u_prev
+                    if abs(du_a) < ADAA_TOL_2:
+                        cig, cia = tbl.lookup(p0_min + 0.5 * (u_bar + u_prev) / inv_dp0, p1m)
+                    else:
+                        f1g_b, f1a_b, f2g_b, f2a_b = tbl.f1_f2(u_bar, j, b0, b1)
+                        _, _, f2g_1, f2a_1 = tbl.f1_f2(u_prev, j, b0, b1)
+                        cig = 2.0 * (f1g_b - (f2g_b - f2g_1) / du_a) / du_a
+                        cia = 2.0 * (f1a_b - (f2a_b - f2a_1) / du_a) / du_a
+                else:
+                    du_n = u - u_prev
+                    if abs(du_n) < ADAA_TOL_2:
+                        d1g_n, d1a_n, _, _ = tbl.f1_f2(0.5 * (u + u_prev), j, b0, b1)
+                    else:
+                        _, _, f2g_n, f2a_n = tbl.f1_f2(u, j, b0, b1)
+                        _, _, f2g_1, f2a_1 = tbl.f1_f2(u_prev, j, b0, b1)
+                        d1g_n, d1a_n = (f2g_n - f2g_1) / du_n, (f2a_n - f2a_1) / du_n
+                    du_p = u_prev - u_prev2
+                    if abs(du_p) < ADAA_TOL_2:
+                        d1g_p, d1a_p, _, _ = tbl.f1_f2(0.5 * (u_prev + u_prev2), j, b0, b1)
+                    else:
+                        _, _, f2g_1, f2a_1 = tbl.f1_f2(u_prev, j, b0, b1)
+                        _, _, f2g_2, f2a_2 = tbl.f1_f2(u_prev2, j, b0, b1)
+                        d1g_p, d1a_p = (f2g_1 - f2g_2) / du_p, (f2a_1 - f2a_2) / du_p
+                    cig = (d1g_n - d1g_p) / du2
+                    cia = (d1a_n - d1a_p) / du2
+                p0_prev2, p1_prev2 = p0_prev, p1_prev
+                p0_prev, p1_prev = p0, p1
+                u_prev2, u_prev = u_prev, u
+
             di0 = cig - ig0
             di1 = cia - ia0
 
@@ -242,6 +370,11 @@ class CutdownStage:
             x0, x1, x2 = nx0, nx1, nx2
 
         self.x[0], self.x[1], self.x[2] = x0, x1, x2
+        self.lp_x, self.lp_y = lp_x, lp_y
+        self.p_prev = [p0_prev, p1_prev]
+        self.p_prev2 = [p0_prev2, p1_prev2]
+        self.j_prev = j_prev
+        self.pg0, self.pg1, self.pa0, self.pa1 = pg0, pg1, pa0, pa1
         return rec
 
     def _process_internal_newton(self, vin, record):
