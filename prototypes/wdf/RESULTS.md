@@ -1,3 +1,5 @@
+> **Reference implementation only**, not the shipping core. The AU / VST 3 plugin and the realtime C++ path use the nodal DK stage (`../fullstage/cpp/`). This tree is kept so the same circuit can be compared as a wave digital filter. See [README.md](README.md).
+
 # WDF stage vs DK stage: accuracy, CPU, parameter-change cost (#12, 18 Nov 2026)
 
 `python -m wdf.validate --workers 4` (from `prototypes/wdf`) → `wdf/results.json`; `python -m pytest -q` → **79 passed**.
