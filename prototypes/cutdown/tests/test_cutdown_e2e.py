@@ -30,11 +30,12 @@ def linear_chain_shifted(stage, f):
 
 
 VARIANTS = [
-    pytest.param(dict(miller_lpf=False, adaa=0), id="baseline"),
-    pytest.param(dict(miller_lpf=True, adaa=0), id="method_a"),
-    pytest.param(dict(miller_lpf=False, adaa=1), id="method_b1"),
-    pytest.param(dict(miller_lpf=False, adaa=2), id="method_b2"),
-    pytest.param(dict(miller_lpf=True, adaa=1), id="method_ab1"),
+    pytest.param(dict(miller_lpf=False, adaa=0, treble_comp=False), id="baseline"),
+    pytest.param(dict(miller_lpf=True, adaa=0, treble_comp=False), id="method_a"),
+    pytest.param(dict(miller_lpf=False, adaa=1, treble_comp=False), id="method_b1"),
+    pytest.param(dict(miller_lpf=False, adaa=2, treble_comp=False), id="method_b2"),
+    pytest.param(dict(miller_lpf=True, adaa=1, treble_comp=False), id="method_ab1"),
+    pytest.param(dict(miller_lpf=True, adaa=1, treble_comp=True), id="method_ab1c"),
 ]
 
 

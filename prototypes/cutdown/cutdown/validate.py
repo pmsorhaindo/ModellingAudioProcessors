@@ -40,22 +40,29 @@ def small_signal(stage, f):
     return 20 * np.log10(Hs), 20 * np.log10(Hc)
 
 
-def run(T=0.5, shape=(128, 32), interp="cubic0_lin1", solver_mode="lut", miller_lpf=False, adaa=0):
+def run(T=0.5, shape=(128, 32), interp="cubic0_lin1", solver_mode="lut",
+        miller_lpf=False, adaa=0, treble_comp=False):
     """Run op, AC (20 Hz-20 kHz), sine harmonics (0.05/0.5/2/8 V), and 4 V burst against dz & koren refs."""
-    kw = dict(shape=shape, interp=interp, solver_mode=solver_mode, miller_lpf=miller_lpf, adaa=adaa)
+    kw = dict(shape=shape, interp=interp, solver_mode=solver_mode,
+              miller_lpf=miller_lpf, adaa=adaa, treble_comp=treble_comp)
     st = CutdownStage(FS, **kw)
+    tc_gd = st.treble_comp_group_delay_base(1000.0)
+    tot_frac = st.miller_group_delay_base(1000.0) + st.adaa_delay_base + tc_gd
     out = dict(
         fs_base=FS, oversampling=st.os, filter=st.filt, shape=list(shape),
         table_words=st.table.word_count, total_table_words=st.table.total_word_count(st.adaa),
         interp=interp, solver_mode=solver_mode, miller_lpf=st.miller_lpf, adaa=st.adaa,
+        treble_comp=st.treble_comp,
         miller_fc_hz=st.miller_fc_hz if st.miller_lpf else None,
+        treble_comp_coefs=list(st.treble_comp_coefs) if st.treble_comp else None,
         resampler=dict(latency_samples=st.latency_samples, latency_ms=st.rs.latency_ms,
                        macs_up_down=st.resampler_macs),
         added_delay_1k=dict(
             miller_base_samples=st.miller_group_delay_base(1000.0),
             adaa_base_samples=st.adaa_delay_base,
-            total_fractional_base_samples=st.miller_group_delay_base(1000.0) + st.adaa_delay_base,
-            total_fractional_ms=1e3 * (st.miller_group_delay_base(1000.0) + st.adaa_delay_base) / FS,
+            treble_comp_base_samples=tc_gd,
+            total_fractional_base_samples=tot_frac,
+            total_fractional_ms=1e3 * tot_frac / FS,
         ),
         p_dc=st.p_dc.tolist(),
         p0_range=[st.table.p0_min, st.table.p0_max],
@@ -212,11 +219,12 @@ def aliasing_sweep(workers=None, variants=None, **kw):
 
 
 VARIANTS = [
-    ("baseline", dict(miller_lpf=False, adaa=0)),
-    ("method_a", dict(miller_lpf=True, adaa=0)),
-    ("method_b1", dict(miller_lpf=False, adaa=1)),
-    ("method_b2", dict(miller_lpf=False, adaa=2)),
-    ("method_ab1", dict(miller_lpf=True, adaa=1)),
+    ("baseline", dict(miller_lpf=False, adaa=0, treble_comp=False)),
+    ("method_a", dict(miller_lpf=True, adaa=0, treble_comp=False)),
+    ("method_b1", dict(miller_lpf=False, adaa=1, treble_comp=False)),
+    ("method_b2", dict(miller_lpf=False, adaa=2, treble_comp=False)),
+    ("method_ab1", dict(miller_lpf=True, adaa=1, treble_comp=False)),
+    ("method_ab1c", dict(miller_lpf=True, adaa=1, treble_comp=True)),
 ]
 
 
@@ -238,6 +246,7 @@ def paper_opcount_estimate():
         method_b1=dict(muls=121, adds=137, arith_ops=258, divs=2, table_words=16384),
         method_b2=dict(muls=153, adds=171, arith_ops=324, divs=4, table_words=24576),
         method_ab1=dict(muls=127, adds=141, arith_ops=268, divs=2, table_words=16384),
+        method_ab1c=dict(muls=130, adds=143, arith_ops=273, divs=2, table_words=16384),
     )
     return dict(
         note="ESTIMATE of arithmetic & memory operations (issue #24 measures real DSP56300 cycles).",
@@ -271,7 +280,7 @@ def main():
     combined_recs = alias_res["records"] + full_dk["aliasing"]["records"] + gt_64x
     summary = dict(
         wall_s=time.perf_counter() - t0,
-        cutdown=variant_res["baseline"],
+        cutdown=variant_res["method_ab1c"],
         variants=variant_res,
         ablations=dict(bilinear_64x64=bilinear_res, newton_3state=newton3_res),
         full_dk_refs=dict(

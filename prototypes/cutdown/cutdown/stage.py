@@ -39,7 +39,7 @@ class CutdownStage:
     def __init__(self, fs, bias=1.0, drive=1.0, output=1.0, triode=DZ_12AX7_RSD1,
                  shape=DEFAULT_SHAPE, p0_span=DEFAULT_P0_SPAN, p1_span=DEFAULT_P1_SPAN,
                  interp="cubic0_lin1", oversampling=OVERSAMPLING, filt=RESAMPLER_KIND,
-                 solver_mode="lut", miller_lpf=False, adaa=0):
+                 solver_mode="lut", miller_lpf=True, adaa=1, treble_comp=True):
         if solver_mode not in SOLVER_MODES:
             raise ValueError(f"solver_mode must be one of {SOLVER_MODES}, got {solver_mode!r}")
         adaa = int(adaa)
@@ -63,6 +63,7 @@ class CutdownStage:
         self.solver_mode = solver_mode
         self.miller_lpf = bool(miller_lpf)
         self.adaa = adaa
+        self.treble_comp = bool(treble_comp)
         self.ev = (currents, currents_only)
 
         self.m = circuit.build(self.fs, rk_scale=self.bias)
@@ -71,6 +72,7 @@ class CutdownStage:
         self._rest()
         self._build_table()
         self._build_miller_filter()
+        self.treble_comp_coefs = circuit.treble_comp_coefs(self.fs_base, self.fs)
         self.reset()
 
     def operating_point(self):
@@ -120,6 +122,8 @@ class CutdownStage:
         self.v_prev = list(self.v)
         self.lp_x = 0.0
         self.lp_y = 0.0
+        self.tc_x = 0.0
+        self.tc_y = 0.0
         self.p_prev = [float(self.p_dc[0]), float(self.p_dc[1])]
         self.p_prev2 = list(self.p_prev)
         self.j_prev = -1
@@ -148,21 +152,31 @@ class CutdownStage:
         """Base-rate delay of process() output vs input (nominal 1 kHz group delay for IIR)."""
         return self.rs.latency_samples
 
-    def miller_group_delay_base(self, f=1000.0):
-        """Group delay (base-rate samples) of the Method A 1-pole IIR LPF at frequency f (0 if disabled)."""
-        if not self.miller_lpf:
-            return 0.0
-        b0, b1, p = self.miller_coefs
+    @staticmethod
+    def _first_order_group_delay(coefs, f, fs):
+        """Group delay (samples at rate fs) of H(z) = (b0 + b1 z^-1) / (1 - p z^-1) at frequency f."""
+        b0, b1, p = coefs
         df = 1.0
-        w1 = 2.0 * math.pi * (float(f) - df) / self.fs
-        w2 = 2.0 * math.pi * (float(f) + df) / self.fs
+        w1 = 2.0 * math.pi * (float(f) - df) / float(fs)
+        w2 = 2.0 * math.pi * (float(f) + df) / float(fs)
         z1 = complex(math.cos(w1), -math.sin(w1))
         z2 = complex(math.cos(w2), -math.sin(w2))
         h1 = (b0 + b1 * z1) / (1.0 - p * z1)
         h2 = (b0 + b1 * z2) / (1.0 - p * z2)
-        ph1 = math.atan2(h1.imag, h1.real)
-        ph2 = math.atan2(h2.imag, h2.real)
-        return (-(ph2 - ph1) / (w2 - w1)) / self.os
+        dphi = math.atan2((h2 * h1.conjugate()).imag, (h2 * h1.conjugate()).real)
+        return -dphi / (w2 - w1)
+
+    def miller_group_delay_base(self, f=1000.0):
+        """Group delay (base-rate samples) of the Method A 1-pole IIR LPF at frequency f (0 if disabled)."""
+        if not self.miller_lpf:
+            return 0.0
+        return self._first_order_group_delay(self.miller_coefs, f, self.fs) / self.os
+
+    def treble_comp_group_delay_base(self, f=1000.0):
+        """Group delay (base-rate samples) of the base-rate treble compensator at f (0 if disabled)."""
+        if not self.treble_comp:
+            return 0.0
+        return self._first_order_group_delay(self.treble_comp_coefs, f, self.fs_base)
 
     @property
     def adaa_delay_base(self):
@@ -409,6 +423,18 @@ class CutdownStage:
             return self._process_internal_lut(vin, record)
         return self._process_internal_newton(vin, record)
 
+    def _apply_treble_comp(self, y):
+        b0, b1, p = self.treble_comp_coefs
+        tc_x, tc_y = self.tc_x, self.tc_y
+        out = np.empty_like(y)
+        for n, x_val in enumerate(y):
+            xv = float(x_val)
+            yv = b0 * xv + b1 * tc_x + p * tc_y
+            tc_x, tc_y = xv, yv
+            out[n] = yv
+        self.tc_x, self.tc_y = tc_x, tc_y
+        return out
+
     def process(self, vin, record=("out",)):
         """Base-rate in, base-rate out (2x IIR oversampling around the 3-state stage)."""
         vin = self.drive * np.asarray(vin, dtype=float)
@@ -416,6 +442,11 @@ class CutdownStage:
         out = {}
         for k, v in rec.items():
             y = self.rs.down(v, channel=k)
-            out[k] = self.output * y if k == "out" else y
+            if k == "out":
+                if self.treble_comp:
+                    y = self._apply_treble_comp(y)
+                out[k] = self.output * y
+            else:
+                out[k] = y
         out["_internal"] = rec
         return out

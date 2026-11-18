@@ -57,6 +57,36 @@ def miller_filter_coefs(fc, fs, f_ref=20000.0):
     return b0, b1, p
 
 
+def treble_comp_coefs(fs_base, fs_internal, f_ref=20000.0):
+    """First-order IIR treble shelf H_C(z) = (b0 + b1 z^-1) / (1 - p z^-1) at base rate fs_base.
+
+    Cancels the small-signal droop |H_ADAA1(f)| = cos(pi*f / fs_internal) of first-order ADAA
+    at internal rate fs_internal. Writing |H_C(w)|^2 = (1 + N*x) / (1 + D*x) in x = 1 - cos(w)
+    gives unit DC gain ((b0 + b1) / (1 - p) = 1). Matching 1 / cos^2(pi*f / fs_internal)
+    analytically at f2 = min(f_ref, 0.45 * fs_base) and f1 = f2 / sqrt(2) (the midpoint in f^2,
+    matching the leading quadratic dB droop) yields closed-form (b0, b1, p).
+    """
+    fs_base = float(fs_base)
+    fs_internal = float(fs_internal)
+    f2 = min(float(f_ref), 0.45 * fs_base)
+    f1 = f2 / math.sqrt(2.0)
+    x1 = 1.0 - math.cos(2.0 * math.pi * f1 / fs_base)
+    x2 = 1.0 - math.cos(2.0 * math.pi * f2 / fs_base)
+    t1 = 1.0 / (math.cos(math.pi * f1 / fs_internal) ** 2)
+    t2 = 1.0 / (math.cos(math.pi * f2 / fs_internal) ** 2)
+    s1 = (t1 - 1.0) / x1
+    s2 = (t2 - 1.0) / x2
+    d_coef = (s1 - s2) / (t2 - t1)
+    n_coef = s2 + t2 * d_coef
+    if abs(d_coef) < 1e-15:
+        p = 0.0
+    else:
+        p = ((d_coef + 1.0) - math.sqrt(max(0.0, 2.0 * d_coef + 1.0))) / d_coef
+    b0 = 0.5 * (1.0 - p) * (1.0 + math.sqrt(max(0.0, 1.0 + 2.0 * n_coef)))
+    b1 = (1.0 - p) - b0
+    return b0, b1, p
+
+
 def netlist(rk_scale=1.0, v=VALUES):
     """3-state netlist (same resistors, sources, ports, and outputs as dk.circuit.netlist; no pF caps)."""
     R = [("src", "in1", v["Rs"]), ("gl", None, v["Rg"]), ("gl", "g", v["Rgs"]), ("ht", "a", v["Ra"]),

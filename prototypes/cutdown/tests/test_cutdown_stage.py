@@ -18,7 +18,7 @@ FS = V.FS
 
 @pytest.fixture(scope="module")
 def res():
-    return V.run()
+    return V.run(miller_lpf=False, adaa=0, treble_comp=False)
 
 
 def test_circuit_reuses_fullstage_values_and_has_3_states():
@@ -79,7 +79,7 @@ def test_operating_point_matches_dz_reference(res, q):
 
 
 def test_small_signal_matches_3state_analog_and_documents_missing_miller_rolloff(res):
-    st = CutdownStage(FS)
+    st = CutdownStage(FS, miller_lpf=False, adaa=0, treble_comp=False)
     r = dk_validate.ref("dz")
     f = np.array(r["ac"]["f"])
     sel = (f >= 20.0) & (f <= 20000.0)
@@ -163,7 +163,7 @@ def test_swap_bias_keeps_state_and_rebuilds_table(new_bias):
 
 
 def test_table_domain_covers_8V_20Hz_and_clamping_is_finite():
-    st = CutdownStage(FS)
+    st = CutdownStage(FS, miller_lpf=False, adaa=0, treble_comp=False)
     t = np.arange(int(0.5 * FS)) / FS
     x_up = st.rs.up(8.0 * np.sin(2 * np.pi * 20 * t))
     m = st.m
@@ -188,10 +188,12 @@ def test_table_domain_covers_8V_20Hz_and_clamping_is_finite():
 
 
 @pytest.mark.parametrize("kw", [
-    dict(miller_lpf=True, adaa=0),
-    dict(miller_lpf=False, adaa=1),
-    dict(miller_lpf=False, adaa=2),
-    dict(miller_lpf=True, adaa=1),
+    dict(miller_lpf=False, adaa=0, treble_comp=False),
+    dict(miller_lpf=True, adaa=0, treble_comp=False),
+    dict(miller_lpf=False, adaa=1, treble_comp=False),
+    dict(miller_lpf=False, adaa=2, treble_comp=False),
+    dict(miller_lpf=True, adaa=1, treble_comp=False),
+    dict(miller_lpf=True, adaa=1, treble_comp=True),
 ])
 def test_variants_silence_and_block_invariance(kw):
     st_sil = CutdownStage(FS, **kw)
@@ -222,7 +224,7 @@ def test_variants_silence_and_block_invariance(kw):
 
 
 def test_miller_cutoff_and_unit_dc_gain():
-    st = CutdownStage(FS, miller_lpf=True)
+    st = CutdownStage(FS, miller_lpf=True, adaa=0, treble_comp=False)
     assert 13500.0 < st.miller_fc_hz < 15000.0
     b0, b1, p = st.miller_coefs
     assert abs((b0 + b1) / (1.0 - p) - 1.0) < 1e-14
@@ -230,7 +232,7 @@ def test_miller_cutoff_and_unit_dc_gain():
 
 
 def test_antiderivatives_match_lut_derivatives():
-    st = CutdownStage(FS, adaa=2)
+    st = CutdownStage(FS, miller_lpf=False, adaa=2, treble_comp=False)
     tbl = st.table
     eps = 1e-6
     for p0 in (-17.0, -5.0, float(st.p_dc[0]), 0.5, 9.0):
@@ -249,7 +251,7 @@ def test_antiderivatives_match_lut_derivatives():
 
 
 def test_method_a_restores_miller_ac_and_burst():
-    res_a = V.run(miller_lpf=True, adaa=0)
+    res_a = V.run(miller_lpf=True, adaa=0, treble_comp=False)
     o = res_a["vs"]["dz"]
     assert o["ac_maxdev_db_chain"] < dk_validate.CRIT["ac_db"]
     assert o["burst"]["min_rel"] < dk_validate.CRIT["burst_min_rel"]
@@ -257,8 +259,37 @@ def test_method_a_restores_miller_ac_and_burst():
     assert o["burst"]["traj_rel"] < dk_validate.CRIT["burst_traj_rel"]
 
 
+def test_default_is_ab1c():
+    st = CutdownStage(FS)
+    assert st.miller_lpf is True
+    assert st.adaa == 1
+    assert st.treble_comp is True
+    assert st.table.total_word_count(st.adaa) == 16384
+
+
+def test_treble_comp_unit_dc_gain_and_cancels_adaa1_droop():
+    st = CutdownStage(FS)
+    b0, b1, p = st.treble_comp_coefs
+    assert abs((b0 + b1) / (1.0 - p) - 1.0) < 1e-14
+    assert abs(p) < 1.0
+    assert abs(st.treble_comp_group_delay_base(1000.0)) < 0.5
+    f = np.geomspace(20.0, 20000.0, 400)
+    combined = np.abs(linear.treble_comp_response(st, f) * linear.adaa_response(st, f))
+    assert np.max(np.abs(20.0 * np.log10(combined))) < 0.05
+
+
+def test_default_ab1c_passes_ac_and_burst_vs_dz():
+    res_c = V.run(miller_lpf=True, adaa=1, treble_comp=True)
+    o = res_c["vs"]["dz"]
+    assert o["ac_maxdev_db_stage"] < dk_validate.CRIT["ac_db"]
+    assert o["ac_maxdev_db_chain"] < dk_validate.CRIT["ac_db"]
+    assert o["burst"]["min_rel"] < dk_validate.CRIT["burst_min_rel"]
+    assert o["burst"]["tau_rel"] < dk_validate.CRIT["burst_tau_rel"]
+    assert o["burst"]["traj_rel"] < dk_validate.CRIT["burst_traj_rel"]
+
+
 def test_swap_bias_updates_miller_and_adaa_cleanly():
-    st = CutdownStage(FS, miller_lpf=True, adaa=1)
+    st = CutdownStage(FS, miller_lpf=True, adaa=1, treble_comp=True)
     fc1 = st.miller_fc_hz
     t = np.arange(1000) / FS
     st.process(2.0 * np.sin(2 * np.pi * 500 * t))

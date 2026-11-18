@@ -37,6 +37,16 @@ def miller_response(stage, f):
     return (b0 + b1 * zi) / (1.0 - p * zi)
 
 
+def treble_comp_response(stage, f):
+    """Complex small-signal response of the base-rate treble compensator at stage.fs_base (1 if disabled)."""
+    f = np.atleast_1d(np.asarray(f, float))
+    if not stage.treble_comp:
+        return np.ones_like(f, dtype=complex)
+    b0, b1, p = stage.treble_comp_coefs
+    zi = np.exp(-2j * np.pi * f / stage.fs_base)
+    return (b0 + b1 * zi) / (1.0 - p * zi)
+
+
 def adaa_response(stage, f):
     """Small-signal linearised frequency response of ADAA at internal rate stage.fs."""
     f = np.atleast_1d(np.asarray(f, float))
@@ -49,14 +59,18 @@ def adaa_response(stage, f):
 
 
 def stage_response(stage, f):
-    """Complex small-signal response of the 3-state stage (with Method A / ADAA if enabled) at internal rate."""
+    """Complex small-signal response of the 3-state stage (with Method A / ADAA / treble comp if enabled)."""
     f = np.atleast_1d(np.asarray(f, float))
     z = np.exp(2j * np.pi * f / stage.fs)
     hlp = miller_response(stage, f)
+    htc = treble_comp_response(stage, f)
     if stage.adaa == 0:
         Al, Bl, Cl, Dl = linearised(stage)
         I = np.eye(Al.shape[0])  # noqa: E741 -- the identity matrix I of the DK equations
-        return np.array([hlp[k] * (Cl @ np.linalg.solve(zz * I - Al, Bl) + Dl)[0, 0] for k, zz in enumerate(z)])
+        return np.array([
+            hlp[k] * htc[k] * (Cl @ np.linalg.solve(zz * I - Al, Bl) + Dl)[0, 0]
+            for k, zz in enumerate(z)
+        ])
 
     m = stage.m
     Mp0 = jacobian_p(stage)
@@ -72,7 +86,7 @@ def stage_response(stage, f):
         Bl = B + C @ Mp @ H
         Cl = D + F @ Mp @ G
         Dl = E + F @ Mp @ H
-        out[k] = hlp[k] * (Cl @ np.linalg.solve(zz * I - Al, Bl) + Dl)[0, 0]
+        out[k] = hlp[k] * htc[k] * (Cl @ np.linalg.solve(zz * I - Al, Bl) + Dl)[0, 0]
     return out
 
 
