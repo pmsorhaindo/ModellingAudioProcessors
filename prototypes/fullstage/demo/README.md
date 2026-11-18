@@ -20,13 +20,15 @@ The five excerpt times, credits, licences, and source links are in [CREDITS.md](
 
 For each excerpt, batch mode writes dry, standard clean/edge/driven, eco driven, and hq driven. All processed batch renders use the FIR resampler at 48 kHz. Stereo channels get separate `Stage` instances. The stage's reported latency is compensated in samples. Output is 24-bit WAV with a 320 kbps MP3 copy. A `--plot vocal` batch also writes dry-versus-driven spectrum and sustained-vocal harmonic PNGs; the note interval is 0.5–2.5 s of the vocal excerpt. Plotting another excerpt writes its spectrum and writes harmonics only if that excerpt has a `note` interval in the manifest.
 
+`$LAB_DIR` below is a placeholder for your own working directory (a virtualenv plus the demo source and output folders).
+
 ```bash
-source /home/box/agent-data/lab/ohm/.venv/bin/activate
+source "$LAB_DIR/.venv/bin/activate"
 pip install pyloudnorm soundfile    # only if missing
 cd prototypes/fullstage
 python demo/render.py batch \
-  --src /home/box/agent-data/lab/ohm/demo/src \
-  --out /home/box/agent-data/lab/ohm/demo/out \
+  --src "$LAB_DIR/demo/src" \
+  --out "$LAB_DIR/demo/out" \
   --plot vocal --jobs 8
 
 # One file; --mono sums channels, while the default keeps stereo.

@@ -18,7 +18,7 @@
   "nproc_online": 8
  },
  "build": {
-  "cxx": "/home/box/agent-data/lab/ohm/cxxenv/bin/x86_64-conda-linux-gnu-g++",
+  "cxx": "<lab-dir>/cxxenv/bin/x86_64-conda-linux-gnu-g++",
   "cxx_version": "x86_64-conda-linux-gnu-g++ (conda-forge gcc 14.4.0-7) 14.4.0",
   "flags": [
    "-std=c++17",
