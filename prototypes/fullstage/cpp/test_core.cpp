@@ -877,10 +877,12 @@ static void test_stereo_misc() {
     a->process(il, ir, il, ir, 480);
     b->process(xl, xr, yl, yr, 480);
     check(std::equal(il, il + 480, yl) && std::equal(ir, ir + 480, yr), "stereo in place");
-    // LaneMath::vector with libm: there is no vector libm, so the per-lane reference runs, bit for bit
+    // Default is LaneMath::vector (used with TriodeMath::fast). With libm there is no vector libm, so the
+    // per-lane reference still runs, bit for bit, including after an explicit switch to per_lane.
     a->reset(); b->reset();
-    a->set_lane_math(LaneMath::vector);
-    check(b->lane_math() == LaneMath::per_lane && a->lane_math() == LaneMath::vector, "lane maths default and switch");
+    check(b->lane_math() == LaneMath::vector, "lane maths default is vector");
+    a->set_lane_math(LaneMath::per_lane);
+    check(a->lane_math() == LaneMath::per_lane && b->lane_math() == LaneMath::vector, "lane maths switch to per_lane");
     a->process(xl, xr, il, ir, 480);
     b->process(xl, xr, yl, yr, 480);
     check(std::equal(il, il + 480, yl) && std::equal(ir, ir + 480, yr), "LaneMath::vector with libm = the per-lane path");

@@ -14,7 +14,8 @@
  *   x2  two independent mono Stages on one thread, left then right in each block (the stereo-equivalent of #20);
  *   s2  one StereoStage (#21): the same left and right signals as x2, as the two SIMD lanes of one kernel, with the
  *       per-lane scalar maths (LaneMath::per_lane, the reference);
- *   v2  (#67, fast math only) the s2 StereoStage with LaneMath::vector (dk/fastmath.h on both lanes at once).
+ *   v2  (#67, fast math only) the s2 StereoStage with LaneMath::vector (dk/fastmath.h on both lanes at once;
+ *       also the StereoStage default when prepared with TriodeMath::fast). The harness sets each mode explicitly.
  * Each pass resets the instances and runs the whole signal through process() block by block; passes of all
  * configurations are interleaved round-robin so that drift (thermal, background load) spreads over all of them.
  * Output is checked bit-identical across passes (process() is deterministic from reset()). Each s2 row also reports

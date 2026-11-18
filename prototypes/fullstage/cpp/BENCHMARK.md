@@ -11,6 +11,11 @@
 > **#67 (13 Nov 2026): the M1 vector-maths run is below** ("Vector-maths stereo results (#67)",
 > `cpp/bench_apple_m1_simd_math.json`). With `LaneMath::vector` one StereoStage costs 1.13–1.21 × one mono instance
 > (fast math), against 1.27–1.35 × for the #21 path in the same run; the ~1.1 × goal is not met.
+>
+> **Default (18 Nov 2026):** with `TriodeMath::fast`, `StereoStage` now defaults to `LaneMath::vector` (the v2 path
+> measured above). `LaneMath::per_lane` remains the bit-exact reference, and the libm path is unchanged (there is no
+> vector libm). The M1 figures still compare the two fast-math options. Accuracy and CPU of vector vs per-lane
+> fast math vs libm still need a dedicated comparison across platforms.
 
 | file | what |
 |---|---|
@@ -38,7 +43,9 @@ configuration runs three ways:
   Both ratios come from the same run.
 - `v2` (#67, fast math only), the **vector-maths stereo path**: the `s2` StereoStage with
   `set_lane_math(LaneMath::vector)`, i.e. `dk/fastmath.h` on both lanes at once (cpp/README.md, "Vector maths").
-  The same signals; `matches_x2` again. Its question is #67's: v2 / x1 against the ~1.1 × goal, and v2 / s2.
+  This is also the default for a `StereoStage` prepared with `TriodeMath::fast`. The harness still sets the mode
+  explicitly so that s2 and v2 can be compared in one run. The same signals; `matches_x2` again. Its question is
+  #67's: v2 / x1 against the ~1.1 × goal, and v2 / s2.
 
 **Matrix: 126 configurations** (#20 records: 72, without `s2`; #21 records: 108, without `v2`), all at 48 kHz, bias 1, drive 1, output 1, default
 Newton settings:

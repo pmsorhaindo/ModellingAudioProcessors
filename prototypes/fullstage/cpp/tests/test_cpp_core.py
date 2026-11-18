@@ -135,7 +135,8 @@ def _vecmath_ok(r):
     bound = {"exp": fm.BOUND["exp"], "exp_full": fm.BOUND["exp"], "log1p": fm.BOUND["log1p"],
              "pow_g1_26": fm.BOUND["pow_g1_26"], "pow_g1_314": fm.BOUND["pow_g1_314"]}
     for k, b in bound.items():
-        assert r[f"vecmath_{k}_max_rel"] <= b and r[f"vecmath_{k}_max_ulp"] <= VECMATH_ULP, (k, r[f"vecmath_{k}_max_rel"])
+        rel, ulp = r[f"vecmath_{k}_max_rel"], r[f"vecmath_{k}_max_ulp"]
+        assert rel <= b and ulp <= VECMATH_ULP, (k, rel, ulp)
         for d in cover.get(k, ()):          # the grid covers every argument the stage passed (dk.fastmath_domain)
             assert r[f"vecmath_{k}_lo"] <= rng[d]["min"] and r[f"vecmath_{k}_hi"] >= rng[d]["max"], (k, d)
     assert r["vecmath_exp_full_lo"] == fm.EXP_LO and r["vecmath_exp_full_hi"] == fm.EXP_HI
@@ -257,11 +258,13 @@ def _bench_rows_ok(rows):
     assert paths == ({"mono", "stereo_simd", "stereo_simd_vecmath"} if vec else {"mono", "stereo_simd"})
     if vec:
         v2 = [r for r in rows if r["path"] == "stereo_simd_vecmath"]
-        assert len(v2) == 18 and all(r["name"].endswith("_v2") and r["instances"] == 2 and r["math"] == "fast" for r in v2)
+        assert len(v2) == 18
+        assert all(r["name"].endswith("_v2") and r["instances"] == 2 and r["math"] == "fast" for r in v2)
         assert all(r["matches_x2"] in (True, False) for r in v2)
         for r in rows:
             two = r["instances"] == 2
-            assert (r["newton_mean_r"] is not None) == two and (r["newton_mean_max"] is not None) == (r["path"] != "mono")
+            assert (r["newton_mean_r"] is not None) == two
+            assert (r["newton_mean_max"] is not None) == (r["path"] != "mono")
             if r["path"] != "mono":                             # max(itL, itR) per sample: >= each mean, <= their sum
                 assert max(r["newton_mean"], r["newton_mean_r"]) <= r["newton_mean_max"] + 1e-4
                 assert r["newton_mean_max"] <= r["newton_mean"] + r["newton_mean_r"] + 1e-4

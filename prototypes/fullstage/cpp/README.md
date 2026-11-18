@@ -105,9 +105,11 @@ functions over intrinsics.
 `Triode`, `solve` and `Stage::tick` written with `V2` for `double`: the same expression trees, with branches turned
 into per-lane selects. The FIR resampler is the same template (`ResamplerT<double>` is the mono `Resampler`,
 `ResamplerT<V2>` the stereo one).
-- exp / log1p / pow (libm or `dk/fastmath.h`) and pnjlim run per lane, as scalar calls to the very same functions
-  (`PerLane<M>`, the default). No vector libm gives libm's bits, and fastmath stays untouched. #67 adds an opt-in
-  vector path for fast math ("Vector maths (#67)" below).
+- With `TriodeMath::libm`, exp / log1p / pow and pnjlim run per lane, as scalar calls to the very same functions
+  (`PerLane<LibmMath>`). There is no vector libm, so libm keeps those bits.
+- With `TriodeMath::fast`, the default is the vector path (`LaneMath::vector`, `VecFastMath`): `dk/fastmath.h` on
+  both lanes at once ("Vector maths (#67)" below). `set_lane_math(LaneMath::per_lane)` selects the #21 scalar-per-lane
+  fast path, which is the bit-exact reference against two mono fast `Stage`s.
 - The SIMD work is therefore everything else: the matrices, the Jacobian and Newton step, the residuals, the line
   search arithmetic and the resampler.
 
@@ -188,12 +190,13 @@ It asserts the SIMD path in use (neon / sse2 / scalar), and `stereo_exact == 1` 
 
 ## Vector maths (#67)
 
-`StereoStage::set_lane_math(LaneMath::vector)` (any thread, read once per block like the gains) makes the stereo
-kernel evaluate the fast triode maths on both lanes at once (`VecFastMath`) instead of per lane. The default stays
-`LaneMath::per_lane`, the #21 path above, which is also the bit-exact reference. With `TriodeMath::libm` the setting
-changes nothing: there is no vector libm, so libm keeps the per-lane calls. Mono `Stage` is not touched (its output
-hashes are identical to main at `-O0`, `-O2`, `-O3`, `-O2 -ffp-contract=off` and x86-64 `-O2`, 13 Nov 2026, scratch
-check, not committed; the same hash covers the per-lane stereo path).
+With `TriodeMath::fast`, `StereoStage` defaults to `LaneMath::vector`: the stereo kernel evaluates the fast triode
+maths on both lanes at once (`VecFastMath`). `set_lane_math(LaneMath::per_lane)` (any thread, read once per block
+like the gains) selects the #21 path above, which is also the bit-exact reference against two mono fast `Stage`s.
+With `TriodeMath::libm` the setting changes nothing: there is no vector libm, so libm keeps the per-lane calls.
+Mono `Stage` is not touched (its output hashes are identical to main at `-O0`, `-O2`, `-O3`,
+`-O2 -ffp-contract=off` and x86-64 `-O2`, 13 Nov 2026, scratch check, not committed; the same hash covers the
+per-lane stereo path).
 
 **What it is.** `dk/fastmath.h` (#18) vectorised lane-wise: the same algorithm, tables, constants and expressions
 as `fm_exp`, `fm_log1p` and `fm_pow`, with `V2` for `double` and a 2 × 64-bit integer vector for the bit tricks
@@ -451,10 +454,10 @@ s.prepare(48000.0);           // standard 8x, bias 1, libm
 s.process(in, out, n);        // audio thread
 s.request_bias(1.5);          // any non-RT thread
 
-dkcore::StereoStage st;       // #21: L and R in one SIMD kernel, the same results as two Stages
-st.prepare(48000.0);
+dkcore::StereoStage st;       // #21: L and R in one SIMD kernel
+st.prepare(48000.0, dkcore::STANDARD, 1.0, dkcore::TriodeMath::fast);
+// with fast math, LaneMath::vector is the default (#67); per_lane is the bit-exact reference
+// st.set_lane_math(dkcore::LaneMath::per_lane);
 st.set_drive(1.0, 1.0);       // per channel (or set_drive(g) for both)
-// #67, optional: with TriodeMath::fast (prepare's 4th argument), the fast maths on both lanes at once
-// st.set_lane_math(dkcore::LaneMath::vector);
 st.process(inL, inR, outL, outR, n);
 ```

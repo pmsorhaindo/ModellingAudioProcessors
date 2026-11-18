@@ -38,8 +38,9 @@
  * Stereo (#21): StereoStage runs left and right as the two lanes of one 2 x double SIMD kernel (namespace simd:
  * NEON, SSE2 or a portable struct) on one shared pack. Each lane does the mono operations in the mono order, so a
  * StereoStage matches two independent mono Stages (cpp/README.md, "Stereo"). Threads and denormals as for Stage.
- * Its lane maths (#67): LaneMath::per_lane (default: exp / log1p / pow and pnjlim as scalar calls per lane) or
- * LaneMath::vector (with TriodeMath::fast: dk/fastmath.h on both lanes at once, VecFastMath).
+ * Its lane maths (#67): with TriodeMath::fast, LaneMath::vector is the default (dk/fastmath.h on both lanes at
+ * once, VecFastMath). LaneMath::per_lane is the #21 bit-exact reference (scalar exp / log1p / pow and pnjlim
+ * per lane). With TriodeMath::libm both settings run the per-lane reference: there is no vector libm.
  *
  * Do not build with -ffast-math: the fallback relies on NaN / inf comparisons.
  */
@@ -96,8 +97,8 @@ inline constexpr int LS_MAX = 10;
 inline constexpr double VCRIT = 0.0;
 
 enum class TriodeMath : std::uint8_t { libm, fast };
-// StereoStage only (#67): how the two lanes evaluate the triode maths. vector applies to TriodeMath::fast; there is
-// no vector libm, so with TriodeMath::libm both run the per-lane reference.
+// StereoStage only (#67): how the two lanes evaluate the triode maths. The default is vector, which applies to
+// TriodeMath::fast only; there is no vector libm, so with TriodeMath::libm both settings run the per-lane reference.
 enum class LaneMath : std::uint8_t { per_lane, vector };
 
 struct Quality { int os; double prewarp_hz; };          // prewarp_hz <= 0: plain trapezoidal
@@ -1280,7 +1281,8 @@ public:
     void set_drive(double g) { set_drive(g, g); }
     void set_output(double l, double r) { output_[0].store(l, std::memory_order_relaxed); output_[1].store(r, std::memory_order_relaxed); }
     void set_output(double g) { set_output(g, g); }
-    // the lane maths (#67), read once per block like the gains; default per_lane (the #21 reference)
+    // the lane maths (#67), read once per block like the gains; default vector (used with TriodeMath::fast;
+    // per_lane is the #21 bit-exact reference). With libm the setting is ignored.
     void set_lane_math(LaneMath m) { lane_math_.store(m, std::memory_order_relaxed); }
     LaneMath lane_math() const { return lane_math_.load(std::memory_order_relaxed); }
 
@@ -1394,7 +1396,7 @@ private:
     std::uint64_t kernel_iterations_ = 0;
     // shared
     std::atomic<double> drive_[2] = {{1.0}, {1.0}}, output_[2] = {{1.0}, {1.0}};
-    std::atomic<LaneMath> lane_math_{LaneMath::per_lane};
+    std::atomic<LaneMath> lane_math_{LaneMath::vector};
     static_assert(std::atomic<LaneMath>::is_always_lock_free, "lock-free lane maths switch");
 };
 

@@ -1,6 +1,6 @@
 """Per-instance CPU benchmark of the C++ core (#20; stereo SIMD rows #21; vector-maths rows #67): builds cpp/bench.cpp,
-runs it, and writes one results file with the host, build and power / thermal / load state next to the measurements. Method and results:
-cpp/BENCHMARK.md. Run from prototypes/fullstage:
+runs it, and writes one results file with the host, build and power / thermal / load state next to the measurements.
+Method and results: cpp/BENCHMARK.md. Run from prototypes/fullstage:
   python -m cpp.bench --out cpp/bench_<machine>_simd_math.json  # the official run: 126 configurations (x1, x2,
                                                                  # s2, v2), -O3, 2 s x 11 passes
   python -m cpp.bench --only standard_libm --reps 5        # a subset (bench.cpp --only), not for the record
@@ -180,9 +180,12 @@ def table(rec):
                     one, two, s2 = ({b: R.get((q, m, v, b, mode)) for b in (64, 512)} for mode in ("x1", "x2", "s2"))
                     match = {r.get("matches_x2") for r in w.values() if r}
                     lines.append(f"| {q} {os_[q]}× | {m} | {v:g} V | {_ratio(w[64], one[64], 'ns_per_sample')} | "
-                                 f"{_ratio(w[512], one[512], 'ns_per_sample')} | {_ratio(w[64], two[64], 'ns_per_sample')} | "
-                                 f"{_ratio(w[512], two[512], 'ns_per_sample')} | {_ratio(w[64], s2[64], 'ns_per_sample')} | "
-                                 f"{_ratio(w[512], s2[512], 'ns_per_sample')} | {_ratio(w[64], one[64], 'cycles_per_sample')} | "
+                                 f"{_ratio(w[512], one[512], 'ns_per_sample')} | "
+                                 f"{_ratio(w[64], two[64], 'ns_per_sample')} | "
+                                 f"{_ratio(w[512], two[512], 'ns_per_sample')} | "
+                                 f"{_ratio(w[64], s2[64], 'ns_per_sample')} | "
+                                 f"{_ratio(w[512], s2[512], 'ns_per_sample')} | "
+                                 f"{_ratio(w[64], one[64], 'cycles_per_sample')} | "
                                  f"{_ratio(w[64], s2[64], 'cycles_per_sample')} | "
                                  f"{'yes' if match == {True} else 'NO' if False in match else '—'} |")
         lines.append("")
