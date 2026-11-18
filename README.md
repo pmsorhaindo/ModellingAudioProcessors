@@ -16,6 +16,7 @@ will not use a brand or device name.
 | `prototypes/fullstage/` | one valve gain stage with its reactive parts: ngspice references, the nodal DK model in Python (`dk/`, `dk6as6/`), demo renders (`demo/`) |
 | `prototypes/fullstage/cpp/` | **the realtime core**: header-only C++17 port of the 12AX7 stage (`dk_core.h`), its tests and CPU benchmark |
 | `plugin/` | the AU v2 + VST 3 wrapper of that core (temporary name), its build, tests and checks (`plugin/README.md`) |
+| `prototypes/wdf/` | **reference only**, not the shipping core: the same 12AX7 stage as a wave digital filter in Python (R-type root, triode solved by Newton), compared with the DK stage. The plugin does not depend on it |
 
 ## Status (18 Nov 2026)
 **Done**
@@ -35,6 +36,11 @@ will not use a brand or device name.
 - **Plugin, first loadable build** (`plugin/README.md`, #22). AU v2 and VST 3 wrappers of the stereo 12AX7 stage,
   under a temporary name. Parameters: Drive, Bias, Output, Quality and Bypass. On the M1 it passes the Steinberg
   validator and `auval`, and offline renders through both plugins null exactly against the C++ core.
+- **WDF reference** (#12, `prototypes/wdf/README.md`, `prototypes/wdf/RESULTS.md`). A wave digital filter version of
+  the 12AX7 stage, kept as a reference implementation for comparison, not as the shipping core. It passes the DK
+  stage's criteria in every setting, with the same output as the DK stage to ≤ 7.4e-8 V. In Python it is 0.92–0.94×
+  the DK stage's time per sample, and a bias change costs it 0.12× (no DC solve). The plugin and the C++ core do not
+  depend on it.
 - Research notes: [grid current](prototypes/research/grid-current.md),
   [panel controls](prototypes/research/culture-vulture-controls.md),
   [6AS6 datasheets](prototypes/research/6as6-datasheets.md).
@@ -47,8 +53,6 @@ will not use a brand or device name.
 - Octatrack effect-slot port: a cut-down table model (#23) and a DSP56300 cycle count (#24). Nothing has run on
   that hardware; by the estimate in `prototypes/fullstage/research/octatrack-budget.md` the full model does not fit
   a slot at any oversampling factor.
-- WDF version of the stage, for comparison (#12). An exploration; the plugin does not wait for it.
-
 **Known problems**
 - CI runs the Linux jobs on pull requests and pushes to main, and a blocking macOS arm64 fullstage job on pull
   requests and manual runs (#72, #85), plus a macOS plugin build-and-check job with the same gating (#22). The

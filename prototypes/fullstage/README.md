@@ -2,8 +2,8 @@
 
 Goal: model a full common-cathode stage (coupling caps, bypassed cathode, plate load, grid current) so
 bias shift, blocking and recovery come out of the circuit. The nodal DK method came first, then the 6AS6 stage and
-the C++ core. A wave digital filter version for comparison is still open (#12); the plugin (#22) does not wait
-for it.
+the C++ core. A wave digital filter **reference** of the same stage (not the shipping core) is in `../wdf/` (#12); the plugin
+and the C++ core do not depend on it.
 
 | folder | what | status |
 |---|---|---|
@@ -13,7 +13,7 @@ for it.
 | `dk/` | nodal DK prototype in Python/NumPy with streaming half-band resamplers, Drive/Bias/Output, quality settings hq 16× / standard 8× (default) / eco 4× + small-cap pre-warp | all tests pass in every setting (small-signal worst 0.013 / 0.052 / 0.054 dB; plain 4× fails with 0.21 dB from trapezoidal warping) — see `dk/RESULTS.md` |
 | `dk6as6/`, `spice6as6/` | the 6AS6 stage (#26): same passives as the 12AX7 stage, screen / suppressor at Ec2 = 120 V / Ec3 = 0 V, the fit6as6 `dual_control` law (#55); nodal DK in `dk6as6/` (reusing `dk/`'s resampler, stage controls and tolerances), its same-model ngspice reference in `spice6as6/` | standard 8× and hq 16× pass the 12AX7 criteria against the same-model reference — see `dk6as6/RESULTS.md` |
 | `cpp/` | header-only realtime C++17 core of the 12AX7 DK stage (#19): fixed-size state, no allocation in `process()`, FTZ/DAZ guard, lock-free coefficient swap, #7 fallback, hq / standard / eco with the FIR resampler | reproduces `dk/results.json` in every setting (harmonics to 5.5e-8 dB, identical Newton histograms) — see `cpp/README.md` |
-| WDF version | — | not started (#12): an exploration for comparison, not on the plugin's path |
+| `../wdf/` | WDF **reference** (#12), not the shipping core: R-type root with the triode's two ports (Werner et al., DAFx-15), reusing `dk/`'s values, triode, Newton, quality settings, resamplers and `dk.validate` | passes the DK criteria in every setting; same output as DK to ≤ 1e-7 V — see `../wdf/README.md` and `../wdf/RESULTS.md`. Kept for comparison; the plugin and the C++ core do not depend on it |
 
 **Circuit values are example values, not Culture Vulture values** (`dk/circuit.VALUES`, the single source for every
 ngspice netlist, which `spice/run_refs.py` generates; see `spice/README.md`).
