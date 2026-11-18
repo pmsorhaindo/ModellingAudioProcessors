@@ -25,6 +25,7 @@ plugin to them, and old sessions will not find it.
 | `src/vst3/map_vst3.cpp` | VST 3 processor, controller and factory |
 | `src/au/map_au.cpp` | AU v2 effect (`ausdk::AUEffectBase`) |
 | `src/*/Info.plist.in` | bundle plists, filled from `map_identity.h` |
+| `tests/smoothing_test.cpp` | #73: full-range Drive / Output / Bias moves during a sine and silence (worst step vs a continuous reference, stated limits), block sizes 16 / 64 / 512, the Drive ramp vs aliasing ([results](../prototypes/fullstage/cpp/RESULTS-smoothing.md)) |
 | `tests/engine_test.cpp` | engine tests: exact null vs the core (3 qualities × 44.1 / 48 / 96 kHz, stereo and mono), no allocation in `process()`, bypass, live quality / bias switch, NaN input |
 | `tests/null_vst3.cpp`, `tests/null_au.cpp` | offline renders **through the built plugins** (VST 3 hosting classes; AudioComponent API), compared to the direct core |
 | `tests/run_checks.sh` | runs all of the above, plus the Steinberg validator and (with `--au`) auval |
@@ -56,7 +57,7 @@ v1 scope (#75 option A): these and no more.
 | parameter | range (default) | what |
 |---|---|---|
 | Drive | 0–8 × (1) | linear gain on the input, before the stage (20 ms ramp in the wrapper) |
-| Bias | 0.5–2.0 × Rk (1) | cathode resistor scale (1.0 = 1.5 kΩ), via the core's `request_bias()` block-boundary swap |
+| Bias | 0.5–2.0 × Rk (1) | cathode resistor scale (1.0 = 1.5 kΩ); 20 ms ramp in the core (`set_bias`, #73) |
 | Output | 0–4 × (1) | linear gain after the stage (20 ms ramp in the wrapper) |
 | Quality | Eco 4× / Standard 8× / HQ 16× (Standard) | `dkcore::ECO`, `STANDARD`, `HQ`; latency 69 / 72 / 73 samples |
 | Bypass | off / on | wrapper-level, 10 ms crossfade to the dry input delayed by the latency (the host's AU bypass property and the VST 3 `kIsBypass` parameter both drive it) |
@@ -64,8 +65,15 @@ v1 scope (#75 option A): these and no more.
 - **Bias range.** The core's reference vectors cover bias 1.0 and 1.5. The range ends 0.5 and 2.0 build a pack and
   solve the DC point (checked in `engine_test`), but have not been validated further. A bias whose build fails is
   never published: the stage keeps its last pack.
-- **Bias is not smoothed.** A change jumps the matrices at a block boundary, as in the core. Proper bias smoothing
-  is #73.
+- **Bias smoothing (#73).** The audio thread passes the target to the running stage once per 256-sample chunk.
+  The core ramps there over 20 ms, one exact pack per base sample from its bias line. It does no matrix build, takes
+  no lock and allocates nothing, and the worker is not involved. A full-range move steps by at most 1.2e-4 FS at Drive
+  8, against 0.108 FS for the old single swap. The circuit's own operating-point transient (a thump) remains: it is
+  physical and present in the continuous reference. Details:
+  [RESULTS-smoothing.md](../prototypes/fullstage/cpp/RESULTS-smoothing.md).
+- **Drive and aliasing.** The Drive ramp multiplies the host-rate input before the stage, so it runs before the
+  upsampler. Against the same ramp applied per internal sample after the upsampler, the in-band difference is
+  −99.5 dB or less (`tests/smoothing_test.cpp`).
 
 ## Host full scale ↔ volts (provisional)
 
@@ -88,7 +96,7 @@ core's own drive and output stay 1.0.
 | `Engine::prepare()` / `release()` | non-RT, never concurrently with `process()` | VST 3 `setActive`, AU `Initialize` / `Cleanup`; prepares at the host's actual sample rate |
 | `Engine::set_*()` / `request_reset()` | any, including the audio thread | relaxed atomics |
 | `Engine::process()` | audio thread | no allocation, locks or syscalls (allocation counted in `engine_test`); holds `ScopedFlushDenormals`; works in fixed 256-sample chunks |
-| worker thread | the engine's own, started by `prepare()` | polls every 5 ms; the only caller of `request_bias()` (mutex + matrix build) and of `prepare()` for a quality change |
+| worker thread | the engine's own, started by `prepare()` | polls every 5 ms; runs the stage `prepare()` for a quality change (bias no longer goes through it, #73) |
 
 **Quality change without stopping the host.** `prepare()` of a stage must not run while that stage is processed,
 so the engine owns two stages. The worker prepares the idle one at the new quality and publishes it. The audio thread
@@ -104,8 +112,8 @@ stage only after that acknowledgement. Latency reporting:
 - Sample rates other than 48 kHz are untested against the reference (#74). The plugin prepares at whatever rate the
   host gives. The wrapper's nulls were run at 44.1, 48 and 96 kHz, and the validators process at many more rates;
   neither tells whether the model is accurate there.
-- Bias and Quality changes reach the stage through the worker. They land about 5 ms (wall clock) after the parameter
-  changes, also in an offline render that runs faster than real time.
+- Quality changes reach the stage through the worker. They land about 5 ms (wall clock) after the parameter changes,
+  also in an offline render that runs faster than real time. Bias changes are sample-aligned (since #73).
 - VST 3: the host may re-read the latency right after `restartComponent` and before the Quality change has reached
   the processor through `process()`. It then sees the old value until it asks again (e.g. on the next activation).
 - Reported tail: latency + 0.2 s, about 6 × the slowest time constant of the circuit values (Ck · Rk = 33 ms). This is

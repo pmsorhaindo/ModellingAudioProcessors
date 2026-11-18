@@ -46,8 +46,8 @@ will not use a brand or device name.
   [6AS6 datasheets](prototypes/research/6as6-datasheets.md).
 
 **Not done** (see the issues)
-- **The plugin is a first build only.** Still open: a working name, after which the IDs change (#75); bias
-  smoothing (#73); host sample rates other than 48 kHz, which are untested against the reference (#74); and a
+- **The plugin is a first build only.** Still open: a working name, after which the IDs change (#75); host
+  sample rates other than 48 kHz, which are untested against the reference (#74); and a
   calibrated mapping from host full scale to the stage's volts (the current one is provisional).
 - Stereo vector maths (#67, draft PR #68) and the x86-64 stereo benchmark (#76).
 - Octatrack effect-slot port: a cut-down table model (#23) and a DSP56300 cycle count (#24). Nothing has run on

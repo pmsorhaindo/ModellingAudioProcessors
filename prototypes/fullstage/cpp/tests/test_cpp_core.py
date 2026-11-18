@@ -19,6 +19,8 @@ clang++): skipped without one, except under CI (CI set in the environment), wher
                            checked (cpp/BENCHMARK.md)
   test_bench_records       the committed cpp/bench_*.json results files are complete and well formed (#20 72-row,
                            #21 108-row and #67 126-row schemas)
+  test_bias_options_smoke  cpp/bias_options.cpp (#73, the bias-update options of cpp/RESULTS-smoothing.md) builds
+                           and runs one move; the bias line beats every other option on its worst step (no timing)
 Run from prototypes/fullstage:  python -m pytest -q cpp/tests   (~15 s)
 """
 import glob
@@ -283,6 +285,16 @@ def test_bench_smoke():
     m = d["meta"]
     if _stereo_exact_expected(("-O2",), False, m["compiler"], m["fma"]):   # then s2 and v2 equal x2 bit for bit
         assert all(r["matches_x2"] for r in d["results"] if r["path"] != "mono"), (m["compiler"], m["fma"])
+
+
+def test_bias_options_smoke():
+    p = subprocess.run([_exe(name="bias_options"), "--smoke"], capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr[-2000:]
+    d = json.loads(p.stdout.strip().splitlines()[-1])
+    for case in ("up|0", "up|8"):
+        line = d[f"bias line|{case}"]
+        others = [v for k, v in d.items() if k.endswith("|" + case) and not k.startswith("bias line")]
+        assert len(others) == 7 and line * 10 < min(others), (case, line, others)
 
 
 def test_bench_records():
