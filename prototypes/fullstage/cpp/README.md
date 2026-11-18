@@ -7,12 +7,13 @@ stays the reference. Everything here is checked against it.
 | file | what |
 |---|---|
 | `dk_core.h` | the core: `dkcore::Stage`, `StereoStage` (#21), `build_coeffs`, `solve` / `solve2`, `Triode` / `Triode2`, `PerLane` / `VecFastMath` (#67), `Resampler`, `simd`, `ScopedFlushDenormals`, `TripleBuffer` |
-| `test_core.cpp` | test harness: vector tests, allocation counting, FTZ, threaded swap, #7 fallback, stereo parity; plus `cli` / `solve` / `triode` / `swap` / `stereo` modes |
+| `test_core.cpp` | test harness: vector tests, allocation counting, FTZ, threaded swap, #7 fallback, stereo parity; plus `cli` / `solve` / `triode` / `swap` / `stereo` / `rates` modes |
 | `export_vectors.py` | writes `vectors.txt` from the Python stage (`python -m cpp.export_vectors`, ~3 s) |
 | `vectors.txt` | the reference vectors (generated, exact shortest-repr floats, 365 kB) |
 | `validate_cpp.py` | runs `dk.validate.run` on the C++ core and compares it to `dk/results.json`; writes `results.json` |
 | `matrix_rounding.py` | the measurement behind the "built" tolerance below |
 | `tests/test_cpp_core.py` | the pytest that CI runs (part of `python -m pytest -q` in `prototypes/fullstage`) |
+| `results_sample_rates.json`, `results_internal_rate_proposal.json` | #74 host-rate measurements, including failed aliasing checks |
 | `results.json` | committed run of `validate_cpp` (6–7 Nov 2026, this lab VM) |
 | `bench.cpp`, `bench.py`, `BENCHMARK.md` | the #20 per-instance CPU benchmark: harness, runner, method and results |
 | `build.py` | the compile helper shared by `validate_cpp.py`, `bench.py` and the tests |
@@ -413,11 +414,65 @@ at 2.29 iterations. The resampler is ~0.24 µs, ~7 %: it still multiplies the ha
 arithmetic stays the Python order. The Python stage takes 6.4 s per second of audio at standard (dk/RESULTS.md);
 the C++ core takes 0.14–0.18 s (about 40× less).
 
+## Host sample rates (#74, 18 Nov 2026)
+
+`python -m dk.sample_rates --backend cpp` uses the existing `validate_cpp.CppStage` adapter at the requested
+base rate: actual C++ `process()` for harmonics, burst and aliasing, C++ coefficients for analytical small signal.
+Full reference checks and offset sweeps are mono, FIR / libm, double precision. Fixed **HQ 16× / standard 8× /
+eco 4× + 17.3 kHz pre-warp** at every rate; no core behavior changed.
+`results_sample_rates.json` contains the full per-setting data and 19-tone offset sweeps at 2 / 8 V.
+The existing DZ ngspice reference, `validate.CRIT`, #70 1e-9 V rest tolerance and 48 kHz `LIMIT_DBC` stay unchanged.
+
+Worst over the three settings at each rate: AC and tested H2–H5 in dB (both limits 0.1); burst shift / τ /
+trajectory error in % (limits 0.5 / 1 / 0.5); rest is the first 100 ms maximum in volts.
+
+| host kHz | AC chain dB | H2–H5 dB | burst % | rest V | failed aliasing checks |
+|---|---|---|---|---|---|
+| 44.1 | 0.06359 | 0.019561 | 0.0977 / 0.0622 / 0.0168 | 0 | hq 2V, standard 2V, standard 8V, eco 2V |
+| 48 | 0.05380 | 0.016495 | 0.0308 / 0.0408 / 0.0078 | 1.22e-13 | none |
+| 88.2 | 0.01547 | 0.004900 | 0.0355 / 0.0178 / 0.0057 | 0 | none |
+| 96 | 0.01320 | 0.004171 | 0.0075 / 0.0204 / 0.0022 | 1.37e-13 | none |
+| 176.4 | 0.00425 | 0.001357 | 0.0272 / 0.0067 / 0.0032 | 2.29e-13 | none |
+| 192 | 0.00360 | 0.001180 | 0.0018 / 0.0051 / 0.0009 | 0 | none |
+
+All operating-point, stage/chain small-signal, harmonic, burst and rest criteria pass. The 44.1 kHz aliasing
+failures are recorded, not waived; the multi-rate validator deliberately returns 1. The 48 kHz sweep reproduces
+the baseline. All 18 C++/Python reference-result comparisons pass the existing `validate_cpp.LIMITS`: worst AC
+difference 1.26e-7 dB, tested-harmonic difference 9.12e-8 dB, burst voltage difference 5.00e-9 V; Newton
+histograms and burst/recovery times match exactly. The largest total-dBc difference over 684 sweep points is
+6.48e-6 dB, with identical acceptance verdicts. New native `test_core rates` prepares and processes every listed
+rate with every quality,
+mono/stereo, libm/fast, silence and 8 V driven blocks; it checks finite output, convergence, latency,
+allocation-free processing and mono/stereo agreement with existing tolerances.
+
+The [DK host-rate report](../dk/RESULTS.md#host-sample-rates-74-18-nov-2026) gives Python/C++ tables,
+pre-warp optimisation, aliasing attribution and limitations. `results_internal_rate_proposal.json` measures
+an **unimplemented** alternative: 8 / 4 / 2 at 88.2 / 96 kHz, 4 / 2 / 2 at 176.4 / 192 kHz, eco still pre-warped
+at 17.3 kHz. That proposal passes reference/rest checks, but fails standard / 8 V and eco / 2 V at 88.2 kHz,
+and standard / 8 V at 176.4 kHz. Keep the fixed policy; selective reductions at 96 / 192 kHz need further
+Python validation and a decision about eco's minimum factor 2 (same internal cost as standard at those highest
+rates). There are no CPU measurements or new high-rate 64× references here. Full new-rate IIR/fast-math sweeps,
+other platforms, demo renders and live host rate transitions remain unverified.
+
+**Latency:** HQ / standard / eco report **73 / 72 / 69 base samples** at every tested rate. Those counts correspond
+to different milliseconds at each rate (table in the DK report); the host must query `latency_samples()` after
+prepare. A later factor mapping would also change the count (factor 2: 63 samples). Fixed factors make internal
+sample counts scale with host rate (2× at 96 kHz, 4× at 192 kHz relative to 48 kHz); those are arithmetic counts,
+not benchmark results.
+
+Local verification: `python -m pytest -q dk/tests cpp/tests -k 'not bench_smoke'` → **227 passed, 2 skipped**
+(x86-only builds on arm64), **1 deselected** (the timed benchmark smoke test). This runs the new native rate tests
+inside the normal vector harness. The existing 48 kHz FIR/IIR aliasing guard and baseline ratchet also pass.
+No benchmark was run. The multi-rate validator's nonzero exit is the recorded 44.1 kHz aliasing failure,
+with no C++/Python reproduction failures. Ruff 0.17.3 passes with the unchanged configuration.
+
 ## Limitations
 
 - FIR resampler only; `filt="iir"` stays Python-only.
-- os ∈ {2, 4, 8, 16} (fixed buffers). The vectors and the CLI are at 48 kHz. `prepare()` accepts any base rate, but
-  only 48 kHz is tested.
+- os ∈ {2, 4, 8, 16} (fixed buffers). The committed vectors remain at 48 kHz; the CLI accepts optional `fs=HZ`.
+  `prepare()` / `process()` are tested at 44.1 / 48 / 88.2 / 96 / 176.4 / 192 kHz with the fixed quality factors.
+  All pass the reference criteria; **44.1 kHz fails four unchanged aliasing limits** (see host-rate results above).
+  Other positive rates are accepted by `prepare()` but unvalidated.
 - One triode parameter set, one circuit (`Values` = `circuit.VALUES`). pnjlim's VT is `1/par.Cg`. Python uses the
   module constant, which is the same for that set.
 - Double precision inside. The float overloads convert per sample. Stereo is `StereoStage` (#21, #67): 2 lanes.
@@ -444,6 +499,10 @@ cd prototypes/fullstage
 python -m pytest -q cpp/tests                     # everything above (~20 s); CXX=... to pick the compiler
 python -m cpp.export_vectors                      # regenerate cpp/vectors.txt after a change to the Python stage
 python -m cpp.validate_cpp                        # dk.validate on the core -> cpp/results.json (~7 s)
+python -m dk.sample_rates --workers 8              # full Python host-rate validation -> dk/results_sample_rates.json
+python -m dk.sample_rates --backend cpp            # run serially after Python -> cpp/results_sample_rates.json
+python -m dk.sample_rates --backend cpp --near-internal --rates 88200 96000 176400 192000
+                                                  # unimplemented factor proposal, separate JSON; serial too
 python -m cpp.matrix_rounding                     # the matrix-rounding measurement (~6 s)
 g++ -std=c++17 -O2 -Wall -Wextra -pedantic -pthread -o test_core cpp/test_core.cpp
 ./test_core cpp/vectors.txt                       # one JSON line of measured errors; exit 1 on any failure

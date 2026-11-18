@@ -6,7 +6,8 @@ Parameters (all our choices, documented here):
             negative Vgk). Changing it rebuilds the matrices and re-solves the operating point, so it
             is a "set before processing" control in this prototype (no smoothing yet).
   output  : linear gain applied to the stage output.
-  quality : QUALITY key (#17), or an (os, prewarp_hz) pair for experiments:
+  quality : QUALITY key (#17), or an (os, prewarp_hz) pair for experiments. Factors stay fixed at every host
+            rate (#74, RESULTS.md); numerical examples here are the 48 kHz baseline:
               "hq"       16x                         ~15 dB less aliasing than standard
               "standard" 8x (default)                trapezoidal warping 0.05 dB at 20 kHz
               "eco"      4x + small-cap pre-warp     plain 4x misses the 0.1 dB small-signal target at 20 kHz

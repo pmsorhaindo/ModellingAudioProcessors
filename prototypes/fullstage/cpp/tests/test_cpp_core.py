@@ -301,3 +301,19 @@ def test_bench_flags_argv():
     assert _argv_with_flags(["--flags", "-O3", "--reps", "5"]) == ["--flags=-O3", "--reps", "5"]
     assert _argv_with_flags(["--flags=-O3"]) == ["--flags=-O3"]
     assert _argv_with_flags(["--flags", "-O3 -march=x86-64-v3"]) == ["--flags=-O3 -march=x86-64-v3"]
+
+
+@pytest.mark.parametrize("fs", (44100, 48000, 88200, 96000, 176400, 192000))
+@pytest.mark.parametrize("quality", QUALITY)
+def test_host_rate_python_parity(fs, quality):
+    """A short input through both complete implementations, including rate-dependent coefficients and FIR delay."""
+    VC.EXE = _exe()
+    py = Stage(fs, quality=quality)
+    cpp = VC.CppStage(fs, quality=quality)
+    t = np.arange(1024) / fs
+    x = 2 * np.sin(2 * np.pi * 1000 * t) + 0.05 * np.sin(2 * np.pi * 19037 * t)
+    a, b = py.process(x)["out"], cpp.process(x)["out"]
+    assert np.max(np.abs(a - b)) <= 1e-5  # existing TOL_BUILT_ABS
+    assert cpp.fs == fs * QUALITY[quality][0]
+    assert cpp.latency_samples == py.latency_samples
+    assert cpp.iteration_stats()["nonconverged"] == py.iteration_stats()["nonconverged"] == 0

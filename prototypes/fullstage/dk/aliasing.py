@@ -161,7 +161,7 @@ def measure(quality, filt, drive, f, window=WINDOW_S, settle=SETTLE_S, fs=FS, tr
     x = drive * np.sin(2 * np.pi * m * np.arange(n0 + n + L) / n)
     y = st.process(x)["out"][n0 + L:n0 + L + n]
     return dict(setting=setting_name(quality), os=st.os, filt=filt, drive=float(drive), tone=int(f),
-                f_hz=m * fs / n, window_s=window, settle_s=settle, collision_order=collision_order(m, n),
+                fs_base=fs, f_hz=m * fs / n, window_s=window, settle_s=settle, collision_order=collision_order(m, n),
                 **alias_dbc(y, m, fs, st.os))
 
 
@@ -172,10 +172,11 @@ def _job(a):
     return r
 
 
-def sweep(settings, drives=DRIVES, tones=SWEEP_HZ, window=WINDOW_S, settle=SETTLE_S, workers=None):
+def sweep(settings, drives=DRIVES, tones=SWEEP_HZ, window=WINDOW_S, settle=SETTLE_S, workers=None, fs=FS):
     """measure() over every (quality, filt) in `settings` x drives x tones; a flat list of result dicts.
     workers > 1 runs the points in that many processes (each point is independent)."""
-    jobs = [(q, flt, d, f, dict(window=window, settle=settle)) for q, flt in settings for d in drives for f in tones]
+    jobs = [(q, flt, d, f, dict(window=window, settle=settle, fs=fs))
+            for q, flt in settings for d in drives for f in tones]
     if workers and workers > 1:
         with ProcessPoolExecutor(workers) as ex:
             return list(ex.map(_job, jobs))
