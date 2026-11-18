@@ -18,8 +18,8 @@ from spice.run_refs import AMPS  # noqa: E402 -- after the sys.path setup
 C = V.CRIT
 FS = V.FS
 # WDF vs DK: the same discrete-time system, so these are rounding and Newton-tolerance (1e-6 V) limits, not criteria.
-# Measured worst over the three settings (wdf/RESULTS.md): op 4e-12 rel, AC 4e-10 dB / 1e-9 deg, sines 7e-8 V, burst
-# Vgk 7e-12 V.
+# Measured worst over the three settings (wdf/RESULTS.md): op 4.2e-12 rel, AC 3.5e-9 dB / 8.9e-9 deg, outputs
+# 7.4e-8 V, burst Vgk 1.0e-10 V.
 SAME_OP_REL, SAME_AC_DB, SAME_AC_DEG, SAME_OUT_V, SAME_VGK_V = 1e-9, 1e-7, 1e-6, 1e-5, 1e-8
 
 
