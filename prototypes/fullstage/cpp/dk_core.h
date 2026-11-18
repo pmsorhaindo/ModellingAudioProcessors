@@ -19,6 +19,9 @@
  *                               serialises producers only; the audio thread never touches it.
  *   process() / reset()         the audio thread. A published pack is adopted at the start of the next block.
  *   set_drive() / set_output()  any thread (relaxed atomics, read once per block).
+ *   set_bias() / set_bias_ramp() any thread (relaxed atomics, read once per block). The audio thread ramps the bias
+ *                               along the bias line (#73, section "bias smoothing"): no build, no lock, no allocation.
+ *   set_bias_range()            non-RT, before prepare().
  * On a swap the state x, v is kept, not reset: bias changes only Rk, so the companion conductances (Gx) and with them
  * the meaning of x are unchanged, and the circuit moves from its present state to the new operating point, as a real
  * pot would (the absolute history x0 + x is kept; x is re-expressed against the new pack's x0, Stage.swap_bias in
@@ -802,6 +805,155 @@ inline BuildStatus build_coeffs(Coeffs& out, double fs, double bias = 1.0, doubl
     return BuildStatus::ok;
 }
 
+// ---- bias smoothing (#73): the bias line and the re-referenced operating point -------------------------------------
+
+/* Bias scales Rk, the one resistor from the cathode to ground: a bias change adds dg = g - g0 (g = 1/Rk) at S[k][k]
+ * of the MNA matrix and changes nothing else. By the Sherman-Morrison formula,
+ *     Si(g) = Si(g0) - beta(g) Si(g0) e_k e_k^T Si(g0),   beta(g) = dg / (1 + dg Si(g0)[k][k]),
+ * and every matrix A..K of a pack is affine in Si. So M(g) = M(g0) + w (M(g1) - M(g0)) with w = beta(g) / beta(g1):
+ * the packs of all biases lie on one line in matrix space, and two packs give the exact matrices for any bias in
+ * between, to rounding (BiasLine; measured 1e-13 relative to build_coeffs, cpp/RESULTS-smoothing.md).
+ *
+ * The operating point is not on that line: it solves a nonlinear DC problem, and interpolating it is wrong by volts
+ * in mid-range (measured in RESULTS-smoothing.md). It is not needed either. The deviation form (#70) is exact for ANY
+ * reference currents i0, as long as x0 is the matching fixed point of the pack's linear part,
+ *     x0 = (I - A)^-1 (B_HT HT + C i0),   p_dc = G x0 + H_HT HT,   y_dc = D_out x0 + E_out,HT HT + F_out i0
+ * (rereference()). i0 only decides how far the state sits from x = 0. At the end of a ramp, rereference() moves i0 to
+ * the pack's own operating point with one Newton solve of the DC problem at full HT, warm-started from the previous
+ * one (no source stepping), so the stage comes to rest at x = 0 as after prepare(). */
+namespace detail {
+struct PackMats {
+    double A[NX][NX], B[NX][NU], C[NX][NNL], D[NOUT][NX], E[NOUT][NU], F[NOUT][NNL], G[NNL][NX], H[NNL][NU],
+           K[NNL][NNL];
+};
+template <int R, int C> inline void mat_axpy(double (&o)[R][C], const double (&a)[R][C], double w, const double (&d)[R][C]) {
+    for (int i = 0; i < R; ++i)
+        for (int j = 0; j < C; ++j) o[i][j] = a[i][j] + w * d[i][j];
+}
+template <int R, int C> inline void mat_sub(double (&o)[R][C], const Mat<R, C>& a, const Mat<R, C>& b) {
+    for (int i = 0; i < R; ++i)
+        for (int j = 0; j < C; ++j) o[i][j] = a[i][j] - b[i][j];
+}
+
+struct BiasLine {
+    bool ok = false;
+    double lo = 0.0, hi = 0.0;               // bias range (Rk scale); set_bias() targets are clamped to it
+    double rk = 0.0, g0 = 0.0, d0 = 0.0, beta1 = 0.0;   // nominal Rk, 1/Rk at lo, Si(lo)[k][k], beta at hi
+    PackMats m0, dm;                         // the matrices at lo; (the matrices at hi) - (at lo)
+
+    // non-RT (prepare): the matrices at lo and hi, at internal rate fs
+    bool build(double fs, double prewarp_hz, double lo_, double hi_, const Values& v = Values{}) {
+        ok = false;
+        if (!(lo_ > 0.0) || !(hi_ > lo_) || !std::isfinite(hi_)) return false;
+        Full a, b;
+        if (!build_full(a, fs, lo_, false, prewarp_hz, v) || !build_full(b, fs, hi_, false, prewarp_hz, v)) return false;
+        copy_to(m0.A, a.A); copy_to(m0.B, a.B); copy_to(m0.C, a.C); copy_to(m0.D, a.D); copy_to(m0.E, a.E);
+        copy_to(m0.F, a.F); copy_to(m0.G, a.G); copy_to(m0.H, a.H); copy_to(m0.K, a.K);
+        mat_sub(dm.A, b.A, a.A); mat_sub(dm.B, b.B, a.B); mat_sub(dm.C, b.C, a.C); mat_sub(dm.D, b.D, a.D);
+        mat_sub(dm.E, b.E, a.E); mat_sub(dm.F, b.F, a.F); mat_sub(dm.G, b.G, a.G); mat_sub(dm.H, b.H, a.H);
+        mat_sub(dm.K, b.K, a.K);
+        lo = lo_; hi = hi_; rk = v.Rk;
+        g0 = 1.0 / (rk * lo);
+        d0 = a.Si[CATH][CATH];
+        beta1 = beta(hi);
+        ok = std::isfinite(beta1) && beta1 != 0.0;
+        return ok;
+    }
+    double beta(double bias) const {
+        const double dg = 1.0 / (rk * bias) - g0;
+        return dg / (1.0 + dg * d0);
+    }
+    double weight(double bias) const { return beta(bias) / beta1; }   // 0 at lo, 1 at hi (exactly)
+    double clamp(double bias) const { return bias < lo ? lo : (bias > hi ? hi : bias); }
+    // c.A..K at the given bias (the rest of c is untouched). Bounded: 130 multiply-adds.
+    void matrices(Coeffs& c, double bias) const {
+        const double w = weight(bias);
+        mat_axpy(c.A, m0.A, w, dm.A); mat_axpy(c.B, m0.B, w, dm.B); mat_axpy(c.C, m0.C, w, dm.C);
+        mat_axpy(c.D, m0.D, w, dm.D); mat_axpy(c.E, m0.E, w, dm.E); mat_axpy(c.F, m0.F, w, dm.F);
+        mat_axpy(c.G, m0.G, w, dm.G); mat_axpy(c.H, m0.H, w, dm.H); mat_axpy(c.K, m0.K, w, dm.K);
+    }
+};
+
+/* Re-reference c (its matrices already set) to the currents i0: x0, p_dc, y_dc and op as in the comment above. With
+ * recentre, i0 first moves to the operating point of c's matrices: one solve() of the DC problem
+ *     v = p_eff - K_eff i(v),   p_eff = (G (I - A)^-1 B_HT + H_HT) HT,   K_eff = K - G (I - A)^-1 C,
+ * warm-started at v (in / out); if it does not converge, i0 and v stay (the pack is still exact) and *converged is
+ * false (*iterations: its Newton iterations). Bounded work for the audio thread: one 6x6 LU with partial pivoting and three right-hand sides, a few small
+ * products and, with recentre, one solve() (at most c.newton.max_it iterations, as one sample of the stage). No
+ * allocation. Returns false, with c's reference unchanged, if I - A is singular or the result is not finite.
+ * op.nodes other than OUT are not maintained here (nothing reads them on the audio thread). */
+inline bool rereference(Coeffs& c, double (&i0)[NNL], double (&v)[NNL], bool recentre, bool* converged,
+                        int* iterations = nullptr) {
+    double M[NX][NX], R[NX][3];
+    for (int i = 0; i < NX; ++i) {
+        for (int j = 0; j < NX; ++j) M[i][j] = (i == j ? 1.0 : 0.0) - c.A[i][j];
+        R[i][0] = c.B[i][1]; R[i][1] = c.C[i][0]; R[i][2] = c.C[i][1];
+    }
+    for (int k = 0; k < NX; ++k) {                                  // LU, partial pivoting, applied to R
+        int p = k;
+        for (int i = k + 1; i < NX; ++i) if (std::fabs(M[i][k]) > std::fabs(M[p][k])) p = i;
+        if (!(std::fabs(M[p][k]) > 0.0)) return false;
+        if (p != k) {
+            for (int j = 0; j < NX; ++j) std::swap(M[k][j], M[p][j]);
+            for (int j = 0; j < 3; ++j) std::swap(R[k][j], R[p][j]);
+        }
+        for (int i = k + 1; i < NX; ++i) {
+            const double f = M[i][k] / M[k][k];
+            for (int j = k + 1; j < NX; ++j) M[i][j] -= f * M[k][j];
+            for (int j = 0; j < 3; ++j) R[i][j] -= f * R[k][j];
+        }
+    }
+    for (int k = NX - 1; k >= 0; --k)                               // R := (I - A)^-1 [B_HT, C]
+        for (int j = 0; j < 3; ++j) {
+            double s = R[k][j];
+            for (int i = k + 1; i < NX; ++i) s -= M[k][i] * R[i][j];
+            R[k][j] = s / M[k][k];
+        }
+    const double HT = c.HT;
+    double ni[NNL] = {i0[0], i0[1]}, nv[NNL] = {v[0], v[1]};
+    bool conv = true;
+    if (recentre) {
+        double pe[NNL], Ke[NNL][NNL];
+        for (int r = 0; r < NNL; ++r) {
+            double s = 0.0, t0 = 0.0, t1 = 0.0;
+            for (int j = 0; j < NX; ++j) { s += c.G[r][j] * R[j][0]; t0 += c.G[r][j] * R[j][1]; t1 += c.G[r][j] * R[j][2]; }
+            pe[r] = (s + c.H[r][1]) * HT;
+            Ke[r][0] = c.K[r][0] - t0;
+            Ke[r][1] = c.K[r][1] - t1;
+        }
+        const Solution s = solve<LibmMath>(pe[0], pe[1], Ke, v[0], v[1], c.par, c.newton);
+        if (iterations) *iterations = s.it;
+        conv = s.ok && std::isfinite(s.ig) && std::isfinite(s.ia);
+        if (conv) { ni[0] = s.ig; ni[1] = s.ia; nv[0] = s.v0; nv[1] = s.v1; }
+    }
+    double x0[NX], pdc[NNL];
+    for (int i = 0; i < NX; ++i) x0[i] = R[i][0] * HT + R[i][1] * ni[0] + R[i][2] * ni[1];
+    for (int r = 0; r < NNL; ++r) {
+        double s = c.H[r][1] * HT;
+        for (int j = 0; j < NX; ++j) s += c.G[r][j] * x0[j];
+        pdc[r] = s;
+    }
+    double y = c.E[0][1] * HT + c.F[0][0] * ni[0] + c.F[0][1] * ni[1];
+    for (int j = 0; j < NX; ++j) y += c.D[0][j] * x0[j];
+    bool finite = std::isfinite(y) && std::isfinite(pdc[0]) && std::isfinite(pdc[1]);
+    for (int i = 0; i < NX; ++i) finite = finite && std::isfinite(x0[i]);
+    if (!finite) return false;
+    std::memcpy(c.x0, x0, sizeof x0);
+    c.p_dc[0] = pdc[0]; c.p_dc[1] = pdc[1];
+    c.y_dc = y;
+    c.op.ig = ni[0]; c.op.ia = ni[1];
+    if (recentre && conv) { c.op.vgk = nv[0]; c.op.vak = nv[1]; }          // the operating point
+    else {                                                                 // v with p = v + K i0 (reset() recentres)
+        c.op.vgk = pdc[0] - (c.K[0][0] * ni[0] + c.K[0][1] * ni[1]);
+        c.op.vak = pdc[1] - (c.K[1][0] * ni[0] + c.K[1][1] * ni[1]);
+    }
+    c.op.nodes[OUT] = y;
+    i0[0] = ni[0]; i0[1] = ni[1]; v[0] = nv[0]; v[1] = nv[1];
+    if (converged) *converged = conv;
+    return true;
+}
+}  // namespace detail
+
 // ---- half-band FIR resampler (dk/resample.py, kind "fir") -------------------------------------------------------
 
 namespace detail {
@@ -1082,7 +1234,27 @@ public:
     std::uint64_t nonconverged_total() const { return nonconv_total_.load(std::memory_order_relaxed); }  // any thread
     bool prepared() const { return prepared_; }
     double fs_base() const { return fs_base_; }
-    const Coeffs& active() const { return coeffs_.front(); }        // audio thread
+    // the pack the audio thread runs: the adopted one, or the one the bias smoothing built (audio thread)
+    const Coeffs& active() const { return on_work_ ? work_[wi_] : coeffs_.front(); }
+
+    // ---- bias smoothing (#73; the bias line above, cpp/README.md "Bias smoothing") ----------------------------
+    // Non-RT, never concurrently with prepare(): the range set_bias() moves in (Rk scale), used by the next
+    // prepare(). Default 0.5 .. 2.0 (the plugin's Bias range).
+    void set_bias_range(double lo, double hi) { range_lo_ = lo; range_hi_ = hi; }
+    // Any thread (relaxed atomics, read once per block like the gains). set_bias(): the bias to move to, clamped to
+    // the range; the audio thread ramps there linearly over set_bias_ramp() seconds of base-rate time (default
+    // 0.020 s; 0 = at the next base sample), building every base sample's pack from the bias line. No build_coeffs,
+    // no lock, no allocation on the audio thread. A pack adopted from request_bias() / publish() ends any ramp and
+    // takes over; the next set_bias() value that differs from the last one seen ramps from there.
+    void set_bias(double b) { bias_t_.store(b, std::memory_order_relaxed); }
+    void set_bias_ramp(double seconds) { ramp_s_.store(seconds, std::memory_order_relaxed); }
+    double bias_target() const { return bias_t_.load(std::memory_order_relaxed); }
+    bool bias_line_ok() const { return line_.ok; }                  // after prepare(): set_bias() can move the stage
+    // audio thread (or while stopped)
+    double bias_now() const { return b_eff_; }                      // the bias of active()
+    bool bias_moving() const { return b_left_ > 0; }
+    std::uint64_t bias_updates() const { return bias_updates_; }    // packs built from the line since reset()
+    std::uint64_t bias_unconverged() const { return bias_unconv_; } // end-of-ramp DC solves that kept the old i0
 
 protected:
     // prepare()'s pack, with producer_ held: build it at the internal rate fs_base * q.os and make it the active one
@@ -1093,8 +1265,81 @@ protected:
         if (st != BuildStatus::ok) return st;
         fs_base_ = fs_base;
         coeffs_.reset(c);
+        line_.build(fs_base * q.os, c.prewarp_hz, range_lo_, range_hi_);   // !ok: set_bias() has no effect
+        on_work_ = false;
+        b_eff_ = b_tgt_ = bias;
+        b_step_ = 0.0;
+        b_left_ = 0;
+        bias_t_.store(bias, std::memory_order_relaxed);
+        seen_t_ = bias;
         prepared_ = true;
         return st;
+    }
+
+    // ---- bias smoothing, audio thread --------------------------------------------------------------------------
+    const Coeffs& cur() const { return on_work_ ? work_[wi_] : coeffs_.front(); }
+    // a pack was adopted from the triple buffer: it replaces any ramp; set_bias() values seen so far are spent
+    void bias_adopted() noexcept {
+        on_work_ = false;
+        b_left_ = 0;
+        b_eff_ = b_tgt_ = coeffs_.front().bias;
+        seen_t_ = bias_t_.load(std::memory_order_relaxed);
+    }
+    void bias_start(double b) noexcept {                // (re)plan a ramp from b_eff_ to b
+        if (!on_work_) {                                // leave the adopted pack: both work slots start as a copy
+            work_[0] = work_[1] = coeffs_.front();
+            wi_ = 0;
+            on_work_ = true;
+            i0_[0] = work_[0].op.ig; i0_[1] = work_[0].op.ia;
+            vw_[0] = work_[0].op.vgk; vw_[1] = work_[0].op.vak;
+        }
+        const double sec = ramp_s_.load(std::memory_order_relaxed);
+        const long len = sec > 0.0 && std::isfinite(sec) ? std::lround(sec * fs_base_) : 0;
+        b_left_ = len > 1 ? (len < 0x3fffffff ? int(len) : 0x3fffffff) : 1;
+        b_tgt_ = b;
+        b_step_ = (b - b_eff_) / double(b_left_);
+    }
+    // block start, after any adoption: a new set_bias() target starts (or re-plans) a ramp
+    void bias_begin_block() noexcept {
+        const double t = bias_t_.load(std::memory_order_relaxed);
+        if (t == seen_t_ || !line_.ok || !std::isfinite(t)) return;
+        seen_t_ = t;
+        const double b = line_.clamp(t);
+        if (b == b_tgt_ && (b_left_ > 0 || b == b_eff_)) return;     // already there, or already going there
+        bias_start(b);
+    }
+    // One ramp step (once per base sample while bias_moving()): the pack at the next bias into the other work slot,
+    // re-referenced to i0_ (and, at the last step, recentred on its operating point). dx0 = old x0 - new x0: the
+    // caller adds it to x, which keeps the absolute history x0 + x, as a pack swap does. False: nothing changed (the
+    // ramp stops where it is; I - A singular or a non-finite result, not seen for this circuit).
+    bool bias_step(double (&dx0)[NX]) noexcept {
+        const double b = b_left_ == 1 ? b_tgt_ : b_eff_ + b_step_;
+        Coeffs& o = work_[wi_ ^ 1];
+        const Coeffs& c = work_[wi_];
+        line_.matrices(o, b);
+        o.bias = b;
+        bool conv = true;
+        if (!detail::rereference(o, i0_, vw_, b_left_ == 1, &conv)) { b_left_ = 0; b_tgt_ = b_eff_; return false; }
+        for (int i = 0; i < NX; ++i) dx0[i] = c.x0[i] - o.x0[i];
+        wi_ ^= 1;
+        b_eff_ = b;
+        --b_left_;
+        ++bias_updates_;
+        if (!conv) ++bias_unconv_;
+        return true;
+    }
+    // reset(): adopt a published pack, then jump to the set_bias() target (if it moved) and recentre there
+    void bias_reset() noexcept {
+        if (coeffs_.acquire()) bias_adopted();
+        bias_updates_ = bias_unconv_ = 0;
+        const double t = bias_t_.load(std::memory_order_relaxed);
+        if (line_.ok && std::isfinite(t) && t != seen_t_) { seen_t_ = t; b_tgt_ = line_.clamp(t); }
+        if (b_tgt_ == b_eff_ && b_left_ == 0) return;
+        const double b = b_tgt_;
+        bias_start(b);
+        b_left_ = 1;
+        double d[NX];
+        bias_step(d);
     }
     void publish_locked(const Coeffs& c) {
         Coeffs& b = coeffs_.back();
@@ -1111,6 +1356,16 @@ protected:
     Coeffs latest_{};
     double fs_base_ = 0.0;
     bool prepared_ = false;
+    // bias smoothing: the line (built by prepare), the targets (any thread), the ramp state (audio thread)
+    BiasLine line_;
+    double range_lo_ = 0.5, range_hi_ = 2.0;
+    std::atomic<double> bias_t_{1.0}, ramp_s_{0.020};
+    Coeffs work_[2]{};                              // packs built from the line; work_[wi_] is active when on_work_
+    int wi_ = 0, b_left_ = 0;
+    bool on_work_ = false;
+    double b_eff_ = 1.0, b_tgt_ = 1.0, b_step_ = 0.0, seen_t_ = 1.0;
+    double i0_[NNL] = {}, vw_[NNL] = {};            // reference currents of work_; DC warm start
+    std::uint64_t bias_updates_ = 0, bias_unconv_ = 0;
 };
 }  // namespace detail
 
@@ -1135,9 +1390,10 @@ public:
     void set_output(double g) { output_.store(g, std::memory_order_relaxed); }   // linear gain after it
 
     // ---- audio thread -------------------------------------------------------------------------------------------
-    void reset() noexcept {                // state to the active pack's operating point; clears the stats
-        if (coeffs_.acquire()) {}
-        const Coeffs& c = coeffs_.front();
+    // state to the active pack's operating point (after a jump to the set_bias() target); clears the stats
+    void reset() noexcept {
+        bias_reset();
+        const Coeffs& c = cur();
         for (int i = 0; i < NX; ++i) x_[i] = 0.0;      // at the operating point: no deviation from x0
         v_[0] = q_[0] = c.op.vgk;
         v_[1] = q_[1] = c.op.vak;
@@ -1155,12 +1411,12 @@ public:
     void process(const float* in, float* out, std::size_t n) noexcept { process_t(in, out, n, nullptr); }
 
     /* Stage alone at the internal rate (Stage.process_internal): no resampler, no drive / output gain. vgk and iters
-     * may be null. For tests and analysis. */
+     * may be null. For tests and analysis. It does not advance a set_bias() ramp (that runs per base sample). */
     void process_internal(const double* vin, double* out, double* vgk, std::uint16_t* iters, std::size_t n) noexcept {
         ScopedFlushDenormals ftz;
         begin_block();
         if (!prepared_) { for (std::size_t i = 0; i < n; ++i) out[i] = 0.0; return; }
-        const Coeffs& c = coeffs_.front();
+        const Coeffs& c = cur();
         for (std::size_t i = 0; i < n; ++i) {
             int it;
             out[i] = c.math == TriodeMath::fast ? tick<FastMath>(c, vin[i], it) : tick<LibmMath>(c, vin[i], it);
@@ -1182,12 +1438,14 @@ private:
     void begin_block() {
         // The old pack's x0 is read before acquire(): after it, that slot belongs to the producer again.
         double x0_old[NX];
-        std::memcpy(x0_old, coeffs_.front().x0, sizeof x0_old);
+        std::memcpy(x0_old, cur().x0, sizeof x0_old);
         if (coeffs_.acquire()) {
             ++stats_.swaps;
             const Coeffs& c = coeffs_.front();      // keep the absolute history x0 + x across the swap
             for (int i = 0; i < NX; ++i) x_[i] = x_[i] + (x0_old[i] - c.x0[i]);
+            bias_adopted();
         }
+        bias_begin_block();
         stats_.nonconv_block = 0;
     }
     void end_block() { nonconv_total_.store(stats_.nonconverged, std::memory_order_relaxed); }
@@ -1223,16 +1481,23 @@ private:
     }
 
     template <class M, class S>
-    void run(const Coeffs& c, const S* in, S* out, std::size_t n, double drive, double og, double* vgk) {
+    void run(const S* in, S* out, std::size_t n, double drive, double og, double* vgk) {
         double u[MAX_OS], y[MAX_OS];
         const int os = rs_.os();
+        const Coeffs* c = &cur();
         for (std::size_t i = 0; i < n; ++i) {
+            if (b_left_ > 0) {                          // bias ramp (#73): this base sample's pack, x re-referenced
+                double d[NX];
+                if (bias_step(d))
+                    for (int k = 0; k < NX; ++k) x_[k] = x_[k] + d[k];
+                c = &cur();
+            }
             double x = double(in[i]);
             if (!std::isfinite(x)) { x = 0.0; ++stats_.nonfinite_inputs; }
             rs_.up(drive * x, u);
             int it;
             for (int j = 0; j < os; ++j) {
-                y[j] = tick<M>(c, u[j], it);
+                y[j] = tick<M>(*c, u[j], it);
                 if (vgk) vgk[i * std::size_t(os) + std::size_t(j)] = v_[0];
             }
             out[i] = S(og * rs_.down(y));
@@ -1243,10 +1508,9 @@ private:
         ScopedFlushDenormals ftz;
         begin_block();
         if (!prepared_) { for (std::size_t i = 0; i < n; ++i) out[i] = S(0); return; }
-        const Coeffs& c = coeffs_.front();
         const double drive = drive_.load(std::memory_order_relaxed), og = output_.load(std::memory_order_relaxed);
-        if (c.math == TriodeMath::fast) run<FastMath>(c, in, out, n, drive, og, vgk);
-        else run<LibmMath>(c, in, out, n, drive, og, vgk);
+        if (cur().math == TriodeMath::fast) run<FastMath>(in, out, n, drive, og, vgk);
+        else run<LibmMath>(in, out, n, drive, og, vgk);
         end_block();
     }
 
@@ -1290,9 +1554,10 @@ public:
     LaneMath lane_math() const { return lane_math_.load(std::memory_order_relaxed); }
 
     // ---- audio thread -------------------------------------------------------------------------------------------
-    void reset() noexcept {                // both channels to the active pack's operating point; clears the stats
-        if (coeffs_.acquire()) {}
-        const Coeffs& c = coeffs_.front();
+    // both channels to the active pack's operating point (after a jump to the set_bias() target); clears the stats
+    void reset() noexcept {
+        bias_reset();
+        const Coeffs& c = cur();
         for (int i = 0; i < NX; ++i) x_[i] = simd::splat(0.0);   // at the operating point: no deviation from x0
         v_[0] = q_[0] = simd::splat(c.op.vgk);
         v_[1] = q_[1] = simd::splat(c.op.vak);
@@ -1320,12 +1585,14 @@ public:
 private:
     void begin_block() {                                        // as Stage::begin_block, both lanes
         double x0_old[NX];
-        std::memcpy(x0_old, coeffs_.front().x0, sizeof x0_old);
+        std::memcpy(x0_old, cur().x0, sizeof x0_old);
         if (coeffs_.acquire()) {
             ++stats_[0].swaps; ++stats_[1].swaps;
             const Coeffs& c = coeffs_.front();
             for (int i = 0; i < NX; ++i) x_[i] = x_[i] + simd::splat(x0_old[i] - c.x0[i]);
+            bias_adopted();
         }
+        bias_begin_block();
         stats_[0].nonconv_block = stats_[1].nonconv_block = 0;
     }
     void end_block() { nonconv_total_.store(stats_[0].nonconverged + stats_[1].nonconverged, std::memory_order_relaxed); }
@@ -1364,15 +1631,22 @@ private:
     }
 
     template <class M, class S>
-    void run(const Coeffs& c, const S* inL, const S* inR, S* outL, S* outR, std::size_t n, V2 drive, V2 og) {
+    void run(const S* inL, const S* inR, S* outL, S* outR, std::size_t n, V2 drive, V2 og) {
         V2 u[MAX_OS], y[MAX_OS];
         const int os = rs_.os();
+        const Coeffs* c = &cur();
         for (std::size_t i = 0; i < n; ++i) {
+            if (b_left_ > 0) {                          // bias ramp (#73), as Stage::run, both lanes
+                double d[NX];
+                if (bias_step(d))
+                    for (int k = 0; k < NX; ++k) x_[k] = x_[k] + simd::splat(d[k]);
+                c = &cur();
+            }
             double xl = double(inL[i]), xr = double(inR[i]);
             if (!std::isfinite(xl)) { xl = 0.0; ++stats_[0].nonfinite_inputs; }
             if (!std::isfinite(xr)) { xr = 0.0; ++stats_[1].nonfinite_inputs; }
             rs_.up(drive * simd::make(xl, xr), u);
-            for (int j = 0; j < os; ++j) y[j] = tick<M>(c, u[j]);
+            for (int j = 0; j < os; ++j) y[j] = tick<M>(*c, u[j]);
             const V2 o = og * rs_.down(y);
             outL[i] = S(simd::lane(o, 0));
             outR[i] = S(simd::lane(o, 1));
@@ -1383,12 +1657,11 @@ private:
         ScopedFlushDenormals ftz;
         begin_block();
         if (!prepared_) { for (std::size_t i = 0; i < n; ++i) outL[i] = outR[i] = S(0); return; }
-        const Coeffs& c = coeffs_.front();
         const V2 drive = simd::make(drive_[0].load(std::memory_order_relaxed), drive_[1].load(std::memory_order_relaxed));
         const V2 og = simd::make(output_[0].load(std::memory_order_relaxed), output_[1].load(std::memory_order_relaxed));
-        if (c.math != TriodeMath::fast) run<PerLane<LibmMath>>(c, inL, inR, outL, outR, n, drive, og);
-        else if (lane_math_.load(std::memory_order_relaxed) == LaneMath::vector) run<VecFastMath>(c, inL, inR, outL, outR, n, drive, og);
-        else run<PerLane<FastMath>>(c, inL, inR, outL, outR, n, drive, og);
+        if (cur().math != TriodeMath::fast) run<PerLane<LibmMath>>(inL, inR, outL, outR, n, drive, og);
+        else if (lane_math_.load(std::memory_order_relaxed) == LaneMath::vector) run<VecFastMath>(inL, inR, outL, outR, n, drive, og);
+        else run<PerLane<FastMath>>(inL, inR, outL, outR, n, drive, og);
         end_block();
     }
 

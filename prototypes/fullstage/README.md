@@ -96,4 +96,5 @@ connector used for commits only accepts text); `results.json` carries the number
 ## Parameters (our choices)
 - **Drive**: linear gain on the input voltage. **Output**: linear gain on the output.
 - **Bias**: scales the cathode resistor Rk (1.0 = 1.5 kΩ). It is a set-before-processing control here
-  (rebuilds matrices and re-solves the operating point); smoothing comes later.
+  (rebuilds matrices and re-solves the operating point). The C++ core ramps it without a rebuild (#73,
+  [cpp/RESULTS-smoothing.md](cpp/RESULTS-smoothing.md)).

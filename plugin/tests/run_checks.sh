@@ -1,7 +1,8 @@
 #!/bin/bash
 # run_checks.sh -- the plugin checks (#22), after `cmake --build plugin/build`.
 #
-#   plugin/tests/run_checks.sh [build-dir]            engine test, VST 3 validator (normal + extensive), VST 3 null
+#   plugin/tests/run_checks.sh [build-dir]            engine and smoothing tests, VST 3 validator (normal +
+#                                                     extensive), VST 3 null
 #   plugin/tests/run_checks.sh [build-dir] --au       also: install the AU into ~/Library/Audio/Plug-Ins/Components
 #                                                     (the user's own folder), auval, AU null (arm64, and x86_64
 #                                                     under Rosetta when it is installed)
@@ -19,6 +20,9 @@ COMPONENT="$BUILD/AU/MAPValveStage-temporary.component"
 
 echo "== engine test"
 "$BIN/map_engine_test"
+
+echo "== smoothing test (#73: Drive / Output / Bias moves, block sizes, drive ramp vs aliasing)"
+"$BIN/map_smoothing_test"
 
 echo "== VST 3 validator"
 "$BIN/validator" "$VST3" | tail -n 3

@@ -35,6 +35,7 @@ int Engine::latency_for(int q, double sample_rate) {
 Engine::Engine() {
     slot_[0] = std::make_unique<dkcore::StereoStage>();
     slot_[1] = std::make_unique<dkcore::StereoStage>();
+    for (auto& s : slot_) s->set_bias_range(kBiasRange.min, kBiasRange.max);   // the bias line (#73), per prepare
     (void)latency_for(kQualityDefault);                 // build the table here, not on the audio thread
     active_latency_.store(latency_for(kQualityDefault), std::memory_order_relaxed);
 }
@@ -56,10 +57,13 @@ bool Engine::prepare(double sample_rate) {
         st = slot_[0]->prepare(fs_, core_quality(q), b);
         if (st != dkcore::BuildStatus::ok) return false;
     }
-    for (auto& s : slot_) { s->set_drive(1.0); s->set_output(1.0); }   // the wrapper applies drive and output
+    for (auto& s : slot_) {
+        s->set_drive(1.0);                              // the wrapper applies drive and output
+        s->set_output(1.0);
+        s->set_bias_ramp(kRampSeconds);                 // the core ramps bias (#73), like the wrapper's gain ramps
+    }
     active_ = designated_ = 0;
     des_quality_ = q;
-    des_bias_ = b;
     applied_bias_.store(b, std::memory_order_relaxed);
     pending_.store(-1, std::memory_order_relaxed);
     audio_slot_.store(0, std::memory_order_relaxed);
@@ -126,6 +130,14 @@ void Engine::begin_chunk() noexcept {
         sw_ = Switch::idle;
     }
 
+    // bias (#73): the target goes straight to the running stage, which ramps along its bias line per base sample on
+    // this thread (no rebuild, no lock); read here, once per chunk, like the gain targets
+    const double b = bias_t_.load(std::memory_order_relaxed);
+    if (std::isfinite(b)) {
+        const double bc = b < kBiasRange.min ? kBiasRange.min : (b > kBiasRange.max ? kBiasRange.max : b);
+        slot_[active_]->set_bias(bc);
+        applied_bias_.store(bc, std::memory_order_relaxed);
+    }
     drive_.set(drive_t_.load(std::memory_order_relaxed) * kVoltsPerFullScale, ramp_len_);
     output_.set(output_t_.load(std::memory_order_relaxed) * kFullScalePerVolt, ramp_len_);
     const bool byp = bypass_t_.load(std::memory_order_relaxed) || host_bypass_t_.load(std::memory_order_relaxed);
@@ -242,19 +254,10 @@ void Engine::worker_poll() {
         slot_[idle]->set_drive(1.0);
         slot_[idle]->set_output(1.0);
         designated_ = idle;
-        des_bias_ = b;
-        applied_bias_.store(b, std::memory_order_relaxed);
         bias_status_.store(0, std::memory_order_relaxed);
         pending_.store(idle, std::memory_order_release);
-        return;
     }
-    if (b != des_bias_) {
-        // request_bias() takes the stage's producer mutex and builds matrices: here, never on the audio thread
-        const dkcore::BuildStatus st = slot_[designated_]->request_bias(b);
-        des_bias_ = b;                                  // also on failure: the stage keeps the old pack
-        bias_status_.store(int(st), std::memory_order_relaxed);
-        if (st == dkcore::BuildStatus::ok) applied_bias_.store(b, std::memory_order_relaxed);
-    }
+    // Bias needs no worker since #73: the audio thread passes the target to the running stage (begin_chunk).
 }
 
 }  // namespace mapvs

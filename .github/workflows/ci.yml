@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
   workflow_dispatch:
@@ -52,8 +53,10 @@ jobs:
   # arm64 macOS runner (Apple clang, numpy on Accelerate). Blocking since #70 was fixed.
   test-macos:
     name: test (fullstage, macos arm64)
-    # macOS minutes bill at 10x on private repos: run on PRs and manual dispatch, not on pushes to main.
-    if: github.event_name != 'push'
+    # macOS minutes bill at 10x on private repos: run only on non-draft PRs and manual
+    # dispatch, not on pushes to main or draft PRs. ready_for_review is in the workflow
+    # types so marking a draft ready starts these jobs.
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false)
     runs-on: macos-15
     timeout-minutes: 20
     defaults:
@@ -73,10 +76,11 @@ jobs:
 
   # The AU v2 + VST 3 wrapper (#22, plugin/): build the universal bundles, then plugin/tests/run_checks.sh --au
   # (engine test, Steinberg validator, null renders through both plugins vs the direct core, auval). The SDKs are
-  # fetched by CMake at pinned tags. Same gating as test-macos: PRs and manual dispatch only (macOS bills at 10x).
+  # fetched by CMake at pinned tags. Same gating as test-macos: non-draft PRs and manual dispatch only
+  # (macOS bills at 10x).
   plugin-macos:
     name: plugin (AU + VST3, macos arm64)
-    if: github.event_name != 'push'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false)
     runs-on: macos-15
     timeout-minutes: 20
     steps:
@@ -86,7 +90,7 @@ jobs:
       - name: Build
         run: >-
           cmake --build plugin/build -j "$(sysctl -n hw.ncpu)"
-          --target map_vst3 map_au validator map_engine_test map_null_vst3 map_null_au
+          --target map_vst3 map_au validator map_engine_test map_smoothing_test map_null_vst3 map_null_au
       - name: Checks (engine, VST 3 validator, nulls, auval)
         run: plugin/tests/run_checks.sh plugin/build --au
 

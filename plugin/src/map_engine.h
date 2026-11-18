@@ -8,21 +8,23 @@
  *   set_*(), request_reset()      any thread, including the audio thread (relaxed atomics).
  *   latency_samples() etc.        any thread.
  *   process()                     the audio thread. No allocation, no locks, no syscalls. Holds ScopedFlushDenormals.
- *   worker thread (own)           started by prepare(), joined by release(). It runs everything that may not run on
- *                                 the audio thread: StereoStage::request_bias() (mutex + matrix build) and
- *                                 StereoStage::prepare() for a quality change.
+ *   worker thread (own)           started by prepare(), joined by release(). It runs what may not run on the audio
+ *                                 thread: StereoStage::prepare() for a quality change.
  *
  * Quality change. prepare() of a stage must not run while that stage is processed. The engine owns two stages
  * ("slots"). The worker prepares the idle slot at the new quality and publishes its index with a release store; the
  * audio thread fades the output out (5 ms), switches slots at a block boundary, acknowledges, and fades back in
  * (5 ms). The worker only touches a slot after the audio thread has acknowledged that it left it.
  *
- * Bias. The audio thread (or any thread) stores the target; the worker (polling every 5 ms) calls request_bias() on
- * the active slot, and the core adopts the published pack at the next block, as it already does (no smoothing of
- * the bias itself: that is #73).
+ * Bias (#73). The audio thread reads the target once per chunk and passes it to the running stage
+ * (StereoStage::set_bias). The core ramps there linearly over 20 ms, building one pack per base sample from its bias
+ * line (dk_core.h, "bias smoothing"): no matrix build, no lock, no allocation, and no worker. request_bias() is no
+ * longer used. Measurements and the options compared: prototypes/fullstage/cpp/RESULTS-smoothing.md.
  *
- * Drive and Output: linear ramps over 20 ms in the wrapper, applied per sample. The core's own drive and output
- * stay 1.0, so the host-to-volts mapping (map_params.h) is folded into the ramp targets, in one place.
+ * Drive and Output: linear ramps over 20 ms in the wrapper, applied per sample at the host rate. Drive is applied to
+ * the input before the stage, so before its upsampler (the drive-aliasing check in tests/smoothing_test.cpp). The
+ * core's own drive and output stay 1.0, so the host-to-volts mapping (map_params.h) is folded into the ramp targets,
+ * in one place.
  *
  * Bypass (parameter or host bypass): a 10 ms crossfade to the dry input delayed by the active latency, so the
  * bypassed signal lines up with the reported latency. The stage keeps running while bypassed.
@@ -81,7 +83,8 @@ public:
     double sample_rate() const { return fs_; }
     bool prepared() const { return prepared_.load(std::memory_order_relaxed); }
     std::uint64_t nonconverged_total() const;
-    // last request_bias() status (dkcore::BuildStatus as int; 0 = ok) and the bias the worker last applied
+    // status of the last stage prepare for a quality change (dkcore::BuildStatus as int; 0 = ok), and the bias target
+    // the audio thread last passed to the running stage (clamped to kBiasRange; the stage ramps to it)
     int bias_status() const { return bias_status_.load(std::memory_order_relaxed); }
     double applied_bias() const { return applied_bias_.load(std::memory_order_relaxed); }
     static int latency_for(int quality, double sample_rate = 48000.0);
@@ -151,7 +154,6 @@ private:
     // worker-side state (worker thread, or prepare() with the worker stopped)
     double fs_ = 0.0;
     int designated_ = 0, des_quality_ = kQualityDefault;
-    double des_bias_ = kBiasRange.def;
     int notified_latency_ = 0;
     std::function<void()> latency_listener_;
     std::thread worker_;
