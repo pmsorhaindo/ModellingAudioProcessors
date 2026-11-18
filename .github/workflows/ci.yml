@@ -25,7 +25,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        prototype: [valvelab, fullstage, fit6as6]
+        # wdf (#12): the WDF stage reuses prototypes/fullstage (its requirements.txt includes fullstage's); Linux only
+        prototype: [valvelab, fullstage, fit6as6, wdf]
     defaults:
       run:
         working-directory: prototypes/${{ matrix.prototype }}
@@ -42,7 +43,7 @@ jobs:
       - name: Prepare output dirs
         if: matrix.prototype == 'fit6as6'
         run: mkdir -p plots
-      # The DK tests compare against committed ngspice reference JSONs
+      # The DK and WDF tests compare against committed ngspice reference JSONs
       # (spice/reference_*.json), so ngspice itself is not needed here.
       - name: Pytest
         run: python -m pytest -q
