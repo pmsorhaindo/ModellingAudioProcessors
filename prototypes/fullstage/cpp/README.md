@@ -420,9 +420,11 @@ the C++ core takes 0.14–0.18 s (about 40× less).
   only 48 kHz is tested.
 - One triode parameter set, one circuit (`Values` = `circuit.VALUES`). pnjlim's VT is `1/par.Cg`. Python uses the
   module constant, which is the same for that set.
-- Double precision inside. The float overloads convert per sample. Stereo is `StereoStage` (#21): 2 lanes, with
-  per-lane scalar transcendentals. On the M1 it costs 1.25–1.35 × mono (fast) and
-  1.57–1.67 × (libm) (BENCHMARK.md, "Stereo SIMD results"); x86 not measured yet. No plugin wrapper (#22).
+- Double precision inside. The float overloads convert per sample. Stereo is `StereoStage` (#21, #67): 2 lanes.
+  With fast math the default is vector maths (`LaneMath::vector`). On the M1 the per-lane path costs 1.25–1.35 ×
+  mono (fast) and 1.57–1.67 × (libm); the vector path costs 1.13–1.21 × (fast). On the x86-64 Linux VM the per-lane
+  path costs 1.37–1.55 × (fast) and 1.38–1.53 × (libm); the vector path costs 1.27–1.43 × (fast)
+  (BENCHMARK.md, "Stereo SIMD results" and "Vector-maths stereo results"). No plugin wrapper (#22).
 - The NEON path was run only with Apple clang, and SSE2 only with Apple clang under Rosetta 2 here, plus GCC on CI.
   GCC on AArch64 and MSVC (which gets the struct fallback) were not built.
 - No smoothing of drive / output / bias, as in Python. A bias swap jumps the matrices at a block boundary.
