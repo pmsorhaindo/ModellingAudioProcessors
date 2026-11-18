@@ -765,6 +765,8 @@ static void stereo_case(const std::map<std::string, Vec>& V, const std::string& 
     delete ml; delete mr; delete s;
 }
 
+static void stereo_bias_case(const std::string& what, TriodeMath math, LaneMath lm);   // #73, below
+
 static void test_stereo(const std::map<std::string, Vec>& V) {
     // every vectors case (all settings, libm and fast, bias, live swap, forced non-convergence), three ways
     for (const auto& kv : V) {
@@ -805,6 +807,8 @@ static void test_stereo(const std::map<std::string, Vec>& V) {
         metric("stereo_capped_nonconv_l", double(s->stats(0).nonconverged));
         delete s;
     }
+    stereo_bias_case("stereo bias move", TriodeMath::libm, LaneMath::per_lane);    // #73
+    stereo_bias_case("vector bias move", TriodeMath::fast, LaneMath::vector);
     check(g_stereo_lanes_differ >= g_stereo_runs / 2 && g_vec_lanes_differ >= g_vec_runs / 2,
           "the lanes ran different Newton iteration counts");
     metric("stereo_runs", double(g_stereo_runs));
@@ -1117,6 +1121,276 @@ static void run_stereo_tests(const std::map<std::string, Vec>& V) {
     metric("vector_exact", g_vec_exact ? 1 : 0);
 }
 
+// ---- bias smoothing (#73): set_bias() ramps along the bias line -------------------------------------------------
+/* The reference ("continuous") is the same bias move with an exact pack (build_coeffs) at every internal sample. It
+ * is a Stage run through process_internal() one internal sample at a time, publish()ing the pack for that sample's
+ * bias first, with its own Resampler around it: the same up -> stage -> down as Stage::process, and equal to it bit
+ * for bit at a constant bias (checked). The stage under test ramps linearly from b0 to b1 over L base samples, one
+ * pack per base sample (b0 + k (b1 - b0) / L for the k-th, k = 1..L). The reference moves along the same straight
+ * line per internal sample: b0 + (k - 1 + (j + 1) / os) (b1 - b0) / L at internal sample j of the k-th, so both reach
+ * b1 at the same sample.
+ * Click metric ("worst step"): max_n |r[n] - r[n-1]|, r = y - y_ref, base rate, V at the stage output: the step the
+ * update method adds on top of what the continuous move does. The unsmoothed baseline is request_bias(b1) at the same
+ * sample (one swap), against the same reference. Numbers and method: cpp/RESULTS-smoothing.md. */
+static const double BIAS_RAMP_S = 0.020;
+/* Limits, V at the stage output (the plugin's Output 1 maps 1 V to 1/64 of full scale: 1 mV = -96 dBFS). Set from the
+ * worst values this test measured on an Apple M1 (Apple clang 17, -O2; RESULTS-smoothing.md), with 2x margin or more:
+ * silence 0.119 mV (hq, 0.5 -> 2.0), with a sine 9.30 mV (hq, 8 V, 2.0 -> 0.5). The unsmoothed swap on the same 18
+ * moves measured 61-108 mV in silence and 0.127-7.35 V with a sine. */
+static const double LIMIT_STEP_SILENCE = 3e-4;     // V   (-107 dBFS at Output 1)
+static const double LIMIT_STEP_SINE = 2e-2;        // V   (-70 dBFS at Output 1)
+// the smoothed step must also be this much smaller than the unsmoothed one, every case (measured: >= 458x)
+static const double MIN_STEP_REDUCTION = 200.0;
+
+static Vec bias_sine(size_t n, double amp, double f) {
+    Vec x(n);
+    for (size_t i = 0; i < n; ++i) x[i] = amp * std::sin(2 * PI * f * double(i) / 48000.0);
+    return x;
+}
+
+static Vec bias_reference(Quality q, double b0, double b1, size_t n0, int L, const Vec& x) {
+    Stage* s = new Stage;
+    s->prepare(48000.0, q, b0);
+    Resampler r;
+    r.prepare(q.os);
+    Vec y(x.size());
+    double u[MAX_OS], v[MAX_OS], last = b0;
+    for (size_t i = 0; i < x.size(); ++i) {
+        r.up(x[i], u);
+        for (int j = 0; j < q.os; ++j) {
+            double b = b0;
+            if (i >= n0) {
+                const double k = double(i - n0) + double(j + 1) / q.os;
+                b = k >= L ? b1 : b0 + k * (b1 - b0) / L;
+            }
+            if (b != last) {
+                Coeffs c;
+                build_coeffs(c, 48000.0 * q.os, b, q.prewarp_hz);
+                s->publish(c);
+                last = b;
+            }
+            s->process_internal(&u[j], &v[j], nullptr, nullptr, 1);
+        }
+        y[i] = r.down(v);
+    }
+    delete s;
+    return y;
+}
+
+// the stage under test: blocks of `block`, the move asked for at the block that starts at n0 (n0 % block == 0);
+// step: request_bias(b1) there instead (the unsmoothed baseline)
+static Vec bias_run(Quality q, double b0, double b1, size_t n0, const Vec& x, size_t block, bool step, long* allocs = nullptr,
+                    Stage** keep = nullptr) {
+    Stage* s = new Stage;
+    s->prepare(48000.0, q, b0);
+    s->set_bias_ramp(BIAS_RAMP_S);
+    Vec y(x.size());
+    long a = 0;
+    for (size_t i = 0; i < x.size(); i += block) {
+        if (i == n0) { if (step) s->request_bias(b1); else s->set_bias(b1); }
+        const size_t m = std::min(block, x.size() - i);
+        CountAllocs ca;
+        s->process(x.data() + i, y.data() + i, m);
+        a += ca.n();
+    }
+    if (allocs) *allocs += a;
+    if (keep) *keep = s; else delete s;
+    return y;
+}
+
+static double worst_step(const Vec& y, const Vec& r) {
+    double w = 0.0;
+    for (size_t i = 1; i < y.size(); ++i) w = std::max(w, std::fabs((y[i] - r[i]) - (y[i - 1] - r[i - 1])));
+    return w;
+}
+
+static void test_bias_smoothing() {
+    const int L = int(std::lround(BIAS_RAMP_S * 48000.0));
+    const size_t n0 = 4800, N = 14400;           // move at 0.1 s, 0.3 s in all (the move and ~9 time constants of Cout)
+    long allocs = 0;
+
+    // 0. the reference harness equals Stage::process at a constant bias
+    {
+        const Vec x = bias_sine(4800, 1.0, 220.0);
+        const Vec r = bias_reference(STANDARD, 1.0, 1.0, 0, 1, x), y = bias_run(STANDARD, 1.0, 1.0, 1u << 30, x, 64, false);
+        check(r == y, "bias: continuous-reference harness == Stage::process at a constant bias");
+    }
+
+    // 1. the bias line: matrices at any bias == build_coeffs (TOL_COEF, the C++-vs-Python matrix tolerance), the
+    //    recentred operating point within the Newton tolerance (tol_v = 1e-6 V)
+    {
+        double wm = 0.0, wop = 0.0, wx0 = 0.0;
+        for (double b : {0.5, 0.6, 0.8, 1.0, 1.25, 1.37, 1.5, 1.9, 2.0}) {
+            Stage* s = new Stage;
+            s->prepare(48000.0, STANDARD, b == 1.0 ? 1.5 : 1.0);
+            s->set_bias_ramp(0.0);
+            s->set_bias(b);
+            double z[64] = {}, o[64];
+            s->process(z, o, 64);
+            Coeffs e;
+            build_coeffs(e, 48000.0 * 8, b);
+            const Coeffs& c = s->active();
+            double em = 0.0;
+            auto cmp = [&](const double* p, const double* q, int n) { em = std::max(em, maxdiff(p, q, n) / std::max(maxabs(q, n), 1e-300)); };
+            cmp(&c.A[0][0], &e.A[0][0], 36); cmp(&c.B[0][0], &e.B[0][0], 12); cmp(&c.C[0][0], &e.C[0][0], 12);
+            cmp(&c.D[0][0], &e.D[0][0], 30); cmp(&c.E[0][0], &e.E[0][0], 10); cmp(&c.F[0][0], &e.F[0][0], 10);
+            cmp(&c.G[0][0], &e.G[0][0], 12); cmp(&c.H[0][0], &e.H[0][0], 4); cmp(&c.K[0][0], &e.K[0][0], 4);
+            wm = std::max(wm, em);
+            wop = std::max({wop, std::fabs(c.op.vgk - e.op.vgk), std::fabs(c.op.vak - e.op.vak)});
+            wx0 = std::max(wx0, maxdiff(c.x0, e.x0, NX) / maxabs(e.x0, NX));
+            check(s->bias_now() == b && !s->bias_moving() && s->bias_unconverged() == 0, "bias line: jump lands on the target");
+            delete s;
+        }
+        metric("bias_line_matrix_rel", wm);
+        metric("bias_line_op_abs", wop);
+        metric("bias_line_x0_rel", wx0);
+        check(wm <= TOL_COEF, "bias line: matrices == build_coeffs within TOL_COEF");
+        check(wop <= 1e-6 && wx0 <= 1e-6, "bias line: recentred operating point == build_coeffs within the Newton tolerance");
+    }
+
+    // 2. at rest at a bias reached by set_bias, the stage == a stage prepared there (TOL_BUILT_ABS: matrix rounding)
+    {
+        const Vec x = bias_sine(9600, 2.0, 220.0);
+        Stage* a = new Stage; Stage* b = new Stage;
+        a->prepare(48000.0, STANDARD, 1.0); a->set_bias_ramp(0.0); a->set_bias(1.37); a->reset();
+        b->prepare(48000.0, STANDARD, 1.37);
+        Vec ya(x.size()), yb(x.size());
+        a->process(x.data(), ya.data(), x.size());
+        b->process(x.data(), yb.data(), x.size());
+        const double e = maxdiff(ya.data(), yb.data(), x.size());
+        metric("bias_rest_vs_prepared_abs", e);
+        check(e <= TOL_BUILT_ABS, "bias: set_bias(1.37) + reset() == prepare(1.37) within TOL_BUILT_ABS");
+        delete a; delete b;
+    }
+
+    // 3. fast full-range moves, silence and sine, every quality: worst step vs the continuous reference
+    double w_sil = 0.0, w_sine = 0.0, base_sil_min = 1e300, base_sine_min = 1e300, red_min = 1e300, diff_max = 0.0,
+           peak8 = 0.0;
+    const Quality qs[3] = {ECO, STANDARD, HQ};
+    const char* qn[3] = {"eco", "standard", "hq"};
+    for (int qi = 0; qi < 3; ++qi)
+        for (int dir = 0; dir < 2; ++dir)
+            for (double amp : {0.0, 1.0, 8.0}) {
+                const double b0 = dir ? 2.0 : 0.5, b1 = dir ? 0.5 : 2.0;
+                const Vec x = bias_sine(N, amp, 220.0);
+                const Vec r = bias_reference(qs[qi], b0, b1, n0, L, x);
+                const Vec y = bias_run(qs[qi], b0, b1, n0, x, 64, false, &allocs);
+                const Vec ys = bias_run(qs[qi], b0, b1, n0, x, 64, true, &allocs);
+                const double w = worst_step(y, r), ws = worst_step(ys, r);
+                char name[96];
+                std::snprintf(name, sizeof name, "bias_step_%s_%s_%gV", qn[qi], dir ? "down" : "up", amp);
+                metric(name, w);
+                metric(std::string(name) + "_unsmoothed", ws);
+                (amp == 0.0 ? w_sil : w_sine) = std::max(amp == 0.0 ? w_sil : w_sine, w);
+                (amp == 0.0 ? base_sil_min : base_sine_min) = std::min(amp == 0.0 ? base_sil_min : base_sine_min, ws);
+                red_min = std::min(red_min, ws / w);
+                diff_max = std::max(diff_max, maxdiff(y.data(), r.data(), N));
+                if (amp == 8.0) peak8 = std::max(peak8, maxabs(r.data(), N));
+            }
+    metric("bias_step_worst_silence", w_sil);
+    metric("bias_step_worst_sine", w_sine);
+    metric("bias_step_unsmoothed_min_silence", base_sil_min);
+    metric("bias_step_unsmoothed_min_sine", base_sine_min);
+    metric("bias_step_reduction_min", red_min);
+    metric("bias_move_maxdiff_vs_continuous", diff_max);
+    metric("bias_move_out_peak_8V", peak8);
+    check(w_sil <= LIMIT_STEP_SILENCE, "bias: worst step in silence <= LIMIT_STEP_SILENCE (" + std::to_string(w_sil) + " V)");
+    check(w_sine <= LIMIT_STEP_SINE, "bias: worst step with a sine <= LIMIT_STEP_SINE (" + std::to_string(w_sine) + " V)");
+    check(red_min >= MIN_STEP_REDUCTION, "bias: worst step >= MIN_STEP_REDUCTION x below the unsmoothed swap");
+
+    // 4. block-size invariance: the move asked for at a sample common to blocks of 16 / 64 / 512 gives the same
+    //    output bit for bit; a target that changes at every block start (a host automation curve sampled per block)
+    //    differs only by when the curve was sampled (measured, RESULTS-smoothing.md)
+    {
+        const Vec x = bias_sine(19200, 2.0, 220.0);
+        const Vec y16 = bias_run(STANDARD, 0.5, 2.0, 5120, x, 16, false, &allocs);
+        const Vec y64 = bias_run(STANDARD, 0.5, 2.0, 5120, x, 64, false, &allocs);
+        const Vec y512 = bias_run(STANDARD, 0.5, 2.0, 5120, x, 512, false, &allocs);
+        check(y16 == y512 && y64 == y512, "bias: block sizes 16 / 64 / 512 give the same output (move at sample 5120)");
+        auto curve = [&](size_t block, size_t late) {
+            Stage* s = new Stage;
+            s->prepare(48000.0, STANDARD, 0.5);
+            s->set_bias_ramp(BIAS_RAMP_S);
+            Vec y(x.size());
+            for (size_t i = 0; i < x.size(); i += block) {     // 0.5 -> 2.0 linearly over 0.1 s from 0.1 s
+                const double t = double(i < late ? 0 : i - late) / 48000.0;
+                s->set_bias(t < 0.1 ? 0.5 : t >= 0.2 ? 2.0 : 0.5 + 1.5 * (t - 0.1) / 0.1);
+                CountAllocs ca;
+                s->process(x.data() + i, y.data() + i, std::min(block, x.size() - i));
+                allocs += ca.n();
+            }
+            delete s;
+            return y;
+        };
+        const Vec c16 = curve(16, 0), c64 = curve(64, 0), c512 = curve(512, 0), late = curve(16, 512);
+        const double d = std::max(maxdiff(c16.data(), c512.data(), x.size()), maxdiff(c64.data(), c512.data(), x.size()));
+        const double lag = maxdiff(c16.data(), late.data(), x.size()), pk = maxabs(c512.data(), x.size());
+        metric("bias_curve_blocksize_maxdiff", d);
+        metric("bias_curve_lag512_bound", lag);
+        metric("bias_curve_blocksize_peak", pk);
+        // tolerance: a host block of 512 reads the curve up to 511 samples late, which is the host's sampling and not
+        // the smoother. Bound: the block-16 run against itself with the curve read 512 samples late
+        // (plugin/tests/smoothing_test.cpp uses the same rule for all three parameters; RESULTS-smoothing.md)
+        check(d <= lag, "bias: an automation curve at blocks 16 / 64 / 512 agrees within the 512-sample lag bound");
+    }
+
+    // 5. reset() during a ramp lands on the target at rest; a published pack ends a ramp and takes over; targets are
+    //    clamped to the range
+    {
+        Stage* s = new Stage;
+        s->prepare(48000.0, STANDARD, 1.0);
+        const Vec x = bias_sine(256, 1.0, 220.0);
+        Vec y(x.size());
+        s->set_bias(2.0);
+        s->process(x.data(), y.data(), 256);
+        const bool moving = s->bias_moving();
+        s->reset();
+        check(moving && !s->bias_moving() && s->bias_now() == 2.0 && maxabs(s->state_x(), NX) == 0.0,
+              "bias: reset() during a ramp jumps to the target, at rest");
+        s->set_bias(0.5);
+        s->process(x.data(), y.data(), 64);
+        s->request_bias(1.25);
+        s->process(x.data(), y.data(), 64);
+        check(!s->bias_moving() && s->bias_now() == 1.25 && s->active().bias == 1.25, "bias: a published pack ends the ramp");
+        s->set_bias(9.0);
+        s->process(x.data(), y.data(), 256);
+        check(s->bias_moving() && s->bias_target() == 9.0, "bias: a target outside the range moves");
+        s->reset();
+        check(s->bias_now() == 2.0, "bias: ... and is clamped to the range (2.0)");
+        delete s;
+    }
+    metric("bias_process_allocations", double(allocs));
+    check(allocs == 0, "bias smoothing: process() allocates nothing (" + std::to_string(allocs) + ")");
+}
+
+// StereoStage with a bias move against two mono Stages with the same move (the compare_channel rule: bit-equal on the
+// exact builds, else TOL_STEREO_ABS)
+static void stereo_bias_case(const std::string& what, TriodeMath math, LaneMath lm) {
+    const size_t N = 9600;
+    const Vec xl = bias_sine(N, 1.0, 220.0), xr = bias_sine(N, 8.0, 330.0);
+    Stage* ml = new Stage; Stage* mr = new Stage; StereoStage* s = new StereoStage;
+    for (Stage* m : {ml, mr}) { m->prepare(48000.0, STANDARD, 0.5, math); m->set_bias_ramp(BIAS_RAMP_S); }
+    s->prepare(48000.0, STANDARD, 0.5, math);
+    s->set_bias_ramp(BIAS_RAMP_S);
+    s->set_lane_math(lm);
+    Vec yl(N), yr(N), yml(N), ymr(N);
+    long a = 0;
+    for (size_t i = 0; i < N; i += 64) {
+        if (i == 1920) { ml->set_bias(2.0); mr->set_bias(2.0); s->set_bias(2.0); }
+        if (i == 4480) { ml->set_bias(1.1); mr->set_bias(1.1); s->set_bias(1.1); }   // re-planned mid-ramp
+        ml->process(xl.data() + i, yml.data() + i, 64);
+        mr->process(xr.data() + i, ymr.data() + i, 64);
+        CountAllocs ca;
+        s->process(xl.data() + i, xr.data() + i, yl.data() + i, yr.data() + i, 64);
+        a += ca.n();
+    }
+    compare_channel(what + " L", yl, yml, *s, 0, *ml, lm == LaneMath::vector && math == TriodeMath::fast);
+    compare_channel(what + " R", yr, ymr, *s, 1, *mr, lm == LaneMath::vector && math == TriodeMath::fast);
+    check(s->bias_now() == 1.1 && s->bias_updates() == ml->bias_updates() && a == 0, what + " bias state, no allocation");
+    g_stereo_allocs += a;
+    delete ml; delete mr; delete s;
+}
+
 // ---- cli ---------------------------------------------------------------------------------------------------
 static void json_mat(std::FILE* f, const char* k, const double* a, int n) {
     std::fprintf(f, "\"%s\": [", k);
@@ -1245,6 +1519,7 @@ int main(int argc, char** argv) {
     test_denormals();
     test_swap_threads();
     test_float_io();
+    test_bias_smoothing();
     run_stereo_tests(V);
     metric("alloc_hooks", ALLOC_HOOKS ? 1 : 0);
     metric("failures", g_fail);

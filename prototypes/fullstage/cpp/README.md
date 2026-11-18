@@ -17,6 +17,7 @@ stays the reference. Everything here is checked against it.
 | `results.json` | committed run of `validate_cpp` (6–7 Nov 2026, this lab VM) |
 | `bench.cpp`, `bench.py`, `BENCHMARK.md` | the #20 per-instance CPU benchmark: harness, runner, method and results |
 | `build.py` | the compile helper shared by `validate_cpp.py`, `bench.py` and the tests |
+| `bias_options.cpp`, [`RESULTS-smoothing.md`](RESULTS-smoothing.md) | #73: the bias-update options measured against a continuous reference, and the results (bias smoothing, Drive / Output ramps, drive vs aliasing) |
 
 ## What the core is
 
@@ -25,7 +26,8 @@ stays the reference. Everything here is checked against it.
   (#70; see "Why built needs 1e-5 V" below), so silence is exactly the rest point. The matrices are fixed-size, as in `Stage.m`: A 6×6, B 6×2, C 6×2,
   D 5×6, E 5×2, F 5×2, G 2×6, H 2×2, K 2×2. They live in one trivially copyable `Coeffs` pack, together with the DC
   operating point, x0, the triode parameters, the Newton settings and the math switch. No `std::vector`, no `new`,
-  no exceptions in the core. `sizeof(Stage)` is 27 kB, most of it the FIR state; `sizeof(Coeffs)` is 1.3 kB.
+  no exceptions in the core. `sizeof(Stage)` is 32 kB, most of it the FIR state (27 kB before the #73 bias line);
+  `sizeof(Coeffs)` is 1.3 kB.
 * **Quality settings.** `HQ` 16×, `STANDARD` 8× (default) and `ECO` 4× with the 17.3 kHz small-cap pre-warp are
   `stage.QUALITY` (tested). The core owns the oversampling: the same streaming half-band FIR cascade (127 / 23 taps,
   Kaiser β 9, polyphase), the same pad delay, latency (72 base samples at 8×) and decimator priming.
@@ -48,6 +50,8 @@ stays the reference. Everything here is checked against it.
 | `request_bias(b)` / `publish(coeffs)` | any non-RT thread | builds a new pack (matrices + DC operating point) off the audio thread, then publishes it lock-free |
 | `process(in, out, n)` (double or float), `process_internal`, `reset()` | the audio thread | noexcept, no allocation, no locks, wait-free |
 | `set_drive(g)` / `set_output(g)` / `nonconverged_total()` | any thread | relaxed atomics, read once per block |
+| `set_bias(b)` / `set_bias_ramp(seconds)` | any thread | relaxed atomics, read once per block; the audio thread ramps the bias along the bias line (below, #73) |
+| `set_bias_range(lo, hi)` | non-RT, before `prepare()` | the range `set_bias()` moves in (default 0.5–2.0); `prepare()` builds the line's two end packs |
 
 **Coefficient swap.** `TripleBuffer<Coeffs>` is a single-producer / single-consumer triple buffer with three slots
 inside the `Stage` object:
@@ -64,8 +68,20 @@ is refused. On a swap, the state x and v is **kept, not reset**. Bias changes on
 conductances, and with them the meaning of x, are unchanged: the stage moves from its present state to the new
 operating point, as a real pot would: the absolute history x0 + x is kept, and x is re-expressed against the new
 pack's x0. `reset()` goes to the active pack's operating point. This is the same as the Python reference for a swap
-(`Stage.swap_bias`, used by `export_vectors._run_case`: new matrices and operating point, keep x0 + x and `v`). Drive, output and
-bias are not smoothed (zipper noise is possible on fast moves), as in the Python prototype.
+(`Stage.swap_bias`, used by `export_vectors._run_case`: new matrices and operating point, keep x0 + x and `v`). Drive and
+output are not smoothed in the core (the plugin wrapper ramps them, #91). A `request_bias()` swap jumps the matrices at a
+block boundary and clicks; `set_bias()` does not (next paragraph).
+
+**Bias smoothing (#73).** Bias changes only Rk, so by Sherman–Morrison every matrix of a pack is affine in one scalar of
+Rk: the packs of all biases lie on a line, and the two packs `prepare()` builds at the range ends give the exact
+matrices at any bias in between (`detail::BiasLine`, 7.9e-13 relative to `build_coeffs`). The operating point is not
+needed: the deviation form is exact for any reference currents i0 once x0 is re-solved for them (`detail::rereference`,
+a 6×6 LU). So `set_bias(b)` moves the stage there on the audio thread, one exact pack per base sample over
+`set_bias_ramp()` seconds (default 20 ms), keeping the absolute history as a swap does, with one warm-started DC solve at
+the end of the ramp to come to rest at x = 0. No `build_coeffs`, no lock and no allocation on the audio thread; nothing
+at rest. A full-range move steps by at most 0.119 mV in silence and 9.30 mV with an 8 V sine against a continuous
+reference, against 61 mV–7.35 V for a `request_bias()` swap; the outputs are the same for host blocks of 16, 64 and
+512. Method, options compared and limits: [RESULTS-smoothing.md](RESULTS-smoothing.md).
 
 **Denormals.** `process()` and `process_internal()` hold a `ScopedFlushDenormals`. On x86 it sets MXCSR FTZ (bit 15)
 and DAZ (bit 6); on AArch64, FPCR.FZ (bit 24). On scope exit it restores the caller's mode (RESEARCH-numerics.md c).
@@ -293,13 +309,14 @@ ubuntu runners have g++, so the existing `test (fullstage)` job runs these tests
 
 | test | what it proves |
 |---|---|
-| `test_core_vectors` (`-O2`) | every check in `test_core.cpp` against `vectors.txt` (below), plus allocation, FTZ, swap, fallback, block-size invariance, float I/O |
+| `test_core_vectors` (`-O2`) | every check in `test_core.cpp` against `vectors.txt` (below), plus allocation, FTZ, swap, fallback, block-size invariance, float I/O, bias smoothing (#73: line exactness, 18 full-range moves against the continuous reference with stated limits, block sizes 16 / 64 / 512, stereo) |
 | `test_core_vectors_fma` | the same with `-O2 -march=x86-64-v3` (FMA contraction; x86-64 only) |
 | `test_swap_tsan` | the threaded swap test under `-fsanitize=thread`: no race reported (skips only if TSan cannot start) |
 | `test_bit_exact_solver` / `_triode` | `solve()` on the vector rows + 2000 random hard problems, and the currents (libm, currents_only, fast) on 3000 random points, equal **bit for bit** to the live Python functions on the same machine (`-O2 -ffp-contract=off`) |
 | `test_vectors_are_fresh` | the committed `vectors.txt` still matches what the Python stage produces now |
 | `test_validate_reproduced[hq/standard/eco]` | `dk.validate.run` on the C++ core reproduces `dk/results.json` within `validate_cpp.LIMITS`, and every `pass_vs_dz` criterion holds |
 | `test_stereo_parity[...]` | `StereoStage` = two mono `Stage`s (section "Stereo"), six builds; bit-exact where guaranteed. The same for the vector maths (#67), plus its error bounds against libm on grids covering `dk/fastmath_domain.json` |
+| `test_bias_options_smoke` | `bias_options.cpp` (#73) builds and runs one move; the bias line beats every other option (no timing) |
 | `test_bench_smoke` / `test_bench_records` | `bench.cpp` (#20, #21, #67) builds and runs all 126 configurations once on 512 samples, with bit-identical output across passes and s2 = v2 = x2 on exact builds (no timing checked); every committed `bench_*.json` is complete (the #20 72-row, #21 108-row or #67 126-row schema) |
 
 **Vectors** (`export_vectors.py`; tolerances in `test_core.cpp`). The tolerances were set from the worst error measured
@@ -482,7 +499,8 @@ with no C++/Python reproduction failures. Ruff 0.17.3 passes with the unchanged 
   (BENCHMARK.md, "Stereo SIMD results" and "Vector-maths stereo results"). No plugin wrapper (#22).
 - The NEON path was run only with Apple clang, and SSE2 only with Apple clang under Rosetta 2 here, plus GCC on CI.
   GCC on AArch64 and MSVC (which gets the struct fallback) were not built.
-- No smoothing of drive / output / bias, as in Python. A bias swap jumps the matrices at a block boundary.
+- No smoothing of drive / output in the core (the plugin ramps them). Bias: `set_bias()` ramps it (#73); a
+  `request_bias()` swap still jumps the matrices at a block boundary. Python has neither.
 - Allocation hooks are glibc-specific; elsewhere only `operator new` / `delete` are counted.
 - TSan, FMA and every run were on x86-64 Linux only. AArch64 / macOS / Windows were compile-checked, not run.
   Since then (11 Nov 2026, #20) `pytest cpp/tests` runs on an Apple M1, macOS 15.6.1, Apple clang 17, by hand (CI
