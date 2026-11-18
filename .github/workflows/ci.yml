@@ -111,12 +111,17 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Aliasing guard (limits + baseline ratchet)
         run: python -m dk.aliasing_guard --workers "$(nproc)" --json aliasing_guard_results.json
+      # #96: 11 FIR points, verified against full/short 44.1 kHz sweeps. Separate baseline; retain 48 kHz above.
+      - name: Aliasing guard at 44.1 kHz (FIR limits + baseline ratchet)
+        run: python -m dk.aliasing_guard --fs 44100 --workers "$(nproc)" --json aliasing_guard_44100_results.json
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: aliasing-guard-results
-          path: prototypes/fullstage/aliasing_guard_results.json
+          path: |
+            prototypes/fullstage/aliasing_guard_results.json
+            prototypes/fullstage/aliasing_guard_44100_results.json
           if-no-files-found: warn
 
   # Blocking lint (#87). Settings (line length 120, select E and F) are in ruff.toml at the repo root, shared with

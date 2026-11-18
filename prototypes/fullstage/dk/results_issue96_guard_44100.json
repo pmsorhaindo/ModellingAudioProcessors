@@ -1,0 +1,479 @@
+{
+ "passed": true,
+ "tolerance_db": 1.5,
+ "wall_s": 8.82117279106751,
+ "workers": 8,
+ "python": "3.15.2",
+ "git_rev": "bb588c4",
+ "method": {
+  "fs_base": 44100,
+  "tones": {
+   "hq/fir": {
+    "2V": [
+     18037,
+     19037
+    ],
+    "8V": [
+     10037,
+     19037
+    ]
+   },
+   "standard/fir": {
+    "2V": [
+     18037,
+     19037
+    ],
+    "8V": [
+     10037,
+     16037
+    ]
+   },
+   "eco/fir": {
+    "2V": [
+     13037
+    ],
+    "8V": [
+     10037,
+     18037
+    ]
+   }
+  },
+  "settle_s": 0.2,
+  "window_s": 0.1,
+  "band_hz": [
+   20.0,
+   20000.0
+  ],
+  "mask_bins": 3
+ },
+ "baseline": {
+  "reason": "Establish 44.1 kHz FIR ratchet after transition-scaled 231-tap design and #96 octave-headroom limits; 48 kHz untouched",
+  "updated": "2026-11-18",
+  "git_rev": "bb588c4",
+  "tolerance_db": 1.5,
+  "method": {
+   "fs_base": 44100,
+   "tones": {
+    "hq/fir": {
+     "2V": [
+      18037,
+      19037
+     ],
+     "8V": [
+      10037,
+      19037
+     ]
+    },
+    "standard/fir": {
+     "2V": [
+      18037,
+      19037
+     ],
+     "8V": [
+      10037,
+      16037
+     ]
+    },
+    "eco/fir": {
+     "2V": [
+      13037
+     ],
+     "8V": [
+      10037,
+      18037
+     ]
+    }
+   },
+   "settle_s": 0.2,
+   "window_s": 0.1,
+   "band_hz": [
+    20.0,
+    20000.0
+   ],
+   "mask_bins": 3
+  },
+  "values": {
+   "hq/fir/2V": {
+    "total_dbc": -122.08612446299482,
+    "tone": 19037,
+    "f_hz": 19040.0,
+    "tones": [
+     18037,
+     19037
+    ]
+   },
+   "hq/fir/8V": {
+    "total_dbc": -64.59069214191206,
+    "tone": 19037,
+    "f_hz": 19040.0,
+    "tones": [
+     10037,
+     19037
+    ]
+   },
+   "standard/fir/2V": {
+    "total_dbc": -122.14769528923661,
+    "tone": 19037,
+    "f_hz": 19040.0,
+    "tones": [
+     18037,
+     19037
+    ]
+   },
+   "standard/fir/8V": {
+    "total_dbc": -47.425606976070924,
+    "tone": 16037,
+    "f_hz": 16040.0,
+    "tones": [
+     10037,
+     16037
+    ]
+   },
+   "eco/fir/2V": {
+    "total_dbc": -68.2270076495978,
+    "tone": 13037,
+    "f_hz": 13040.0,
+    "tones": [
+     13037
+    ]
+   },
+   "eco/fir/8V": {
+    "total_dbc": -29.72205080527288,
+    "tone": 18037,
+    "f_hz": 18030.0,
+    "tones": [
+     10037,
+     18037
+    ]
+   }
+  }
+ },
+ "rows": [
+  {
+   "key": "hq/fir/2V",
+   "limit_dbc": -118.2,
+   "measured_dbc": -122.08612446299482,
+   "baseline_dbc": -122.08612446299482,
+   "delta_db": 0.0,
+   "margin_db": 3.8861244629948146,
+   "tone": 19037,
+   "status": "ok"
+  },
+  {
+   "key": "hq/fir/8V",
+   "limit_dbc": -61.1,
+   "measured_dbc": -64.59069214191206,
+   "baseline_dbc": -64.59069214191206,
+   "delta_db": 0.0,
+   "margin_db": 3.4906921419120565,
+   "tone": 19037,
+   "status": "ok"
+  },
+  {
+   "key": "standard/fir/2V",
+   "limit_dbc": -118.3,
+   "measured_dbc": -122.14769528923661,
+   "baseline_dbc": -122.14769528923661,
+   "delta_db": 0.0,
+   "margin_db": 3.8476952892366114,
+   "tone": 19037,
+   "status": "ok"
+  },
+  {
+   "key": "standard/fir/8V",
+   "limit_dbc": -46.8,
+   "measured_dbc": -47.425606976070924,
+   "baseline_dbc": -47.425606976070924,
+   "delta_db": 0.0,
+   "margin_db": 0.6256069760709266,
+   "tone": 16037,
+   "status": "ok"
+  },
+  {
+   "key": "eco/fir/2V",
+   "limit_dbc": -65.9,
+   "measured_dbc": -68.2270076495978,
+   "baseline_dbc": -68.2270076495978,
+   "delta_db": 0.0,
+   "margin_db": 2.327007649597789,
+   "tone": 13037,
+   "status": "ok"
+  },
+  {
+   "key": "eco/fir/8V",
+   "limit_dbc": -27.2,
+   "measured_dbc": -29.72205080527288,
+   "baseline_dbc": -29.72205080527288,
+   "delta_db": 0.0,
+   "margin_db": 2.5220508052728796,
+   "tone": 18037,
+   "status": "ok"
+  }
+ ],
+ "measured": {
+  "hq/fir/2V": {
+   "total_dbc": -122.08612446299482,
+   "tone": 19037,
+   "f_hz": 19040.0,
+   "tones": [
+    18037,
+    19037
+   ]
+  },
+  "hq/fir/8V": {
+   "total_dbc": -64.59069214191206,
+   "tone": 19037,
+   "f_hz": 19040.0,
+   "tones": [
+    10037,
+    19037
+   ]
+  },
+  "standard/fir/2V": {
+   "total_dbc": -122.14769528923661,
+   "tone": 19037,
+   "f_hz": 19040.0,
+   "tones": [
+    18037,
+    19037
+   ]
+  },
+  "standard/fir/8V": {
+   "total_dbc": -47.425606976070924,
+   "tone": 16037,
+   "f_hz": 16040.0,
+   "tones": [
+    10037,
+    16037
+   ]
+  },
+  "eco/fir/2V": {
+   "total_dbc": -68.2270076495978,
+   "tone": 13037,
+   "f_hz": 13040.0,
+   "tones": [
+    13037
+   ]
+  },
+  "eco/fir/8V": {
+   "total_dbc": -29.72205080527288,
+   "tone": 18037,
+   "f_hz": 18030.0,
+   "tones": [
+    10037,
+    18037
+   ]
+  }
+ },
+ "records": [
+  {
+   "setting": "hq",
+   "os": 16,
+   "filt": "fir",
+   "drive": 2.0,
+   "tone": 18037,
+   "fs_base": 44100,
+   "f_hz": 18030.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 181,
+   "total_dbc": -122.29140195537737,
+   "worst_dbc": -125.55386068617183,
+   "worst_hz": 8040.0,
+   "internal_dbc": -145.81757019164098,
+   "resampler_dbc": -122.31072757424486,
+   "other_dbc": -300.0,
+   "cpu_s": 7.2560917919036
+  },
+  {
+   "setting": "hq",
+   "os": 16,
+   "filt": "fir",
+   "drive": 2.0,
+   "tone": 19037,
+   "fs_base": 44100,
+   "f_hz": 19040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 315,
+   "total_dbc": -122.08612446299482,
+   "worst_dbc": -125.24553371901177,
+   "worst_hz": 6020.0,
+   "internal_dbc": -187.05874871301376,
+   "resampler_dbc": -122.13936387742115,
+   "other_dbc": -141.22834082118823,
+   "cpu_s": 7.1414512088522315
+  },
+  {
+   "setting": "hq",
+   "os": 16,
+   "filt": "fir",
+   "drive": 8.0,
+   "tone": 10037,
+   "fs_base": 44100,
+   "f_hz": 10040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 347,
+   "total_dbc": -73.04463234905083,
+   "worst_dbc": -80.33066536256501,
+   "worst_hz": 12840.0,
+   "internal_dbc": -73.044756368006,
+   "resampler_dbc": -118.49623974749059,
+   "other_dbc": -145.5334207052444,
+   "cpu_s": 6.922208792064339
+  },
+  {
+   "setting": "hq",
+   "os": 16,
+   "filt": "fir",
+   "drive": 8.0,
+   "tone": 19037,
+   "fs_base": 44100,
+   "f_hz": 19040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 315,
+   "total_dbc": -64.59069214191206,
+   "worst_dbc": -68.42205700969086,
+   "worst_hz": 1120.0,
+   "internal_dbc": -64.59172575969895,
+   "resampler_dbc": -100.90153401494463,
+   "other_dbc": -118.4284784579046,
+   "cpu_s": 7.564060082891956
+  },
+  {
+   "setting": "standard",
+   "os": 8,
+   "filt": "fir",
+   "drive": 2.0,
+   "tone": 18037,
+   "fs_base": 44100,
+   "f_hz": 18030.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 181,
+   "total_dbc": -122.23702189748033,
+   "worst_dbc": -125.64458989995005,
+   "worst_hz": 8040.0,
+   "internal_dbc": -135.5507164753884,
+   "resampler_dbc": -122.44439002422722,
+   "other_dbc": -300.0,
+   "cpu_s": 3.975057041971013
+  },
+  {
+   "setting": "standard",
+   "os": 8,
+   "filt": "fir",
+   "drive": 2.0,
+   "tone": 19037,
+   "fs_base": 44100,
+   "f_hz": 19040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 315,
+   "total_dbc": -122.14769528923661,
+   "worst_dbc": -125.33811738989147,
+   "worst_hz": 6020.0,
+   "internal_dbc": -137.44434357130373,
+   "resampler_dbc": -122.34009160262937,
+   "other_dbc": -140.7492008502764,
+   "cpu_s": 4.244400708004832
+  },
+  {
+   "setting": "standard",
+   "os": 8,
+   "filt": "fir",
+   "drive": 8.0,
+   "tone": 10037,
+   "fs_base": 44100,
+   "f_hz": 10040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 347,
+   "total_dbc": -58.606749129453405,
+   "worst_dbc": -65.91402346275791,
+   "worst_hz": 11440.0,
+   "internal_dbc": -58.60675322622039,
+   "resampler_dbc": -118.86956477714551,
+   "other_dbc": -145.51924689692854,
+   "cpu_s": 4.199420374818146
+  },
+  {
+   "setting": "standard",
+   "os": 8,
+   "filt": "fir",
+   "drive": 8.0,
+   "tone": 16037,
+   "fs_base": 44100,
+   "f_hz": 16040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 1097,
+   "total_dbc": -47.425606976070924,
+   "worst_dbc": -51.31519519351446,
+   "worst_hz": 15960.0,
+   "internal_dbc": -47.42560950803963,
+   "resampler_dbc": -110.41739917597097,
+   "other_dbc": -118.34763374692811,
+   "cpu_s": 4.276367082959041
+  },
+  {
+   "setting": "eco",
+   "os": 4,
+   "filt": "fir",
+   "drive": 2.0,
+   "tone": 13037,
+   "fs_base": 44100,
+   "f_hz": 13040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 673,
+   "total_dbc": -68.2270076495978,
+   "worst_dbc": -70.98154008020052,
+   "worst_hz": 19920.0,
+   "internal_dbc": -68.2270103783751,
+   "resampler_dbc": -130.2452084348131,
+   "other_dbc": -180.91154088348839,
+   "cpu_s": 2.4869404998607934
+  },
+  {
+   "setting": "eco",
+   "os": 4,
+   "filt": "fir",
+   "drive": 8.0,
+   "tone": 10037,
+   "fs_base": 44100,
+   "f_hz": 10040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 347,
+   "total_dbc": -44.76166091605734,
+   "worst_dbc": -50.75491988339023,
+   "worst_hz": 4320.0,
+   "internal_dbc": -44.7616612302314,
+   "resampler_dbc": -116.1729427180338,
+   "other_dbc": -145.43714756302666,
+   "cpu_s": 2.2475117498543113
+  },
+  {
+   "setting": "eco",
+   "os": 4,
+   "filt": "fir",
+   "drive": 8.0,
+   "tone": 18037,
+   "fs_base": 44100,
+   "f_hz": 18030.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 181,
+   "total_dbc": -29.72205080527288,
+   "worst_dbc": -33.16709973949091,
+   "worst_hz": 3900.0,
+   "internal_dbc": -29.722050858533372,
+   "resampler_dbc": -108.83584225094106,
+   "other_dbc": -300.0,
+   "cpu_s": 2.426502540940419
+  }
+ ]
+}

@@ -8,6 +8,8 @@ truth sits below every limit.
 """
 import os
 import sys
+import json
+import math
 import numpy as np
 import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -67,3 +69,37 @@ def test_ground_truth_covers_the_sweep_and_sits_below_every_limit():
             sel = A.select(gt, f"{A.GROUND_TRUTH_OS}x", flt, d)
             assert sorted(r["tone"] for r in sel) == list(A.SWEEP_HZ)
             assert all(max(r["total_dbc"] for r in sel) < A.LIMIT_DBC[(q, flt)][d] for q in QUALITY)
+
+
+def test_44100_budget_uses_independent_octave_secants_and_preserves_resampler_floor_limits():
+    old = json.load(open(os.path.join(os.path.dirname(A.__file__), "results_sample_rates.json")))
+    for (q, flt), limits in A.LIMIT_DBC_44100.items():
+        for d, lim in limits.items():
+            if q in ("hq", "standard") and d == 2.0:
+                assert lim == A.LIMIT_DBC[(q, flt)][d]
+            else:
+                w48 = A.worst(old["rates"]["48000"]["aliasing_records"], q, flt, d)["total_dbc"]
+                w96 = A.worst(old["rates"]["96000"]["aliasing_records"], q, flt, d)["total_dbc"]
+                expected = math.ceil((A.LIMIT_DBC[(q, flt)][d] + (w48-w96)*math.log2(48000/44100))*10)/10
+                assert lim == expected
+    assert A.limits_for_rate(48000) is A.LIMIT_DBC
+    assert A.limits_for_rate(44100) is A.LIMIT_DBC_44100
+    with pytest.raises(ValueError, match="no verified CI subset"):
+        A.ci_tones_for_rate(96000)
+
+
+def test_44100_full_and_short_sweep_worst_tones_are_in_ci_subset():
+    data = json.load(open(os.path.join(os.path.dirname(A.__file__), "results_issue96_shipped.json")))
+    assert not data["failures"]
+    for sweep in data["sweeps"].values():
+        for (q, f), tones in A.CI_TONES_44100.items():
+            for d, selected in tones.items():
+                rows = A.select(sweep["records"], q, f, d)
+                assert sorted(r["tone"] for r in rows) == list(A.SWEEP_HZ)
+                assert max(rows, key=lambda r: r["total_dbc"])["tone"] in selected
+                assert max(r["total_dbc"] for r in rows) <= A.LIMIT_DBC_44100[(q, f)][d]
+    # A caller must not accidentally combine rates and select one rate's budget for another.
+    with pytest.raises(ValueError, match="one host rate"):
+        A.check_limits([dict(fs_base=44100), dict(fs_base=48000)])
+    with pytest.raises(ValueError, match="FIR only"):
+        A.check_limits([dict(fs_base=44100, setting="hq", filt="iir")])

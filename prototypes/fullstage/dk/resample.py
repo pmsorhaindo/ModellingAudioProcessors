@@ -99,6 +99,9 @@ def hiir_nbr_coefs(attenuation, transition):
 # centred on R/4, so tbw = 2 (R/4 - 20 kHz) / R. The FIR lengths were chosen to meet the same spec.
 PASS_HZ = 20000.0
 FIR_FIRST, FIR_LATER = (127, 9.0), (23, 9.0)   # (taps, Kaiser beta): >= 92.8 dB stop, < 0.0003 dB ripple
+# At 44.1 kHz the 20 kHz -> fs-20 kHz transition is 4.1 kHz instead of 8 kHz. Scale the tap length inversely with
+# normalised transition width, then round up to 4m+3: 127*(8000/96000)/(4100/88200) -> 231. See RESULTS.md (#96).
+FIR_FIRST_44100 = (231, 9.0)
 IIR_ATTEN_DB = 96.0                             # per-stage design attenuation -> 6, 3, 2, 2 coefficients
 
 
@@ -221,7 +224,8 @@ def design(kind, os, fs):
         R = fs * 2 ** (i + 1)
         tbw = 2 * (R / 4 - PASS_HZ) / R          # HIIR: passband edge R(1/4 - tbw/2) = 20 kHz, stop R/2 - 20 kHz
         if kind == "fir":
-            st.append(_FirHB(*(FIR_FIRST if i == 0 else FIR_LATER)))
+            first = FIR_FIRST_44100 if fs == 44100 else FIR_FIRST
+            st.append(_FirHB(*(first if i == 0 else FIR_LATER)))
         elif kind == "iir":
             st.append(_IirHB(hiir_nbr_coefs(IIR_ATTEN_DB, tbw), tbw))
         else:

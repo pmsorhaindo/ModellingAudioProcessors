@@ -106,6 +106,8 @@ inline constexpr Quality HQ{16, 0.0}, STANDARD{8, 0.0}, ECO{4, 17300.0};   // st
 inline constexpr int MAX_OS = 16;                       // fixed buffers: os = 2, 4, 8 or 16
 
 inline constexpr int FIR_FIRST_TAPS = 127, FIR_LATER_TAPS = 23;   // resample.FIR_FIRST / FIR_LATER, Kaiser beta 9
+inline constexpr int FIR_FIRST_44100_TAPS = 231;         // resample.FIR_FIRST_44100 (#96); other rates unchanged
+inline constexpr int FIR_MAX_TAPS = FIR_FIRST_44100_TAPS;
 inline constexpr double FIR_BETA = 9.0;
 
 // node order of circuit.NODES: src in1 gl g k a out ht
@@ -861,22 +863,23 @@ template <int N, class T = double> struct Fir {
 };
 
 /* Streaming os-times up -> (stage at os*fs) -> down, as dk/resample.Resampler(fs, os, "fir"): a cascade of 2x
- * linear-phase half-band FIR stages (stage 0 next to the base rate: 127 taps, later ones 23), polyphase branches,
+ * linear-phase half-band FIR stages (first: 231 taps at 44.1 kHz, 127 elsewhere; later: 23), polyphase branches,
  * a pad delay so the latency is a whole number of base samples. up() starts from zero history; the first down()
  * after reset() primes the decimator with its first sample (the operating-point value). T: as for Fir. */
 template <class T> class ResamplerT {
 public:
-    static constexpr int BR = (FIR_FIRST_TAPS + 1) / 2 + 1;     // branch taps: 64, +1 for the down odd branch
+    static constexpr int BR = (FIR_MAX_TAPS + 1) / 2 + 1;       // includes the down odd branch's extra sample
 
-    bool prepare(int os) {
+    bool prepare(int os, double fs_base = 48000.0) {
         int n = 0;
         while ((1 << n) < os) ++n;
         if ((1 << n) != os || n < 1 || os > MAX_OS) return false;
         os_ = os; nst_ = n;
         int d_int = 0;
         for (int i = 0; i < n; ++i) {
-            const int nt = i == 0 ? FIR_FIRST_TAPS : FIR_LATER_TAPS;
-            double h[FIR_FIRST_TAPS], e[BR], o[BR];
+            const int first = fs_base == 44100.0 ? FIR_FIRST_44100_TAPS : FIR_FIRST_TAPS;
+            const int nt = i == 0 ? first : FIR_LATER_TAPS;
+            double h[FIR_MAX_TAPS], e[BR], o[BR];
             firwin_halfband(nt, FIR_BETA, h);
             std::memcpy(taps_[i], h, sizeof(double) * nt); ntaps_[i] = nt;
             const int ne = (nt + 1) / 2, no = nt / 2;
@@ -953,7 +956,7 @@ public:
 
 private:
     int os_ = 0, nst_ = 0, pad_ = 0, latency_ = 0, up_delay_ = 0;
-    double taps_[4][FIR_FIRST_TAPS] = {};
+    double taps_[4][FIR_MAX_TAPS] = {};
     int ntaps_[4] = {};
     Fir<BR, T> upe_[4], upo_[4], dne_[4], dno_[4];
     Fir<MAX_OS + 1, T> delay_;
@@ -1120,7 +1123,7 @@ public:
                         const Newton& nw = Newton{}, const TriodeParams& par = DZ_12AX7_RSD1) {
         std::lock_guard<std::mutex> lk(producer_);
         prepared_ = false;
-        if (!(fs_base > 0.0) || !rs_.prepare(q.os)) return BuildStatus::bad_argument;
+        if (!(fs_base > 0.0) || !rs_.prepare(q.os, fs_base)) return BuildStatus::bad_argument;
         const BuildStatus st = install_locked(fs_base, q, bias, math, nw, par);
         if (st == BuildStatus::ok) reset();
         return st;
@@ -1270,7 +1273,7 @@ public:
                         const Newton& nw = Newton{}, const TriodeParams& par = DZ_12AX7_RSD1) {
         std::lock_guard<std::mutex> lk(producer_);
         prepared_ = false;
-        if (!(fs_base > 0.0) || !rs_.prepare(q.os)) return BuildStatus::bad_argument;
+        if (!(fs_base > 0.0) || !rs_.prepare(q.os, fs_base)) return BuildStatus::bad_argument;
         const BuildStatus st = install_locked(fs_base, q, bias, math, nw, par);
         if (st == BuildStatus::ok) reset();
         return st;

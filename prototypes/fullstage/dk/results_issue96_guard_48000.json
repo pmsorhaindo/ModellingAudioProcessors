@@ -1,0 +1,819 @@
+{
+ "passed": true,
+ "tolerance_db": 1.5,
+ "wall_s": 13.516111416043714,
+ "workers": 8,
+ "python": "3.15.2",
+ "git_rev": "bb588c4",
+ "method": {
+  "fs_base": 48000,
+  "tones": {
+   "hq/fir": {
+    "2V": [
+     19037
+    ],
+    "8V": [
+     10037,
+     19037
+    ]
+   },
+   "hq/iir": {
+    "2V": [
+     14037
+    ],
+    "8V": [
+     10037,
+     19037
+    ]
+   },
+   "standard/fir": {
+    "2V": [
+     19037
+    ],
+    "8V": [
+     10037,
+     19037
+    ]
+   },
+   "standard/iir": {
+    "2V": [
+     13037
+    ],
+    "8V": [
+     10037,
+     19037
+    ]
+   },
+   "eco/fir": {
+    "2V": [
+     16037
+    ],
+    "8V": [
+     10037,
+     19037
+    ]
+   },
+   "eco/iir": {
+    "2V": [
+     16037
+    ],
+    "8V": [
+     10037,
+     19037
+    ]
+   }
+  },
+  "settle_s": 0.2,
+  "window_s": 0.1,
+  "band_hz": [
+   20.0,
+   20000.0
+  ],
+  "mask_bins": 3
+ },
+ "baseline": {
+  "reason": "Initial baseline (#35): CI subset at 330ee9a",
+  "updated": "2026-11-04",
+  "git_rev": "330ee9a",
+  "tolerance_db": 1.5,
+  "method": {
+   "tones": {
+    "hq/fir": {
+     "2V": [
+      19037
+     ],
+     "8V": [
+      10037,
+      19037
+     ]
+    },
+    "hq/iir": {
+     "2V": [
+      14037
+     ],
+     "8V": [
+      10037,
+      19037
+     ]
+    },
+    "standard/fir": {
+     "2V": [
+      19037
+     ],
+     "8V": [
+      10037,
+      19037
+     ]
+    },
+    "standard/iir": {
+     "2V": [
+      13037
+     ],
+     "8V": [
+      10037,
+      19037
+     ]
+    },
+    "eco/fir": {
+     "2V": [
+      16037
+     ],
+     "8V": [
+      10037,
+      19037
+     ]
+    },
+    "eco/iir": {
+     "2V": [
+      16037
+     ],
+     "8V": [
+      10037,
+      19037
+     ]
+    }
+   },
+   "settle_s": 0.2,
+   "window_s": 0.1,
+   "band_hz": [
+    20.0,
+    20000.0
+   ],
+   "mask_bins": 3
+  },
+  "values": {
+   "hq/fir/2V": {
+    "total_dbc": -121.26628125211404,
+    "tone": 19037,
+    "f_hz": 19040.0,
+    "tones": [
+     19037
+    ]
+   },
+   "hq/fir/8V": {
+    "total_dbc": -66.02748320372393,
+    "tone": 19037,
+    "f_hz": 19040.0,
+    "tones": [
+     10037,
+     19037
+    ]
+   },
+   "hq/iir/2V": {
+    "total_dbc": -115.23097803622845,
+    "tone": 14037,
+    "f_hz": 14040.0,
+    "tones": [
+     14037
+    ]
+   },
+   "hq/iir/8V": {
+    "total_dbc": -66.02667837475948,
+    "tone": 19037,
+    "f_hz": 19040.0,
+    "tones": [
+     10037,
+     19037
+    ]
+   },
+   "standard/fir/2V": {
+    "total_dbc": -121.40032756074146,
+    "tone": 19037,
+    "f_hz": 19040.0,
+    "tones": [
+     19037
+    ]
+   },
+   "standard/fir/8V": {
+    "total_dbc": -51.685444637019145,
+    "tone": 19037,
+    "f_hz": 19040.0,
+    "tones": [
+     10037,
+     19037
+    ]
+   },
+   "standard/iir/2V": {
+    "total_dbc": -113.99845485776024,
+    "tone": 13037,
+    "f_hz": 13040.0,
+    "tones": [
+     13037
+    ]
+   },
+   "standard/iir/8V": {
+    "total_dbc": -51.6856145425409,
+    "tone": 19037,
+    "f_hz": 19040.0,
+    "tones": [
+     10037,
+     19037
+    ]
+   },
+   "eco/fir/2V": {
+    "total_dbc": -75.70705336999865,
+    "tone": 16037,
+    "f_hz": 16040.0,
+    "tones": [
+     16037
+    ]
+   },
+   "eco/fir/8V": {
+    "total_dbc": -32.59767003441738,
+    "tone": 19037,
+    "f_hz": 19040.0,
+    "tones": [
+     10037,
+     19037
+    ]
+   },
+   "eco/iir/2V": {
+    "total_dbc": -75.70335081554,
+    "tone": 16037,
+    "f_hz": 16040.0,
+    "tones": [
+     16037
+    ]
+   },
+   "eco/iir/8V": {
+    "total_dbc": -32.59764598229734,
+    "tone": 19037,
+    "f_hz": 19040.0,
+    "tones": [
+     10037,
+     19037
+    ]
+   }
+  }
+ },
+ "rows": [
+  {
+   "key": "hq/fir/2V",
+   "limit_dbc": -118.2,
+   "measured_dbc": -121.26628120065996,
+   "baseline_dbc": -121.26628125211404,
+   "delta_db": 5.145408010776009e-08,
+   "margin_db": 3.066281200659958,
+   "tone": 19037,
+   "status": "ok"
+  },
+  {
+   "key": "hq/fir/8V",
+   "limit_dbc": -63.0,
+   "measured_dbc": -66.02748320568337,
+   "baseline_dbc": -66.02748320372393,
+   "delta_db": -1.959435280696198e-09,
+   "margin_db": 3.0274832056833674,
+   "tone": 19037,
+   "status": "ok"
+  },
+  {
+   "key": "hq/iir/2V",
+   "limit_dbc": -112.2,
+   "measured_dbc": -115.23097807151659,
+   "baseline_dbc": -115.23097803622845,
+   "delta_db": -3.528813863340474e-08,
+   "margin_db": 3.0309780715165857,
+   "tone": 14037,
+   "status": "ok"
+  },
+  {
+   "key": "hq/iir/8V",
+   "limit_dbc": -63.0,
+   "measured_dbc": -66.02667837671427,
+   "baseline_dbc": -66.02667837475948,
+   "delta_db": -1.954788331204327e-09,
+   "margin_db": 3.0266783767142726,
+   "tone": 19037,
+   "status": "ok"
+  },
+  {
+   "key": "standard/fir/2V",
+   "limit_dbc": -118.3,
+   "measured_dbc": -121.40032764013446,
+   "baseline_dbc": -121.40032756074146,
+   "delta_db": -7.939300417092454e-08,
+   "margin_db": 3.1003276401344664,
+   "tone": 19037,
+   "status": "ok"
+  },
+  {
+   "key": "standard/fir/8V",
+   "limit_dbc": -48.6,
+   "measured_dbc": -51.68544463867529,
+   "baseline_dbc": -51.685444637019145,
+   "delta_db": -1.6561472193643567e-09,
+   "margin_db": 3.085444638675291,
+   "tone": 19037,
+   "status": "ok"
+  },
+  {
+   "key": "standard/iir/2V",
+   "limit_dbc": -111.0,
+   "measured_dbc": -113.99845482281702,
+   "baseline_dbc": -113.99845485776024,
+   "delta_db": 3.494321276775736e-08,
+   "margin_db": 2.998454822817024,
+   "tone": 13037,
+   "status": "ok"
+  },
+  {
+   "key": "standard/iir/8V",
+   "limit_dbc": -48.6,
+   "measured_dbc": -51.6856145441995,
+   "baseline_dbc": -51.6856145425409,
+   "delta_db": -1.6586056972300867e-09,
+   "margin_db": 3.085614544199501,
+   "tone": 19037,
+   "status": "ok"
+  },
+  {
+   "key": "eco/fir/2V",
+   "limit_dbc": -72.7,
+   "measured_dbc": -75.7070533727296,
+   "baseline_dbc": -75.70705336999865,
+   "delta_db": -2.73095679403923e-09,
+   "margin_db": 3.007053372729601,
+   "tone": 16037,
+   "status": "ok"
+  },
+  {
+   "key": "eco/fir/8V",
+   "limit_dbc": -29.6,
+   "measured_dbc": -32.59767003421812,
+   "baseline_dbc": -32.59767003441738,
+   "delta_db": 1.992646048165625e-10,
+   "margin_db": 2.9976700342181175,
+   "tone": 19037,
+   "status": "ok"
+  },
+  {
+   "key": "eco/iir/2V",
+   "limit_dbc": -72.7,
+   "measured_dbc": -75.70335081827001,
+   "baseline_dbc": -75.70335081554,
+   "delta_db": -2.7300046667733113e-09,
+   "margin_db": 3.0033508182700075,
+   "tone": 16037,
+   "status": "ok"
+  },
+  {
+   "key": "eco/iir/8V",
+   "limit_dbc": -29.6,
+   "measured_dbc": -32.597645982098086,
+   "baseline_dbc": -32.59764598229734,
+   "delta_db": 1.992503939618473e-10,
+   "margin_db": 2.997645982098085,
+   "tone": 19037,
+   "status": "ok"
+  }
+ ],
+ "measured": {
+  "hq/fir/2V": {
+   "total_dbc": -121.26628120065996,
+   "tone": 19037,
+   "f_hz": 19040.0,
+   "tones": [
+    19037
+   ]
+  },
+  "hq/fir/8V": {
+   "total_dbc": -66.02748320568337,
+   "tone": 19037,
+   "f_hz": 19040.0,
+   "tones": [
+    10037,
+    19037
+   ]
+  },
+  "hq/iir/2V": {
+   "total_dbc": -115.23097807151659,
+   "tone": 14037,
+   "f_hz": 14040.0,
+   "tones": [
+    14037
+   ]
+  },
+  "hq/iir/8V": {
+   "total_dbc": -66.02667837671427,
+   "tone": 19037,
+   "f_hz": 19040.0,
+   "tones": [
+    10037,
+    19037
+   ]
+  },
+  "standard/fir/2V": {
+   "total_dbc": -121.40032764013446,
+   "tone": 19037,
+   "f_hz": 19040.0,
+   "tones": [
+    19037
+   ]
+  },
+  "standard/fir/8V": {
+   "total_dbc": -51.68544463867529,
+   "tone": 19037,
+   "f_hz": 19040.0,
+   "tones": [
+    10037,
+    19037
+   ]
+  },
+  "standard/iir/2V": {
+   "total_dbc": -113.99845482281702,
+   "tone": 13037,
+   "f_hz": 13040.0,
+   "tones": [
+    13037
+   ]
+  },
+  "standard/iir/8V": {
+   "total_dbc": -51.6856145441995,
+   "tone": 19037,
+   "f_hz": 19040.0,
+   "tones": [
+    10037,
+    19037
+   ]
+  },
+  "eco/fir/2V": {
+   "total_dbc": -75.7070533727296,
+   "tone": 16037,
+   "f_hz": 16040.0,
+   "tones": [
+    16037
+   ]
+  },
+  "eco/fir/8V": {
+   "total_dbc": -32.59767003421812,
+   "tone": 19037,
+   "f_hz": 19040.0,
+   "tones": [
+    10037,
+    19037
+   ]
+  },
+  "eco/iir/2V": {
+   "total_dbc": -75.70335081827001,
+   "tone": 16037,
+   "f_hz": 16040.0,
+   "tones": [
+    16037
+   ]
+  },
+  "eco/iir/8V": {
+   "total_dbc": -32.597645982098086,
+   "tone": 19037,
+   "f_hz": 19040.0,
+   "tones": [
+    10037,
+    19037
+   ]
+  }
+ },
+ "records": [
+  {
+   "setting": "hq",
+   "os": 16,
+   "filt": "fir",
+   "drive": 2.0,
+   "tone": 19037,
+   "fs_base": 48000,
+   "f_hz": 19040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 300,
+   "total_dbc": -121.26628120065996,
+   "worst_dbc": -124.56558253892675,
+   "worst_hz": 9920.0,
+   "internal_dbc": -190.66031375541945,
+   "resampler_dbc": -121.3097725277129,
+   "other_dbc": -141.2818753464076,
+   "cpu_s": 8.637024249881506
+  },
+  {
+   "setting": "hq",
+   "os": 16,
+   "filt": "fir",
+   "drive": 8.0,
+   "tone": 10037,
+   "fs_base": 48000,
+   "f_hz": 10040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 1200,
+   "total_dbc": -74.8828116091343,
+   "worst_dbc": -82.22485298126465,
+   "worst_hz": 15000.0,
+   "internal_dbc": -74.88316887207522,
+   "resampler_dbc": -120.99280768616636,
+   "other_dbc": -117.26587858479876,
+   "cpu_s": 7.855163582833484
+  },
+  {
+   "setting": "hq",
+   "os": 16,
+   "filt": "fir",
+   "drive": 8.0,
+   "tone": 19037,
+   "fs_base": 48000,
+   "f_hz": 19040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 300,
+   "total_dbc": -66.02748320568337,
+   "worst_dbc": -70.43717469456,
+   "worst_hz": 6400.0,
+   "internal_dbc": -66.02797119269782,
+   "resampler_dbc": -105.74954236582572,
+   "other_dbc": -118.4324686975252,
+   "cpu_s": 8.604711749823764
+  },
+  {
+   "setting": "hq",
+   "os": 16,
+   "filt": "iir",
+   "drive": 2.0,
+   "tone": 14037,
+   "fs_base": 48000,
+   "f_hz": 14040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 400,
+   "total_dbc": -115.23097807151659,
+   "worst_dbc": -118.34302839313402,
+   "worst_hz": 5880.0,
+   "internal_dbc": -181.94352372362144,
+   "resampler_dbc": -115.26590285648092,
+   "other_dbc": -136.19505005962844,
+   "cpu_s": 8.525872082915157
+  },
+  {
+   "setting": "hq",
+   "os": 16,
+   "filt": "iir",
+   "drive": 8.0,
+   "tone": 10037,
+   "fs_base": 48000,
+   "f_hz": 10040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 1200,
+   "total_dbc": -74.87689395148769,
+   "worst_dbc": -82.22445654325476,
+   "worst_hz": 15000.0,
+   "internal_dbc": -74.88280752637147,
+   "resampler_dbc": -103.72817275378956,
+   "other_dbc": -117.24701905647306,
+   "cpu_s": 7.918909125030041
+  },
+  {
+   "setting": "hq",
+   "os": 16,
+   "filt": "iir",
+   "drive": 8.0,
+   "tone": 19037,
+   "fs_base": 48000,
+   "f_hz": 19040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 300,
+   "total_dbc": -66.02667837671427,
+   "worst_dbc": -70.43850831819279,
+   "worst_hz": 6400.0,
+   "internal_dbc": -66.02768606067939,
+   "resampler_dbc": -102.4818513808236,
+   "other_dbc": -118.38787207644617,
+   "cpu_s": 8.793062541866675
+  },
+  {
+   "setting": "standard",
+   "os": 8,
+   "filt": "fir",
+   "drive": 2.0,
+   "tone": 19037,
+   "fs_base": 48000,
+   "f_hz": 19040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 300,
+   "total_dbc": -121.40032764013446,
+   "worst_dbc": -124.66952107517515,
+   "worst_hz": 9920.0,
+   "internal_dbc": -151.05334585019395,
+   "resampler_dbc": -121.4544292132676,
+   "other_dbc": -140.8707339716933,
+   "cpu_s": 4.725470999954268
+  },
+  {
+   "setting": "standard",
+   "os": 8,
+   "filt": "fir",
+   "drive": 8.0,
+   "tone": 10037,
+   "fs_base": 48000,
+   "f_hz": 10040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 1200,
+   "total_dbc": -59.84167128054232,
+   "worst_dbc": -65.88263396509586,
+   "worst_hz": 12520.0,
+   "internal_dbc": -59.841682307730494,
+   "resampler_dbc": -121.24612404322953,
+   "other_dbc": -117.25193098201315,
+   "cpu_s": 4.3190964590758085
+  },
+  {
+   "setting": "standard",
+   "os": 8,
+   "filt": "fir",
+   "drive": 8.0,
+   "tone": 19037,
+   "fs_base": 48000,
+   "f_hz": 19040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 300,
+   "total_dbc": -51.68544463867529,
+   "worst_dbc": -54.1673892318603,
+   "worst_hz": 3200.0,
+   "internal_dbc": -51.68546234421047,
+   "resampler_dbc": -105.81023282730354,
+   "other_dbc": -118.49370460106663,
+   "cpu_s": 4.4450177499093115
+  },
+  {
+   "setting": "standard",
+   "os": 8,
+   "filt": "iir",
+   "drive": 2.0,
+   "tone": 13037,
+   "fs_base": 48000,
+   "f_hz": 13040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 600,
+   "total_dbc": -113.99845482281702,
+   "worst_dbc": -116.08355856167174,
+   "worst_hz": 8880.0,
+   "internal_dbc": -133.87063345349927,
+   "resampler_dbc": -114.08249399626663,
+   "other_dbc": -134.52116894356448,
+   "cpu_s": 4.6179609161335975
+  },
+  {
+   "setting": "standard",
+   "os": 8,
+   "filt": "iir",
+   "drive": 8.0,
+   "tone": 10037,
+   "fs_base": 48000,
+   "f_hz": 10040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 1200,
+   "total_dbc": -59.84126428753102,
+   "worst_dbc": -65.88258323336662,
+   "worst_hz": 12520.0,
+   "internal_dbc": -59.84139522904272,
+   "resampler_dbc": -105.31916630779442,
+   "other_dbc": -117.23496619235766,
+   "cpu_s": 4.047487915959209
+  },
+  {
+   "setting": "standard",
+   "os": 8,
+   "filt": "iir",
+   "drive": 8.0,
+   "tone": 19037,
+   "fs_base": 48000,
+   "f_hz": 19040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 300,
+   "total_dbc": -51.6856145441995,
+   "worst_dbc": -54.16783207151702,
+   "worst_hz": 3200.0,
+   "internal_dbc": -51.685648810891664,
+   "resampler_dbc": -102.8322509940687,
+   "other_dbc": -118.45090664133407,
+   "cpu_s": 4.287092459155247
+  },
+  {
+   "setting": "eco",
+   "os": 4,
+   "filt": "fir",
+   "drive": 2.0,
+   "tone": 16037,
+   "fs_base": 48000,
+   "f_hz": 16040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 1200,
+   "total_dbc": -75.7070533727296,
+   "worst_dbc": -80.3437454129062,
+   "worst_hz": 15560.0,
+   "internal_dbc": -75.70709999095482,
+   "resampler_dbc": -125.46627335552074,
+   "other_dbc": -143.55564832359218,
+   "cpu_s": 2.7103634590748698
+  },
+  {
+   "setting": "eco",
+   "os": 4,
+   "filt": "fir",
+   "drive": 8.0,
+   "tone": 10037,
+   "fs_base": 48000,
+   "f_hz": 10040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 1200,
+   "total_dbc": -44.02599063904735,
+   "worst_dbc": -50.52948512536282,
+   "worst_hz": 1240.0,
+   "internal_dbc": -44.02599097485599,
+   "resampler_dbc": -119.79178705816597,
+   "other_dbc": -116.96631540676427,
+   "cpu_s": 2.502101375022903
+  },
+  {
+   "setting": "eco",
+   "os": 4,
+   "filt": "fir",
+   "drive": 8.0,
+   "tone": 19037,
+   "fs_base": 48000,
+   "f_hz": 19040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 300,
+   "total_dbc": -32.59767003421812,
+   "worst_dbc": -34.54280847407744,
+   "worst_hz": 17440.0,
+   "internal_dbc": -32.597670262507634,
+   "resampler_dbc": -105.64474334188515,
+   "other_dbc": -117.84505024967322,
+   "cpu_s": 3.046274834079668
+  },
+  {
+   "setting": "eco",
+   "os": 4,
+   "filt": "iir",
+   "drive": 2.0,
+   "tone": 16037,
+   "fs_base": 48000,
+   "f_hz": 16040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 1200,
+   "total_dbc": -75.70335081827001,
+   "worst_dbc": -80.3407754285378,
+   "worst_hz": 15560.0,
+   "internal_dbc": -75.70371767535951,
+   "resampler_dbc": -116.4445926664755,
+   "other_dbc": -143.68843721476316,
+   "cpu_s": 2.643511665984988
+  },
+  {
+   "setting": "eco",
+   "os": 4,
+   "filt": "iir",
+   "drive": 8.0,
+   "tone": 10037,
+   "fs_base": 48000,
+   "f_hz": 10040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 1200,
+   "total_dbc": -44.02591800767268,
+   "worst_dbc": -50.52946403274472,
+   "worst_hz": 1240.0,
+   "internal_dbc": -44.02592422921482,
+   "resampler_dbc": -102.62242413804262,
+   "other_dbc": -116.944533893362,
+   "cpu_s": 2.454526250017807
+  },
+  {
+   "setting": "eco",
+   "os": 4,
+   "filt": "iir",
+   "drive": 8.0,
+   "tone": 19037,
+   "fs_base": 48000,
+   "f_hz": 19040.0,
+   "window_s": 0.1,
+   "settle_s": 0.2,
+   "collision_order": 300,
+   "total_dbc": -32.597645982098086,
+   "worst_dbc": -34.542690265064614,
+   "worst_hz": 17440.0,
+   "internal_dbc": -32.59764610950173,
+   "resampler_dbc": -108.39549292393531,
+   "other_dbc": -117.79750515197152,
+   "cpu_s": 2.655807417118922
+  }
+ ]
+}

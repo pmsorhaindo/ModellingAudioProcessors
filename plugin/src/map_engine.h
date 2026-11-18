@@ -46,7 +46,7 @@ namespace mapvs {
 class Engine {
 public:
     static constexpr int kChunk = 256;          // internal block: the scratch buffers live in the object
-    static constexpr int kRing = 512;           // dry delay ring, >= kChunk + max latency (73 at hq)
+    static constexpr int kRing = 512;           // dry delay ring, >= kChunk + max latency (125 at 44.1 kHz HQ)
     static constexpr int kMaxChannels = 2;
 
     Engine();
@@ -74,7 +74,7 @@ public:
 
     int quality_target() const { return quality_t_.load(std::memory_order_relaxed); }
     // latency of the requested quality (what the host should compensate once the switch is done)
-    int latency_samples() const { return latency_for(quality_target()); }
+    int latency_samples() const { return latency_for(quality_target(), latency_fs_.load(std::memory_order_relaxed)); }
     // latency of the slot the audio thread is running now
     int active_latency_samples() const { return active_latency_.load(std::memory_order_relaxed); }
     int active_quality() const { return active_quality_.load(std::memory_order_relaxed); }
@@ -84,7 +84,7 @@ public:
     // last request_bias() status (dkcore::BuildStatus as int; 0 = ok) and the bias the worker last applied
     int bias_status() const { return bias_status_.load(std::memory_order_relaxed); }
     double applied_bias() const { return applied_bias_.load(std::memory_order_relaxed); }
-    static int latency_for(int quality);
+    static int latency_for(int quality, double sample_rate = 48000.0);
     static dkcore::Quality core_quality(int quality);
 
     // ---- audio thread -----------------------------------------------------------------------------------------
@@ -133,6 +133,7 @@ private:
     std::atomic<int> pending_{-1};                      // worker -> audio: slot prepared, switch to it
     std::atomic<int> audio_slot_{0};                    // audio -> worker: the slot the audio thread is using
     std::atomic<int> active_latency_{0}, active_quality_{kQualityDefault};
+    std::atomic<double> latency_fs_{48000.0};           // target-latency queries may come from any thread
     std::atomic<int> bias_status_{0};
     std::atomic<double> applied_bias_{kBiasRange.def};
     std::atomic<bool> prepared_{false};

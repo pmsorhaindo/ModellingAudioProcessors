@@ -28,7 +28,8 @@ stays the reference. Everything here is checked against it.
   no exceptions in the core. `sizeof(Stage)` is 27 kB, most of it the FIR state; `sizeof(Coeffs)` is 1.3 kB.
 * **Quality settings.** `HQ` 16×, `STANDARD` 8× (default) and `ECO` 4× with the 17.3 kHz small-cap pre-warp are
   `stage.QUALITY` (tested). The core owns the oversampling: the same streaming half-band FIR cascade (127 / 23 taps,
-  Kaiser β 9, polyphase), the same pad delay, latency (72 base samples at 8×) and decimator priming.
+  first stage 231 taps at 44.1 kHz only, Kaiser β 9, polyphase), pad delay and decimator priming. At 8× the delay is
+  124 base samples at 44.1 kHz and 72 elsewhere. See the #96 report below.
   `filt="iir"` is **not ported**: the Python stage stays the reference for the IIR resampler.
 * **Same arithmetic as Python.** The triode, the solver (pnjlim, line search, best iterate) and the resampler's
   transposed direct form II (scipy `lfilter` order) do the same operations in the same order. In a build without
@@ -416,6 +417,9 @@ the C++ core takes 0.14–0.18 s (about 40× less).
 
 ## Host sample rates (#74, 18 Nov 2026)
 
+Historical #95 measurements with the original 127-tap first FIR. The #96 change below supersedes the 44.1 kHz
+DSP, aliasing policy and latency; these committed JSONs retain the original evidence.
+
 `python -m dk.sample_rates --backend cpp` uses the existing `validate_cpp.CppStage` adapter at the requested
 base rate: actual C++ `process()` for harmonics, burst and aliasing, C++ coefficients for analytical small signal.
 Full reference checks and offset sweeps are mono, FIR / libm, double precision. Fixed **HQ 16× / standard 8× /
@@ -466,12 +470,35 @@ inside the normal vector harness. The existing 48 kHz FIR/IIR aliasing guard and
 No benchmark was run. The multi-rate validator's nonzero exit is the recorded 44.1 kHz aliasing failure,
 with no C++/Python reproduction failures. Ruff 0.17.3 passes with the unchanged configuration.
 
+## 44.1 kHz FIR and aliasing policy (#96)
+
+Only at **44,100 Hz**, `Stage::prepare()` and `StereoStage::prepare()` now pass the base rate to
+`ResamplerT::prepare(os, fs_base)`, selecting a **231-tap** first half-band instead of 127; later stages stay
+23 taps, Kaiser β stays 9. The Python design makes the same choice. The factors and eco pre-warp stay 16 / 8 / 4
+and 17.3 kHz. Other rates retain their original taps, coefficients and delay. The second argument defaults to
+48 kHz for direct `Resampler::prepare(os)` callers.
+
+HQ / standard / eco now report **125 / 124 / 121 base samples** at 44.1 kHz (2.8345 / 2.8118 / 2.7438 ms), an
+increase of 52 samples (1.1791 ms); elsewhere the original 73 / 72 / 69 counts remain. The shared plugin engine's
+target-latency table must distinguish these rates: it now derives both tables from the core. Its bypass ring
+already has room. AU/VST3 glue is unchanged; null-test expectations pass their actual host rate.
+
+The full Python/C++ evidence, octave-headroom limit derivation, pre-warp and ADAA experiments, short M1 CPU
+comparisons, criteria and limitations are in [the #96 report](../dk/RESULTS.md#441-khz-aliasing-96).
+`../dk/results_issue96_shipped.json` runs the actual core, including the full reference validation and offset
+sweep. Both backends use `dk.aliasing.limits_for_rate(fs)` for acceptance; the C++ core does not embed aliasing
+test limits. The original 48 kHz `LIMIT_DBC` and its guard/baseline are retained.
+
+Fixed resampler storage grows from 27,496 / 45,376 bytes per mono / stereo stage to 44,136 / 75,328 bytes on
+this M1 build, also at other host rates. Processing remains allocation-free; larger storage is allocated with
+the instance, outside processing. These sizes are from the short comparative harness, not a new official benchmark.
+
 ## Limitations
 
 - FIR resampler only; `filt="iir"` stays Python-only.
 - os ∈ {2, 4, 8, 16} (fixed buffers). The committed vectors remain at 48 kHz; the CLI accepts optional `fs=HZ`.
   `prepare()` / `process()` are tested at 44.1 / 48 / 88.2 / 96 / 176.4 / 192 kHz with the fixed quality factors.
-  All pass the reference criteria; **44.1 kHz fails four unchanged aliasing limits** (see host-rate results above).
+  All pass the reference criteria; 44.1 kHz uses the #96 FIR and separate aliasing budget described above.
   Other positive rates are accepted by `prepare()` but unvalidated.
 - One triode parameter set, one circuit (`Values` = `circuit.VALUES`). pnjlim's VT is `1/par.Cg`. Python uses the
   module constant, which is the same for that set.

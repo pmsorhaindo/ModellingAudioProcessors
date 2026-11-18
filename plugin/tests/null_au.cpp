@@ -161,7 +161,7 @@ int main(int argc, char** argv) {
     std::vector<float> qL(nlive), qR(nlive);
     if (render(au, in, qL, qR, nlive, double(L.size()), true)) return 1;
     const double lat2 = latency_property(au);
-    const int want = mapvs::Engine::latency_for(target_q);
+    const int want = mapvs::Engine::latency_for(target_q, s.fs);
     std::size_t bad = 0;
     for (std::size_t i = 0; i < nlive; ++i) bad += !std::isfinite(qL[i]) || !std::isfinite(qR[i]);
     std::printf("live: quality -> %s, bias -> 1.5: latency property %.3f samples (want %d), nonfinite %zu\n",

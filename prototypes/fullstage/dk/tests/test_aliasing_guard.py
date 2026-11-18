@@ -61,6 +61,7 @@ def test_failed_and_markdown():
     assert md.count("\n| s/fir/8V |") == 3 and "**FAIL regression**" in md and "--update-baseline" in md
     assert "| -55.00 | -60.00 | +5.00 | -50.0 | 5.00 |" in md
     assert G.markdown([one(-60.0)]).startswith("## Aliasing guard: pass")
+    assert "dk.aliasing_guard --fs 44100 --update-baseline" in G.markdown([one(-70.0)], fs=44100)
 
 
 def test_update_baseline_requires_a_reason(capsys):
@@ -77,3 +78,17 @@ def test_committed_baseline_covers_every_limit_on_the_ci_tones():
         for d, t in tones.items():
             v = base["values"][G.key(q, f, d)]
             assert v["tones"] == sorted(t) and v["total_dbc"] <= A.LIMIT_DBC[(q, f)][d]
+
+
+def test_44100_baseline_covers_fir_limits_and_rejects_other_rate(capsys):
+    base = json.load(open(G.BASELINE_44100_JSON))
+    assert base["reason"].strip() and base["tolerance_db"] == TOL
+    assert base["method"] == json.loads(json.dumps(G.method(44100)))  # JSON represents the band tuple as a list
+    assert set(base["values"]) == set(G.limits_by_key(44100))
+    for (q, f), tones in A.CI_TONES_44100.items():
+        for d, t in tones.items():
+            v = base["values"][G.key(q, f, d)]
+            assert v["tones"] == sorted(t) and v["total_dbc"] <= A.LIMIT_DBC_44100[(q, f)][d]
+    with pytest.raises(SystemExit):
+        G.main(["--fs", "44100", "--baseline", G.BASELINE_JSON])
+    assert "host rate differs" in capsys.readouterr().err

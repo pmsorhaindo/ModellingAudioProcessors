@@ -20,14 +20,16 @@ dkcore::Quality Engine::core_quality(int q) {
     }
 }
 
-int Engine::latency_for(int q) {
-    // The resampler's latency depends only on the oversampling factor; computed once (non-RT, first call).
-    static const int table[kNumQualities] = {
-        [] { dkcore::Resampler r; r.prepare(dkcore::ECO.os); return r.latency_samples(); }(),
-        [] { dkcore::Resampler r; r.prepare(dkcore::STANDARD.os); return r.latency_samples(); }(),
-        [] { dkcore::Resampler r; r.prepare(dkcore::HQ.os); return r.latency_samples(); }(),
+int Engine::latency_for(int q, double sample_rate) {
+    // #96: the first FIR is longer at 44.1 kHz. Derive both tables from the core, once in the constructor.
+    auto latency = [](int quality, double fs) {
+        dkcore::Resampler r; r.prepare(core_quality(quality).os, fs); return r.latency_samples();
     };
-    return table[clamp_quality(q)];
+    static const int table[2][kNumQualities] = {
+        {latency(kEco, 48000.0), latency(kStandard, 48000.0), latency(kHQ, 48000.0)},
+        {latency(kEco, 44100.0), latency(kStandard, 44100.0), latency(kHQ, 44100.0)},
+    };
+    return table[sample_rate == 44100.0 ? 1 : 0][clamp_quality(q)];
 }
 
 Engine::Engine() {
@@ -44,6 +46,7 @@ bool Engine::prepare(double sample_rate) {
     prepared_.store(false, std::memory_order_relaxed);
     if (!(sample_rate > 0.0) || !std::isfinite(sample_rate)) return false;
     fs_ = sample_rate;
+    latency_fs_.store(sample_rate, std::memory_order_relaxed);
     const int q = quality_target();
     double b = bias_t_.load(std::memory_order_relaxed);
     dkcore::BuildStatus st = slot_[0]->prepare(fs_, core_quality(q), b);

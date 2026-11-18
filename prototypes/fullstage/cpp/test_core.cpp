@@ -536,7 +536,7 @@ static void test_sample_rates() {
                 StereoStage* stereo = new StereoStage;
                 check(mono->prepare(fs, q, 1.0, math) == BuildStatus::ok, "host-rate mono prepare");
                 check(stereo->prepare(fs, q, 1.0, math) == BuildStatus::ok, "host-rate stereo prepare");
-                const int latency = q.os == 4 ? 69 : q.os == 8 ? 72 : 73;
+                const int latency = (q.os == 4 ? 69 : q.os == 8 ? 72 : 73) + (fs == 44100.0 ? 52 : 0);
                 check(mono->latency_samples() == latency && stereo->latency_samples() == latency,
                       "host-rate latency in base samples");
                 Vec x(size_t(fs * 0.1), 0.0), y(x.size()), l(x.size()), r(x.size());

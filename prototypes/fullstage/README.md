@@ -60,6 +60,7 @@ python -m dk.validate                              # -> dk/results.json (~6 min 
 python -m dk.aliasing                              # regenerates the 64x aliasing ground truth (~11 min on 8 cores)
 python -m pytest -q                                # dk/tests + spice/tests (netlists vs VALUES, #4)
 python -m dk.aliasing_guard                        # CI aliasing guard: limits + baseline ratchet (~8 s on 8 cores)
+python -m dk.aliasing_guard --fs 44100              # #96: separate FIR budget and baseline at 44.1 kHz
 python -m dk.bench_triode                          # #16: triode eval before/after, Python + C (gcc) -> dk/bench_triode.json (~5 s)
 python -m pytest -q cpp/tests                      # #19: C++ core vs the Python stage (needs a C++17 compiler; ~20 s)
 python spice6as6/run_refs.py                       # 6AS6: regenerates spice6as6/reference_{dual,r51}.json
@@ -68,11 +69,18 @@ python -m dk6as6.compare_fits                      # 6AS6: #51 vs #55 harmonics 
 ```
 
 ### Aliasing guard and its baseline (#35)
-The `aliasing` CI job runs `python -m dk.aliasing_guard`. For each setting / resampler / drive it fails if the
+The `aliasing` CI job runs `python -m dk.aliasing_guard` at 48 kHz, then `--fs 44100` for the 11-point FIR subset.
+At 48 kHz, for each setting / resampler / drive it fails if the
 worst total is over `aliasing.LIMIT_DBC`, or if it is more than **1.5 dB** worse than `dk/aliasing_baseline.json`
 (`aliasing_guard.TOLERANCE_DB`), even under the limit. More than 1.5 dB better passes, with a note to update the
 baseline. The job writes a per-setting table to the run's step summary and uploads `aliasing_guard_results.json` as
 the `aliasing-guard-results` artifact.
+
+44.1 kHz uses `aliasing.LIMIT_DBC_44100`, `CI_TONES_44100`, and `dk/aliasing_baseline_44100.json`, with the same
+1.5 dB ratchet. The first FIR half-band has 231 taps at this rate, retaining 127 at every other rate. The
+[derivation, experiments and costs](dk/RESULTS.md#441-khz-aliasing-96) explain the rate-specific internal-folding
+budget; it is not an audibility claim. Baseline updates select only the requested rate: add `--fs 44100` to
+`--update-baseline --reason "..."`. A baseline for another rate is refused.
 
 To change the baseline on purpose (an intended trade-off, or locking in an improvement):
 ```bash

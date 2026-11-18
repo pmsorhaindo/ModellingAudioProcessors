@@ -26,7 +26,7 @@ def test_host_rate_small_signal_and_rest(fs, quality):
     assert np.max(np.abs(s.x)) < 1e-9 * np.max(np.abs(s.x0))
     assert s.iteration_stats()["nonconverged"] == 0
     assert s.os == QUALITY[quality][0]  # no implicit host-rate-dependent factor
-    assert s.latency_samples == {"hq": 73, "standard": 72, "eco": 69}[quality]
+    assert s.latency_samples == {"hq": 73, "standard": 72, "eco": 69}[quality] + (52 if fs == 44100 else 0)
 
 
 def test_eco_prewarp_at_176400_internal():

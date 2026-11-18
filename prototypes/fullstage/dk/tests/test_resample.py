@@ -62,16 +62,26 @@ def test_decimator_rejects_aliasing_tones(kind, f_in):
 
 
 @pytest.mark.parametrize("os_", FACTORS)
-def test_fir_latency_is_exact(os_):
+@pytest.mark.parametrize("fs", (44100, FS))
+def test_fir_latency_is_exact(os_, fs):
     """A base-rate impulse comes back as a symmetric pulse centred exactly latency_samples later."""
-    rs = Resampler(FS, os_, "fir")
+    rs = Resampler(fs, os_, "fir")
     x = np.zeros(512)
     x[100] = 1.0
     y = rs.down(rs.up(x))
     c = 100 + rs.latency_samples
     assert np.argmax(np.abs(y)) == c
     assert np.allclose(y[c - 40:c], y[c + 40:c:-1], atol=1e-12)
-    assert rs.latency_ms == pytest.approx(1e3 * rs.latency_samples / FS)
+    assert rs.latency_ms == pytest.approx(1e3 * rs.latency_samples / fs)
+
+
+@pytest.mark.parametrize("os_", FACTORS)
+def test_44100_fir_preserves_filter_spec(os_):
+    rs = Resampler(44100, os_, "fir")
+    f, H = measured_up_response(rs)
+    assert np.max(np.abs(20 * np.log10(H[f <= 20000]))) < PASS_DB / 2
+    fold = (f >= 44100 - 20000) & (np.abs((f + 44100 / 2) % 44100 - 44100 / 2) <= 20000)
+    assert 20 * np.log10(H[fold].max()) < -STOP_DB
 
 
 @pytest.mark.parametrize("kind", KINDS)
@@ -94,11 +104,12 @@ def test_stage_reports_its_impulse_delay(quality, kind):
 
 
 @pytest.mark.parametrize("kind", KINDS)
-def test_resampler_blocks_equal_whole(kind):
+@pytest.mark.parametrize("fs", (44100, FS))
+def test_resampler_blocks_equal_whole(kind, fs):
     x = np.random.default_rng(3).standard_normal(3000)
-    whole = Resampler(FS, 8, kind)
+    whole = Resampler(fs, 8, kind)
     ref = whole.down(whole.up(x) ** 3)
-    rs = Resampler(FS, 8, kind)
+    rs = Resampler(fs, 8, kind)
     out, i, sizes = [], 0, np.random.default_rng(4).integers(1, 300, 100)
     for n in np.r_[1, 7, 1, sizes]:
         b = x[i:i + n]

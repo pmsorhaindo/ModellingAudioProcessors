@@ -146,7 +146,7 @@ int main(int argc, char** argv) {
     std::vector<float> qL(nlive), qR(nlive), zero(nlive, 0.0f);
     if (render(proc, data, L, R, qL, qR, nlive, &changes, true)) return 1;
     const uint32 lat2 = proc->getLatencySamples();
-    const int want = mapvs::Engine::latency_for(target_q);
+    const int want = mapvs::Engine::latency_for(target_q, s.fs);
     std::size_t bad = 0;
     for (std::size_t i = 0; i < nlive; ++i) bad += !std::isfinite(qL[i]) || !std::isfinite(qR[i]);
     std::printf("live: quality -> %s, bias -> 1.5: getLatencySamples %u (want %d), nonfinite %zu\n",
