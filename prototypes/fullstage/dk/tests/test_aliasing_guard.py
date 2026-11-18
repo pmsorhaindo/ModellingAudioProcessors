@@ -1,6 +1,8 @@
 """CI aliasing guard (#35): the limit / ratchet comparison on synthetic numbers (no DSP), and the committed baseline's
 coverage of every setting, filter and drive."""
-import json, os, sys
+import json
+import os
+import sys
 import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from dk import aliasing as A

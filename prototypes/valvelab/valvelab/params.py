@@ -21,7 +21,8 @@ KOREN_LIB = {
     "local": "sources/koren_Tube.lib",
 }
 LTWIKI_KOREN = {
-    "title": "nk_pentode.sub / Tubes_Koren.lib, LTspice wiki library (Koren equations, parameters fitted to manufacturer data sheets by library contributors, 2008)",
+    "title": "nk_pentode.sub / Tubes_Koren.lib, LTspice wiki library (Koren equations, parameters fitted to "
+             "manufacturer data sheets by library contributors, 2008)",
     "author": "LTspice wiki contributors (models in Norman Koren's format)",
     "url": "https://ltwiki.org/files/LTspiceIV/lib/sub/nk_pentode.sub",
     "local": "sources/ltwiki_nk_pentode.sub",
@@ -70,7 +71,8 @@ DEMPWOLF_TRIODE = {
 # which NO published model parameters were found (searched Koren's site and
 # library, the LTspice wiki Koren libraries, web search, 2026-10-18).
 STAND_INS = {
-    "6AS6": dict(stand_in="EF86 (Koren-format fit); Koren's own 6AN8P pentode fit is kept in the code as a second reference",
+    "6AS6": dict(stand_in="EF86 (Koren-format fit); Koren's own 6AN8P pentode fit is kept in the code "
+                          "as a second reference",
                  why="No published Koren/other fit found. 6AS6 is a sharp-cutoff dual-control "
                      "pentode (Tung-Sol data: Va=Vg2=120 V, Vg1=-2 V, Vg3=-3 V, Ia=3.6 mA, "
                      "gm(g1)=1850 umho, gm(g3)=810 umho). Its suppressor-grid control is NOT "

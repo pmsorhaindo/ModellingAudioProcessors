@@ -4,7 +4,8 @@ Lean: the full validate.run (op, AC, H2..H5 at every drive, burst) on eco only (
 one with the largest AC deviation); op point and AC (stage and chain) on every setting. The full run on every
 setting is `python -m dk.validate --triode-math fast` -> dk/results_fastmath.json.
 """
-import os, sys
+import os
+import sys
 import numpy as np
 import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -33,7 +34,8 @@ def test_fast_op_and_ac_within_criteria(quality):
     op = dict(va=dc["nodes"]["a"], vk=dc["nodes"]["k"], ia=dc["ia"], vgk=dc["vgk"])
     for k, v in op.items():
         assert abs(v / r["op"][k] - 1) < C["op_rel"], k
-    f = np.array(r["ac"]["f"]); sel = (f >= C["ac_band"][0]) & (f <= C["ac_band"][1])
+    f = np.array(r["ac"]["f"])
+    sel = (f >= C["ac_band"][0]) & (f <= C["ac_band"][1])
     ds, dch = V.small_signal(st, f[sel])
     refdb = np.array(r["ac"]["db"])[sel]
     assert np.max(np.abs(ds - refdb)) < C["ac_db"]

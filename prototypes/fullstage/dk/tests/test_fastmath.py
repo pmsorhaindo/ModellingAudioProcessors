@@ -5,15 +5,24 @@ Kernel bounds are relative against glibc libm on dense grids that cover the stag
 terms each output is formed from (currents_err), so it stays defined where Ia = Ik - Ig or dIa/dVgk = dIk - dIg
 cross zero. A test fails if any sample exceeds fastmath.BOUND.
 """
-import json, math, os, shutil, signal, struct, subprocess, sys, tempfile
+import json
+import math
+import os
+import platform
+import shutil
+import signal
+import struct
+import subprocess
+import sys
+import tempfile
 import numpy as np
 import pytest
 
 HERE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, HERE)
-from dk import fastmath as F
-from dk import triode as T
-from dk.triode import DZ_12AX7_RSD1
+from dk import fastmath as F  # noqa: E402 -- after the sys.path setup
+from dk import triode as T  # noqa: E402 -- after the sys.path setup
+from dk.triode import DZ_12AX7_RSD1  # noqa: E402 -- after the sys.path setup
 
 DOMAIN = json.load(open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                      "fastmath_domain.json")))
@@ -113,11 +122,11 @@ def currents_err(fast, ref, mu=DZ_12AX7_RSD1["mu"]):
              (fast[2][0][1], J[0][1], 0.0), (fast[2][1][0], J[1][0], abs(dik) + abs(dig)),
              (fast[2][1][1], J[1][1], abs(J[1][1])))
     w = 0.0
-    for f, l, s in pairs:
+    for f, want, s in pairs:
         if s == 0.0:
-            assert f == l, (f, l)
+            assert f == want, (f, want)
             continue
-        w = max(w, abs(f - l) / s)
+        w = max(w, abs(f - want) / s)
     return w
 
 
@@ -158,11 +167,18 @@ def test_currents_only_fast_matches_currents_fast():
 
 # ---- C (dk/fastmath.h, dk/triode_eval.h) ----------------------------------------------------------------
 NOFMA = ["-O2", "-ffp-contract=off"]
-FMA = ["-O2", "-march=x86-64-v3"]            # AVX2 + FMA; gcc contracts a * b + c by default (GNU C)
+# The FMA build, by architecture (#69). x86-64: AVX2 + FMA; gcc contracts a * b + c by default (GNU C). AArch64: FMA
+# is baseline and gcc / clang contract by default, so it is the plain -O2 build (test_c_fma_build_is_contracted
+# checks that it really is contracted). Elsewhere: none, and the FMA tests skip.
+_ARCH = platform.machine().lower()
+FMA = (["-O2", "-march=x86-64-v3"] if _ARCH in ("x86_64", "amd64") else
+       ["-O2"] if _ARCH in ("arm64", "aarch64") else None)
 _EXE = {}
 
 
 def _build_check(flags):
+    if flags is None:
+        pytest.skip("no FMA build defined for this architecture")
     if shutil.which("gcc") is None:
         pytest.skip("gcc missing")
     key = tuple(flags)

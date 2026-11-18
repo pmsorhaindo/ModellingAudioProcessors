@@ -506,21 +506,52 @@ static void test_nonconvergence() {
     delete s;
 }
 
+// #70: the state runs as the deviation from the operating point, so 100 ms of silence stays at the rest point: out =
+// the DC out node (0 V) up to per-sample rounding (measured 1.2e-13 V at hq, Apple M1). The absolute-state form
+// settled 7.7e-8 / 7.4e-7 / 1.2e-6 V off (eco / standard / hq, Apple M1, Apple clang -O2).
+static void test_silence() {
+    const Quality qs[3] = {ECO, STANDARD, HQ};
+    const char* names[3] = {"eco", "standard", "hq"};
+    Vec x(4800, 0.0), y(4800);
+    for (int k = 0; k < 3; ++k) {
+        Stage* s = new Stage;
+        check(s->prepare(48000.0, qs[k]) == BuildStatus::ok, "silence prepare");
+        s->process(x.data(), y.data(), x.size());
+        double e = 0.0;
+        for (double v : y) e = std::max(e, std::fabs(v));
+        metric(std::string("silence_abs_") + names[k], e);
+        check(e <= TOL_PINNED_ABS, std::string("silence stays at the operating point, ") + names[k] + " " + std::to_string(e));
+        delete s;
+    }
+}
+
 static void test_denormals() {
     if (!ScopedFlushDenormals::active()) { metric("ftz_tested", 0); return; }
     volatile double tiny = 1e-310, one = 1.0;           // a double denormal
-    const double before = tiny * one;
-    double inside;
+    // The results are volatile too (#64): the compiler does not know that the guard changes the FP mode, so it may
+    // move a plain multiply out of the scope (Apple clang 17 -O2 on AArch64 did the "inside" one after the restore).
+    // A volatile store keeps each multiply between the volatile reads before it and the mode change after it.
+    volatile double before, inside, after;
+    before = tiny * one;
     { ScopedFlushDenormals g; inside = tiny * one; }
-    const double after = tiny * one;
+    after = tiny * one;
     check(before != 0.0 && inside == 0.0 && after != 0.0, "ScopedFlushDenormals flushes in scope and restores");
+#if defined(DKCORE_X86_SSE) || defined(__aarch64__)
+    const auto fp_mode = [] {                           // MXCSR on x86, FPCR on AArch64
 #if defined(DKCORE_X86_SSE)
-    const unsigned csr = _mm_getcsr();
+        return std::uint64_t(_mm_getcsr());
+#else
+        std::uint64_t v;
+        __asm__ __volatile__("mrs %0, fpcr" : "=r"(v));
+        return v;
+#endif
+    };
+    const std::uint64_t mode = fp_mode();
     Stage* s = new Stage;
     s->prepare(48000.0);
     double x[16] = {}, y[16];
     s->process(x, y, 16);
-    check(_mm_getcsr() == csr, "process() restores the caller's MXCSR");
+    check(fp_mode() == mode, "process() restores the caller's FP mode (MXCSR / FPCR)");
     delete s;
 #endif
     metric("ftz_tested", 1);
@@ -1141,6 +1172,7 @@ int main(int argc, char** argv) {
     test_internal(V);
     test_cases(V);
     test_nonconvergence();
+    test_silence();
     test_denormals();
     test_swap_threads();
     test_float_io();

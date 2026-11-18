@@ -12,7 +12,10 @@ per-sample Newton solve (numpy on scalars is ~10x slower). dk6as6/tests/test_pen
 model6as6.dual_ip_ig2 (relative 1e-12) and the Jacobian against central differences, for both parameter sets.
 Port order: v = (Vg1k, Vg2k, Vg3k, Vak) (circuit.NLV), i = (Ip, Ig2) (circuit.NLI); J = d i / d v, 2x4.
 """
-import json, math, os, sys
+import json
+import math
+import os
+import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIT6AS6 = os.path.normpath(os.path.join(HERE, "..", "..", "fit6as6"))
 FIT_RESULTS = os.path.join(FIT6AS6, "results", "fit_results.json")

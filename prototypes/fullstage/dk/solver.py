@@ -10,7 +10,8 @@ Solve  F(v) = p - K i(v) - v = 0,  p = G x + H u,  v = (Vgk, Vak)   (see circuit
   * converged when ||dv||inf < TOL_V and ||F||inf < TOL_F; hard cap MAX_IT iterations (all three can be
     overridden per call: max_it, tol_v, tol_f).
 No lookup tables of the model (dk/fastmath.py's small exp / log reduction tables are part of the math functions,
-not of the model). ev = (currents, currents_only) selects the triode evaluation (triode.EVAL, #18). Iteration counts are returned so callers can histogram them.
+not of the model). ev = (currents, currents_only) selects the triode evaluation (triode.EVAL, #18). Iteration counts
+are returned so callers can histogram them.
 
 Non-convergence (#7). This is also the contract for the C++ core. When the cap is reached, solve() returns
 the BEST iterate it saw, i.e. the one with the smallest finite ||F||inf (the warm start counts), and not

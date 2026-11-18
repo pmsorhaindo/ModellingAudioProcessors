@@ -2,7 +2,8 @@
 Expressions use only ln, exp, atan, pwr, max (common to ngspice and LTspice B-sources).
 `expressions(p)` writes the issue #53 form (KR, XA in p; model6as6.py; dual_control since #55) or, for parameter
 sets without KR/XA (#51 and earlier), the original two-node form."""
-import json, os
+import json
+import os
 HERE = os.path.dirname(os.path.abspath(__file__))
 p = json.load(open(os.path.join(HERE, "results", "fit_results.json")))["dual_control"]["params"]
 VA0 = 120.0   # model6as6.VA0
@@ -61,4 +62,5 @@ Cg1g3 G1 G3 0.15p
 """
 
 if __name__ == "__main__":
-    open(os.path.join(HERE, "results", "6AS6_fit.inc"), "w").write(text()); print(text())
+    open(os.path.join(HERE, "results", "6AS6_fit.inc"), "w").write(text())
+    print(text())

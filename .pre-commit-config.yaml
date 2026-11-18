@@ -1,0 +1,8 @@
+# Lint staged Python files with the same ruff and the same settings (ruff.toml) as the CI `ruff` job (#87).
+# Set up once per checkout:  pre-commit install
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.3   # = ruff 0.17.3, as pinned in .github/workflows/ci.yml
+    hooks:
+      - id: ruff-check
+        files: ^prototypes/   # CI lints prototypes/

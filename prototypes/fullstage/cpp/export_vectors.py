@@ -5,8 +5,9 @@ Writes cpp/vectors.txt, which cpp/test_core.cpp reads. One entry per line: `name
 digits before they go through Python, which keeps them short.
 Contents:
   taps.fir127 / taps.fir23            resample.FIR_FIRST / FIR_LATER half-band taps (firwin, Kaiser 9)
-  coef.<name>.*                       circuit.build matrices A..K, the DC operating point and x0 (= Stage.x after
-                                      reset) for standard / hq / eco at bias 1 and standard at bias 1.5
+  coef.<name>.*                       circuit.build matrices A..K, the DC operating point and x0 (= Stage.x0, the
+                                      absolute capacitor history at the operating point) for standard / hq / eco
+                                      at bias 1 and standard at bias 1.5
   triode.*                            triode.currents / currents_only / currents_fast on a (Vgk, Vak) grid
   solve.*                             solver.solve alone from hard starts (pnjlim, line search, #7 best iterate)
   rs<os>.up.* / rs<os>.down.*         resample.Resampler(48 kHz, os, "fir") up() and down() alone, os = 4, 8, 16
@@ -15,15 +16,17 @@ Contents:
 Run from prototypes/fullstage:  python -m cpp.export_vectors   (~15 s; rewrites cpp/vectors.txt)
 cpp/tests/test_cpp_core.py checks that the committed file still matches what the Python stage produces now.
 """
-import os, sys, warnings
+import os
+import sys
+import warnings
 import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
-from dk import circuit, solver
-from dk.stage import Stage, QUALITY, NonConvergenceWarning
-from dk.resample import Resampler, FIR_FIRST, FIR_LATER, _FirHB
-from dk.triode import currents, currents_only, currents_fast
+from dk import circuit, solver  # noqa: E402 -- after the sys.path setup
+from dk.stage import Stage, QUALITY, NonConvergenceWarning  # noqa: E402 -- after the sys.path setup
+from dk.resample import Resampler, FIR_FIRST, FIR_LATER, _FirHB  # noqa: E402 -- after the sys.path setup
+from dk.triode import currents, currents_only, currents_fast  # noqa: E402 -- after the sys.path setup
 
 FS = 48000.0
 PATH = os.path.join(HERE, "vectors.txt")
@@ -87,9 +90,11 @@ def _run_case(quality, bias, drive, output, math, newton, x, swap):
         else:
             at, b2, nw2 = swap
             y1 = s.process(x[:at])["out"]
-            # the C++ swap keeps x and v and replaces the pack: matrices for the new bias, the new Newton settings
-            s.m = circuit.build(s.fs, rk_scale=b2, prewarp_hz=s.prewarp_hz)
-            s.K, s.bias, s.newton = s.m["K"].tolist(), b2, tuple(nw2)
+            # the C++ swap keeps the circuit state and replaces the pack: matrices and operating point for the new
+            # bias (request_bias, only if the bias changes, as test_core.cpp run_blocks), then the new Newton settings
+            if b2 != s.bias:
+                s.swap_bias(b2)
+            s.newton = tuple(nw2)
             y = np.r_[y1, s.process(x[at:])["out"]]
     it = np.concatenate(s.iters)
     stats = [len(it), int(it.sum()), s.nonconv, int(it.max())]
@@ -99,7 +104,8 @@ def _run_case(quality, bias, drive, output, math, newton, x, swap):
 def entries():
     """[(name, values)], in file order."""
     out = []
-    add = lambda name, v: out.append((name, np.asarray(v, float).ravel()))
+    def add(name, v):
+        return out.append((name, np.asarray(v, float).ravel()))
     add("taps.fir127", _FirHB(*FIR_FIRST).h)
     add("taps.fir23", _FirHB(*FIR_LATER).h)
 
@@ -112,13 +118,14 @@ def entries():
         dc = s.dc
         add(f"coef.{name}.op", [dc["vgk"], dc["vak"], dc["ig"], dc["ia"]])
         add(f"coef.{name}.nodes", [dc["nodes"][n] for n in circuit.NODES])
-        add(f"coef.{name}.x0", s.x)
+        add(f"coef.{name}.x0", s.x0)
 
     g = r10(np.linspace(-16.0, 2.0, 10))
     a = np.array([0.0, 12.75, 100.0, 204.5, 296.8, 450.0])
     pts = [(vg, va) for vg in g for va in a]
     add("triode.in", [v for p in pts for v in p])
-    flat = lambda r: [r[0], r[1], r[2][0][0], r[2][0][1], r[2][1][0], r[2][1][1]]
+    def flat(r):
+        return [r[0], r[1], r[2][0][0], r[2][0][1], r[2][1][0], r[2][1][1]]
     add("triode.libm", [v for vg, va in pts for v in flat(currents(vg, va))])
     add("triode.libm_only", [v for vg, va in pts for v in currents_only(vg, va)])
     add("triode.fast", [v for vg, va in pts for v in flat(currents_fast(vg, va))])
@@ -126,9 +133,10 @@ def entries():
     # solver.solve alone on the standard pack's K: rest / forward-biased / cut-off problems from hard starts, with the
     # default settings (pnjlim, line search) and capped at 1..4 iterations with zero tolerance (#7 best iterate)
     s = Stage(FS)
-    p_rest = s.m["G"] @ s.x + s.m["H"] @ np.array([0.0, circuit.VALUES["HT"]])
+    p_rest = s.m["G"] @ s.x0 + s.m["H"] @ np.array([0.0, circuit.VALUES["HT"]])
     probs = [p_rest, p_rest + np.array([2.0, -30.0]), p_rest + np.array([-10.0, 50.0]), p_rest + np.array([0.6, 5.0])]
-    starts = [(2.0, 50.0), (1.0, 300.0), (-5.0, 10.0), (0.5, 100.0), (3.0, 20.0), (-1.0, 200.0), (s.dc["vgk"], s.dc["vak"])]
+    starts = [(2.0, 50.0), (1.0, 300.0), (-5.0, 10.0), (0.5, 100.0), (3.0, 20.0), (-1.0, 200.0),
+              (s.dc["vgk"], s.dc["vak"])]
     settings = [DEFAULT_NEWTON] + [(k, 0.0, 0.0) for k in (1, 2, 3, 4)]
     rows, res = [], []
     cases = [(pp, v, nw) for pp in probs for v in starts for nw in settings]
@@ -176,7 +184,8 @@ def entries():
 def write(path=PATH):
     ent = entries()
     with open(path, "w") as f:
-        f.write("# GENERATED by `python -m cpp.export_vectors` (prototypes/fullstage) from the Python DK stage (dk/).\n")
+        f.write("# GENERATED by `python -m cpp.export_vectors` (prototypes/fullstage) from the "
+                "Python DK stage (dk/).\n")
         f.write("# Format: name count values...  Read by cpp/test_core.cpp; see cpp/README.md.\n")
         f.write("# case.*.cfg = os, prewarp_hz, bias, drive, output, fast(0/1), max_it, tol_v, tol_f,"
                 " swap_at (-1 none), swap bias, swap max_it, swap tol_v, swap tol_f\n")

@@ -2,7 +2,10 @@
 Jacobian, for both the #55 parameters (the stage's default) and the #51 ones (the comparison).
 Run from prototypes/fullstage:  python -m pytest -q dk6as6/tests
 """
-import itertools, json, os, sys
+import itertools
+import json
+import os
+import sys
 import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from dk6as6 import pentode as P
@@ -40,7 +43,8 @@ def test_jacobian_matches_central_differences(name):
         for j in range(4):
             h = 1e-5 * max(1.0, abs(v[j]))
             vp, vm = list(v), list(v)
-            vp[j] += h; vm[j] -= h
+            vp[j] += h
+            vm[j] -= h
             fp, fm = P.reference(*vp, p), P.reference(*vm, p)
             for k in range(2):
                 d = (fp[k] - fm[k]) / (2 * h)

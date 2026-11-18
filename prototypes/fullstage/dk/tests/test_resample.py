@@ -1,7 +1,8 @@
 """Streaming half-band resamplers (issue #14): filter specs, latency, and block-size invariance.
 Run from prototypes/fullstage:  python -m pytest -q dk/tests
 """
-import os, sys
+import os
+import sys
 import numpy as np
 import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -23,7 +24,8 @@ def test_hiir_coefficients_match_published_output():
 
 def measured_up_response(rs, n=1 << 15):
     """Interpolator response from an impulse through the streaming code (not the analytic formula)."""
-    x = np.zeros(n); x[0] = 1.0
+    x = np.zeros(n)
+    x[0] = 1.0
     y = rs.up(x) / rs.os
     return np.fft.rfftfreq(len(y), 1 / (rs.fs * rs.os)), np.abs(np.fft.rfft(y))
 
@@ -63,7 +65,8 @@ def test_decimator_rejects_aliasing_tones(kind, f_in):
 def test_fir_latency_is_exact(os_):
     """A base-rate impulse comes back as a symmetric pulse centred exactly latency_samples later."""
     rs = Resampler(FS, os_, "fir")
-    x = np.zeros(512); x[100] = 1.0
+    x = np.zeros(512)
+    x[100] = 1.0
     y = rs.down(rs.up(x))
     c = 100 + rs.latency_samples
     assert np.argmax(np.abs(y)) == c
@@ -77,7 +80,8 @@ def test_stage_reports_its_impulse_delay(quality, kind):
     """Each setting's latency_samples is the delay of an impulse through its streaming resampler: the 1 kHz group
     delay of the measured response (fir: exactly, and the pulse peaks there; iir: rounded, as it is defined)."""
     st = Stage(FS, quality=quality, filt=kind)
-    x = np.zeros(4800); x[100] = 1.0
+    x = np.zeros(4800)
+    x[100] = 1.0
     y = st.rs.down(st.rs.up(x))
     ph = np.unwrap(np.angle(np.fft.rfft(y)))
     k = 100                                              # 1 kHz bin of a 0.1 s window
@@ -97,7 +101,8 @@ def test_resampler_blocks_equal_whole(kind):
     rs = Resampler(FS, 8, kind)
     out, i, sizes = [], 0, np.random.default_rng(4).integers(1, 300, 100)
     for n in np.r_[1, 7, 1, sizes]:
-        b = x[i:i + n]; i += len(b)
+        b = x[i:i + n]
+        i += len(b)
         out.append(rs.down(rs.up(b) ** 3))
     assert i == len(x)
     assert np.allclose(np.concatenate(out), ref, rtol=0, atol=1e-12)
@@ -116,8 +121,10 @@ def test_stage_blocks_equal_whole(quality, kind):
     for n in sizes:
         if i >= len(x):
             break
-        r = st.process(x[i:i + n], record=("out", "vgk")); i += min(n, len(x) - i)
-        out.append(r["out"]); vg.append(r["vgk"])
+        r = st.process(x[i:i + n], record=("out", "vgk"))
+        i += min(n, len(x) - i)
+        out.append(r["out"])
+        vg.append(r["vgk"])
     assert i == len(x)
     scale = np.max(np.abs(ref["out"]))
     assert np.max(np.abs(np.concatenate(out) - ref["out"])) < 1e-9 * scale

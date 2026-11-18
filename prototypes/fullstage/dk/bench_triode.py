@@ -9,7 +9,15 @@ dk/tests/test_triode.py), after #16 (shared exp, divided powers; libm: the #18 b
 Run from prototypes/fullstage:  python -m dk.bench_triode
 Timings depend on the machine and load; RESULTS.md quotes one run.
 """
-import json, os, platform, shutil, statistics, subprocess, sys, tempfile, time
+import json
+import os
+import platform
+import shutil
+import statistics
+import subprocess
+import sys
+import tempfile
+import time
 import numpy as np
 from dk.triode import currents, currents_only, currents_fast, currents_only_fast
 from dk.tests.test_triode import currents_ref, currents_only_ref
@@ -76,7 +84,8 @@ if __name__ == "__main__":
             t[k].append(_block(fn))
     res = {k: dict(ns_per_call_median=statistics.median(v), ns_per_call_min=min(v)) for k, v in t.items()}
     ov = res["call_overhead"]["ns_per_call_median"]
-    ratio = lambda a, b, sub=0.0: (res[a]["ns_per_call_median"] - sub) / (res[b]["ns_per_call_median"] - sub)
+    def ratio(a, b, sub=0.0):
+        return (res[a]["ns_per_call_median"] - sub) / (res[b]["ns_per_call_median"] - sub)
     out = dict(
         method_python=f"Scalar Python calls with Python floats on {len(PTS)} operating points (Vgk -4..+1 V x 30, Vak "
                f"50-350 V x 31). Each timed block = {PASSES} passes over the points, divided by the call count; "
@@ -84,7 +93,8 @@ if __name__ == "__main__":
                "(and min) block reported. time.perf_counter_ns, single thread. call_overhead = the same loop "
                "calling an empty function; *_net ratios subtract it.",
         method_c=f"dk/bench_triode.c: the same {len(PTS)} points in C arrays, each form a noinline function writing "
-                 "(Ig, Ia, J); 3 warm-up blocks, then 41 blocks of 2000 passes per form and timing, interleaved; median "
+                 "(Ig, Ia, J); 3 warm-up blocks, then 41 blocks of 2000 passes per form and timing, "
+                 "interleaved; median "
                  "(and min) block, CLOCK_MONOTONIC. *_chain: each call's Vgk depends on the previous call's output "
                  "(no overlap between calls: the latency one Newton iteration sees). max_rel_diff = largest "
                  "|after - before| / |before| over the outputs; max_rel_diff_fast = the same for fast vs after.",

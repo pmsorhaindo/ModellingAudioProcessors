@@ -1,18 +1,19 @@
 # fullstage: one valve gain stage with its reactive parts
 
 Goal: model a full common-cathode stage (coupling caps, bypassed cathode, plate load, grid current) so
-bias shift, blocking and recovery come out of the circuit — first with the nodal DK method, then with
-wave digital filters for comparison, before the 6AS6 stage and a C++ core.
+bias shift, blocking and recovery come out of the circuit. The nodal DK method came first, then the 6AS6 stage and
+the C++ core. A wave digital filter version for comparison is still open (#12); the plugin (#22) does not wait
+for it.
 
 | folder | what | status |
 |---|---|---|
 | `RESEARCH-numerics.md` | pitfalls and published fixes (NR robustness, DC init, aliasing, WDF multiport) | done |
 | `spice/` | ngspice references: Koren 12AX7 (i) and Dempwolf–Zölzer (ii) on the same netlist, generated from `dk/circuit.VALUES` (#4) | done; settled 500 ms sine data, tight solver (#5) |
 | `analysis.py` | shared measurements (DFT harmonics, THD, bias shift, recovery τ) | done |
-| `dk/` | nodal DK prototype in Python/NumPy with streaming half-band resamplers, Drive/Bias/Output, quality settings hq 16× / standard 8× (default) / eco 4× + small-cap pre-warp | all tests pass in every setting (small-signal worst 0.014 / 0.052 / 0.054 dB; plain 4× fails with 0.21 dB from trapezoidal warping) — see `dk/RESULTS.md` |
+| `dk/` | nodal DK prototype in Python/NumPy with streaming half-band resamplers, Drive/Bias/Output, quality settings hq 16× / standard 8× (default) / eco 4× + small-cap pre-warp | all tests pass in every setting (small-signal worst 0.013 / 0.052 / 0.054 dB; plain 4× fails with 0.21 dB from trapezoidal warping) — see `dk/RESULTS.md` |
 | `dk6as6/`, `spice6as6/` | the 6AS6 stage (#26): same passives as the 12AX7 stage, screen / suppressor at Ec2 = 120 V / Ec3 = 0 V, the fit6as6 `dual_control` law (#55); nodal DK in `dk6as6/` (reusing `dk/`'s resampler, stage controls and tolerances), its same-model ngspice reference in `spice6as6/` | standard 8× and hq 16× pass the 12AX7 criteria against the same-model reference — see `dk6as6/RESULTS.md` |
 | `cpp/` | header-only realtime C++17 core of the 12AX7 DK stage (#19): fixed-size state, no allocation in `process()`, FTZ/DAZ guard, lock-free coefficient swap, #7 fallback, hq / standard / eco with the FIR resampler | reproduces `dk/results.json` in every setting (harmonics to 5.5e-8 dB, identical Newton histograms) — see `cpp/README.md` |
-| WDF version | — | next |
+| WDF version | — | not started (#12): an exploration for comparison, not on the plugin's path |
 
 **Circuit values are example values, not Culture Vulture values** (`dk/circuit.VALUES`, the single source for every
 ngspice netlist, which `spice/run_refs.py` generates; see `spice/README.md`).

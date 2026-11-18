@@ -45,7 +45,9 @@ def hiir_coefs(nbr_coefs, transition):
         i, j, acc = 0, 1, 0.0
         while True:
             t = q ** (i * (i + 1)) * math.sin((2 * i + 1) * c * math.pi / order) * j
-            acc += t; j = -j; i += 1
+            acc += t
+            j = -j
+            i += 1
             if abs(t) <= 1e-100:
                 return acc
 
@@ -53,7 +55,9 @@ def hiir_coefs(nbr_coefs, transition):
         i, j, acc = 1, -1, 0.0
         while True:
             t = q ** (i * i) * math.cos(2 * i * c * math.pi / order) * j
-            acc += t; j = -j; i += 1
+            acc += t
+            j = -j
+            i += 1
             if abs(t) <= 1e-100:
                 return acc
 
@@ -70,7 +74,8 @@ def hiir_coefs(nbr_coefs, transition):
 def _hiir_q(transition):
     k = math.tan((1 - transition * 2) * math.pi / 4) ** 2
     kksqrt = (1 - k * k) ** 0.25
-    e = 0.5 * (1 - kksqrt) / (1 + kksqrt); e4 = e ** 4
+    e = 0.5 * (1 - kksqrt) / (1 + kksqrt)
+    e4 = e ** 4
     return e * (1 + e4 * (2 + e4 * (15 + 150 * e4)))
 
 
@@ -156,7 +161,10 @@ class _FirHB:
         e, o = _Lf(2 * self.h[0::2]), _Lf(2 * self.h[1::2])
 
         def up(x):
-            y = np.empty(2 * len(x)); y[0::2] = e(x); y[1::2] = o(x); return y
+            y = np.empty(2 * len(x))
+            y[0::2] = e(x)
+            y[1::2] = o(x)
+            return y
         return up
 
     def make_down(self):
@@ -182,7 +190,10 @@ class _IirHB:
         p0, p1 = _allpass_chain(self.a[0::2]), _allpass_chain(self.a[1::2])
 
         def up(x):
-            y = np.empty(2 * len(x)); y[0::2] = p0(x); y[1::2] = p1(x); return y
+            y = np.empty(2 * len(x))
+            y[0::2] = p0(x)
+            y[1::2] = p1(x)
+            return y
         return up
 
     def make_down(self):
@@ -197,7 +208,8 @@ class _IirHB:
         """H(z) = (A0(z^2) + z^-1 A1(z^2)) / 2 at the higher rate (= up and down response, x2 gain on up)."""
         zi = np.exp(-2j * np.pi * np.asarray(f, float) / fs_hi)   # z^-1
         z2 = zi * zi
-        A = lambda cs: np.prod([(a + z2) / (1 + a * z2) for a in cs], axis=0) if len(cs) else 1.0
+        def A(cs):
+            return np.prod([(a + z2) / (1 + a * z2) for a in cs], axis=0) if len(cs) else 1.0
         return 0.5 * (A(self.a[0::2]) + zi * A(self.a[1::2]))
 
 
@@ -233,8 +245,10 @@ class Resampler:
             self._lat = (d_int + self.pad) // self.os
         else:
             self.pad = 0
-            f = 1000.0; df = 1.0
-            ph = lambda ff: np.angle(self.chain_response(np.array([ff]))[0])
+            f = 1000.0
+            df = 1.0
+            def ph(ff):
+                return np.angle(self.chain_response(np.array([ff]))[0])
             gd = -(ph(f + df) - ph(f - df)) / (2 * np.pi * 2 * df) * self.fs
             self._lat = int(round(gd))
         self.reset()
@@ -254,7 +268,8 @@ class Resampler:
         if self.kind == "fir":
             return sum(s.delay_hi * self.os // 2 ** (i + 1) for i, s in enumerate(self.stages))
         f, df = 1000.0, 1.0
-        ph = lambda ff: np.angle(self.up_response(np.array([ff]))[0])
+        def ph(ff):
+            return np.angle(self.up_response(np.array([ff]))[0])
         return -(ph(f + df) - ph(f - df)) / (2 * np.pi * 2 * df) * self.fs * self.os
 
     def macs(self):

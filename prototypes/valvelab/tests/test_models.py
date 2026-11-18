@@ -10,7 +10,7 @@ VA = np.linspace(5, 400, 80)
 @pytest.mark.parametrize("name", list(P.KOREN_TRIODE))
 def test_koren_triode_monotone_and_nonnegative(name):
     t = KorenTriode(name)
-    I = t.ip(VG[:, None], VA[None, :])
+    I = t.ip(VG[:, None], VA[None, :])  # noqa: E741 -- I is the valve current, as in the model equations
     assert np.all(I >= 0)
     assert np.all(np.diff(I, axis=0) >= 0), "Ip must rise with grid voltage"
     assert np.all(np.diff(I, axis=1) >= 0), "Ip must rise with plate voltage"
@@ -20,7 +20,7 @@ def test_koren_triode_monotone_and_nonnegative(name):
 @pytest.mark.parametrize("name", list(P.KOREN_PENTODE))
 def test_koren_pentode_monotone(name):
     p = KorenPentode(name)
-    I = p.ip(VG[:, None], 100.0, VA[None, :])
+    I = p.ip(VG[:, None], 100.0, VA[None, :])  # noqa: E741 -- I is the valve current, as in the model equations
     assert np.all(I >= 0)
     assert np.all(np.diff(I, axis=0) >= 0)
     assert np.all(np.diff(I, axis=1) >= 0)
@@ -31,7 +31,7 @@ def test_koren_pentode_monotone(name):
 
 def test_dempwolf_monotone_and_grid_current():
     d = DempwolfTriode()
-    I = d.ik(VG[:, None], VA[None, :])
+    I = d.ik(VG[:, None], VA[None, :])  # noqa: E741 -- I is the valve current, as in the model equations
     assert np.all(np.diff(I, axis=0) >= 0) and np.all(np.diff(I, axis=1) >= 0)
     assert d.ig(-2.0) < 1e-6 and d.ig(1.0) > 1e-4   # grid conducts only when positive
 

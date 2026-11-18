@@ -82,7 +82,8 @@ def _f(vg1, vg2, vg3, va, p):
 
 def dual_ip_ig2(vg1, vg2, vg3, va, p):
     """(Ip, Ig2) from one evaluation of Ik and the share (what a circuit solver needs per operating point)."""
-    ik, f = _f(vg1, vg2, vg3, va, p); ip = ik * f
+    ik, f = _f(vg1, vg2, vg3, va, p)
+    ip = ik * f
     return ip, ik - ip
 
 
@@ -92,8 +93,10 @@ def dual_cathode(vg1, vg2, vg3, va, p):
 
 
 def dual_ip(vg1, vg2, vg3, va, p):
-    ik, f = _f(vg1, vg2, vg3, va, p); return ik * f
+    ik, f = _f(vg1, vg2, vg3, va, p)
+    return ik * f
 
 
 def dual_ig2(vg1, vg2, vg3, va, p):
-    ik, f = _f(vg1, vg2, vg3, va, p); return ik * (1.0 - f)
+    ik, f = _f(vg1, vg2, vg3, va, p)
+    return ik * (1.0 - f)

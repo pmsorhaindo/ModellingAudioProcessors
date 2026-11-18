@@ -21,15 +21,21 @@ clang++): skipped without one, except under CI (CI set in the environment), wher
                            #21 108-row and #67 126-row schemas)
 Run from prototypes/fullstage:  python -m pytest -q cpp/tests   (~15 s)
 """
-import glob, json, os, platform, signal, subprocess, sys
+import glob
+import json
+import os
+import platform
+import signal
+import subprocess
+import sys
 import numpy as np
 import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
-from cpp import validate_cpp as VC, export_vectors as EV
-from dk import solver, circuit
-from dk.stage import Stage, QUALITY
-from dk.triode import currents, currents_only, currents_fast
+from cpp import validate_cpp as VC, export_vectors as EV  # noqa: E402 -- after the sys.path setup
+from dk import solver, circuit  # noqa: E402 -- after the sys.path setup
+from dk.stage import Stage, QUALITY  # noqa: E402 -- after the sys.path setup
+from dk.triode import currents, currents_only, currents_fast  # noqa: E402 -- after the sys.path setup
 
 VECTORS = os.path.join(ROOT, "cpp", "vectors.txt")
 X86 = platform.machine().lower() in ("x86_64", "amd64")
@@ -149,14 +155,15 @@ def test_bit_exact_solver():
     K = s.K
     rows = V["solve.in"].reshape(-1, 7)
     rng = np.random.default_rng(7)
-    p_rest = s.m["G"] @ s.x + s.m["H"] @ np.array([0.0, circuit.VALUES["HT"]])
+    p_rest = s.m["G"] @ s.x0 + s.m["H"] @ np.array([0.0, circuit.VALUES["HT"]])
     extra = [[*(p_rest + rng.uniform([-12, -80], [3, 80])), rng.uniform(-3, 3), rng.uniform(0, 450), *solver_default()]
              for _ in range(2000)]
     rows = np.vstack([rows, np.array(extra)])
     cin = np.hstack([rows[:, :4], np.tile(np.ravel(K), (len(rows), 1)), rows[:, 4:]])
     got = _pipe(exe, "solve", cin).reshape(-1, 6)
     for r, g in zip(rows, got):
-        ref = solver.solve(float(r[0]), float(r[1]), K, float(r[2]), float(r[3]), s.par, int(r[4]), float(r[5]), float(r[6]))
+        ref = solver.solve(float(r[0]), float(r[1]), K, float(r[2]), float(r[3]), s.par, int(r[4]), float(r[5]),
+                           float(r[6]))
         assert tuple(g) == (ref[0], ref[1], ref[2], ref[3], float(ref[4]), 1.0 if ref[5] else 0.0), (r, g, ref)
 
 
@@ -169,7 +176,8 @@ def test_bit_exact_triode():
     rng = np.random.default_rng(8)
     pts = np.column_stack([rng.uniform(-16.0, 2.0, 3000), rng.uniform(0.0, 450.0, 3000)])
     got = _pipe(exe, "triode", pts).reshape(-1, 14)
-    flat = lambda r: [r[0], r[1], r[2][0][0], r[2][0][1], r[2][1][0], r[2][1][1]]
+    def flat(r):
+        return [r[0], r[1], r[2][0][0], r[2][0][1], r[2][1][0], r[2][1][1]]
     for (vg, va), g in zip(pts, got):
         vg, va = float(vg), float(va)
         ref = flat(currents(vg, va)) + list(currents_only(vg, va)) + flat(currents_fast(vg, va))
@@ -180,6 +188,8 @@ def test_bit_exact_triode():
 # differently, which moves the stage outputs by up to ~1e-6 V (cpp/README.md); a real change to the Python stage
 # moves them by far more
 def _tol(name):
+    if name == "solve.in":                    # not a rounded input: see test_vectors_are_fresh (#66)
+        return "rel", 1e-9
     if name.endswith((".in", ".cfg")) or name.startswith("taps."):
         return "abs", 1e-14
     if name.startswith(("internal.", "case.")) and name.endswith((".out", ".vgk")):
@@ -200,6 +210,12 @@ def test_vectors_are_fresh():
         if kind == "rel":
             err /= max(np.max(np.abs(v)), 1e-300)
         assert err <= tol, f"{k}: {err:.3g} > {tol:g}; regenerate with python -m cpp.export_vectors"
+    # solve.in (#66): p0, p1 (p_rest + dp) and the DC-point starts are computed from the matrices, so they round like
+    # the matrices (the "rel" 1e-9 of coef.*), not like the 10-digit inputs. The Newton settings (max_it, tol_v,
+    # tol_f) are exact.
+    def settings(V):
+        return V["solve.in"].reshape(-1, 7)[:, 4:]
+    assert np.array_equal(settings(now), settings(old)), "solve.in settings"
 
 
 _REF = {}

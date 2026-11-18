@@ -1,7 +1,9 @@
 """Issue #48: Raytheon p.8 bottom and the pp. 11-13 gm graphs, and the checks of the refit against them.
 Since #51 the p.8 bottom Ib curves are in the fit; the gm graphs and p.8 bottom Ic2 are still held out.
 Values at the time of writing in brackets, #55 refit / #51 refit unless stated (see README)."""
-import json, os, sys
+import json
+import os
+import sys
 from collections import Counter
 import pytest
 
@@ -59,7 +61,8 @@ def test_heldout_results_reproduce():
                 assert got["p8_bottom_summary"][k][m] == pytest.approx(x, rel=1e-6, abs=1e-6), (key, k, m)
     # fit.py's p.8 bottom metrics are the same numbers as heldout.py's
     for k, j in (("all", "Ib_all"), ("Ec3_m10_to_m14", "Ib_Ec3_-10_to_-14")):
-        assert FIT["dual_control"]["p8_bottom_Ib"][k]["rms_log"] == pytest.approx(H.p8[j]["rms_log"], rel=1e-6, abs=1e-6)
+        assert (FIT["dual_control"]["p8_bottom_Ib"][k]["rms_log"]
+                == pytest.approx(H.p8[j]["rms_log"], rel=1e-6, abs=1e-6))
 
 
 def test_gm_check_bounds():
@@ -91,7 +94,8 @@ def test_ge_typical_gm_against_raytheon_curves():
         assert c["raytheon_gm1_p11"] == pytest.approx(c["ge_gm1"], rel=0.1)       # [+6 %, -1 %]
         for k in ("raytheon_gm3_p13_top", "raytheon_gm3_p13_bottom"):
             assert c[k] == pytest.approx(c["ge_gm3"], rel=0.2)                    # [-14 %, -18 %]
-            assert c["model_gm3"] == pytest.approx(c[k], rel=0.2)   # [+12 % at -3 V, -5 / 0 % at 0 V; #51 +17 %, -6 / -1 %]
+            assert c["model_gm3"] == pytest.approx(c[k], rel=0.2)   # [+12 % at -3 V, -5 / 0 % at
+                                                                    # 0 V; #51 +17 %, -6 / -1 %]
         assert c["model_gm1"] == pytest.approx(c["raytheon_gm1_p11"], rel=0.1)
 
 

@@ -5,11 +5,14 @@ record min / max of their arguments, and of the (Vgk, Vak) the triode is evaluat
 dk/tests/test_fastmath.py checks that its dense error grids cover these ranges.
 Run from prototypes/fullstage:  python -m dk.fastmath_domain   (~ as long as the fast validation, a few minutes)
 """
-import json, math, os, sys
+import json
+import math
+import os
+import sys
 from concurrent.futures import ProcessPoolExecutor
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from dk import fastmath as fm
+from dk import fastmath as fm  # noqa: E402 -- after the sys.path setup
 
 
 def _record(q):
@@ -43,11 +46,13 @@ def _record(q):
     ev = T.EVAL["fast"]
 
     def cur_(vgk, vak, *a):
-        upd("vgk", vgk); upd("vak", vak)
+        upd("vgk", vgk)
+        upd("vak", vak)
         return ev[0](vgk, vak, *a)
 
     def cur_only_(vgk, vak, *a):
-        upd("vgk", vgk); upd("vak", vak)
+        upd("vgk", vgk)
+        upd("vak", vak)
         return ev[1](vgk, vak, *a)
 
     fm.fast_exp, fm.fast_log1p, fm.fast_pow = exp_, log1p_, pow_

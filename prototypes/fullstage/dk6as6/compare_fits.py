@@ -8,11 +8,13 @@ spice/run_refs.AMPS. Each DK run is checked against its own same-model ngspice r
 (validate.run(model=...)), so the difference between the columns is the fits', not the method's.
 Run: python -m dk6as6.compare_fits   (from prototypes/fullstage). Writes dk6as6/fit_comparison.json.
 """
-import json, os, sys
+import json
+import os
+import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from spice.run_refs import AMPS
-from dk6as6 import validate as V
+from spice.run_refs import AMPS  # noqa: E402 -- after the sys.path setup
+from dk6as6 import validate as V  # noqa: E402 -- after the sys.path setup
 
 LABEL = {"r51": "#51 refit_51", "dual": "#55 dual_control"}
 
@@ -23,7 +25,8 @@ def compare(quality="standard"):
     for m, r in runs.items():
         out["models"][m] = dict(
             label=LABEL[m], params=r["params"], op=r["op"], ac_gain_1k_db=r["ac_gain_1k_db"],
-            harmonics={a: dict(zip(("H2", "H3", "H4", "H5"), r["sine"][a]["H_dBc"][1:5]), thd_pct=r["sine"][a]["thd_pct"],
+            harmonics={a: dict(zip(("H2", "H3", "H4", "H5"), r["sine"][a]["H_dBc"][1:5]),
+                               thd_pct=r["sine"][a]["thd_pct"],
                                H1_peak_V=r["sine"][a]["H_peak_V"][0]) for a in AMPS},
             vs_own_reference=dict(passed=r["passed"], op_rel=r["vs"][m]["op_rel"],
                                   ac_maxdev_db_chain=r["vs"][m]["ac_maxdev_db_chain"],

@@ -8,10 +8,17 @@ cpp/BENCHMARK.md. Run from prototypes/fullstage:
   python -m cpp.bench --table cpp/bench_<machine>.json     # the BENCHMARK.md tables from a results file
 Pin on Linux with taskset (taskset -c 2 python -m cpp.bench ...); macOS has no pinning API (bench.cpp sets QoS).
 """
-import argparse, datetime, json, os, platform, shlex, subprocess, sys
+import argparse
+import datetime
+import json
+import os
+import platform
+import shlex
+import subprocess
+import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from cpp import build as B
+from cpp import build as B  # noqa: E402 -- after the sys.path setup
 
 DEFAULT_FLAGS = "-O3"
 
@@ -49,7 +56,8 @@ def host_state():
 def host_info():
     h = {"platform": platform.platform(), "machine": platform.machine()}
     if platform.system() == "Darwin":
-        q = lambda k: _sh(["sysctl", "-n", k])
+        def q(k):
+            return _sh(["sysctl", "-n", k])
         h.update(cpu=q("machdep.cpu.brand_string"), ncpu=q("hw.ncpu"), p_cores=q("hw.perflevel0.logicalcpu"),
                  e_cores=q("hw.perflevel1.logicalcpu"), memsize=q("hw.memsize"),
                  model=q("hw.model"), os=" ".join(filter(None, [_sh(["sw_vers", "-productVersion"]),
@@ -133,14 +141,16 @@ def table(rec):
     lv = sorted({k[2] for k in R})
     os_ = {k[0]: R[k]["os"] for k in R}
     lines = []
-    for inst, title in (("x1", "one mono instance"), ("x2", "two mono instances, one after the other (stereo-equivalent)"),
+    for inst, title in (("x1", "one mono instance"),
+                        ("x2", "two mono instances, one after the other (stereo-equivalent)"),
                         ("s2", "stereo SIMD: one StereoStage, the x2 signals as two lanes of one kernel (#21)"),
                         ("v2", "stereo SIMD with vector maths: the s2 StereoStage with LaneMath::vector (#67)")):
         if not any(k[4] == inst for k in R):
             continue
         lines += [f"**{title}** — % of one core at 48 kHz real time (median), ns per base-rate sample "
                   f"(median, min–max over passes), cycles per base-rate sample (median; * = not all on P-cores)", "",
-                  "| setting | math | peak | % core b64 | % core b512 | ns b64 | ns b512 | cycles b64 | cycles b512 | Newton it. |",
+                  "| setting | math | peak | % core b64 | % core b512 | ns b64 | ns b512 | cycles b64 | "
+                  "cycles b512 | Newton it. |",
                   "|---|---|---|---|---|---|---|---|---|---|"]
         for q in qs:
             for m in ms:
@@ -148,7 +158,8 @@ def table(rec):
                     a, b = R.get((q, m, v, 64, inst)), R.get((q, m, v, 512, inst))
                     if not (a or b):
                         continue
-                    ns = lambda r: "—" if not r else f"{r['ns_per_sample']:.0f} ({r['ns_min']:.0f}–{r['ns_max']:.0f})"
+                    def ns(r):
+                        return "—" if not r else f"{r['ns_per_sample']:.0f} ({r['ns_min']:.0f}–{r['ns_max']:.0f})"
                     lines.append(f"| {q} {os_[q]}× | {m} | {v:g} V | {_cell(a, 'pct_core', '.2f')} | "
                                  f"{_cell(b, 'pct_core', '.2f')} | {ns(a)} | {ns(b)} | {_cycles(a)} | {_cycles(b)} | "
                                  f"{_newton(a or b)} |")
@@ -191,8 +202,10 @@ def table(rec):
                     two = {b: R.get((q, m, v, b, "x2")) for b in (64, 512)}
                     match = {r.get("matches_x2") for r in s.values() if r}
                     lines.append(f"| {q} {os_[q]}× | {m} | {v:g} V | {_ratio(s[64], one[64], 'ns_per_sample')} | "
-                                 f"{_ratio(s[512], one[512], 'ns_per_sample')} | {_ratio(s[64], two[64], 'ns_per_sample')} | "
-                                 f"{_ratio(s[512], two[512], 'ns_per_sample')} | {_ratio(s[64], one[64], 'cycles_per_sample')} | "
+                                 f"{_ratio(s[512], one[512], 'ns_per_sample')} | "
+                                 f"{_ratio(s[64], two[64], 'ns_per_sample')} | "
+                                 f"{_ratio(s[512], two[512], 'ns_per_sample')} | "
+                                 f"{_ratio(s[64], one[64], 'cycles_per_sample')} | "
                                  f"{_ratio(s[64], two[64], 'cycles_per_sample')} | "
                                  f"{'yes' if match == {True} else 'NO' if False in match else '—'} |")
         lines.append("")
@@ -204,7 +217,8 @@ def table(rec):
             for v in lv:
                 a, b = R.get((q, m, v, 64, "x1")), R.get((q, m, v, 512, "x1"))
                 if a or b:
-                    lines.append(f"| {q} | {m} | {v:g} V | {_cell(a, 'block_pct_p50', '.1f')} | {_cell(a, 'block_pct_p99', '.1f')} | "
+                    lines.append(f"| {q} | {m} | {v:g} V | {_cell(a, 'block_pct_p50', '.1f')} | "
+                                 f"{_cell(a, 'block_pct_p99', '.1f')} | "
                                  f"{_cell(b, 'block_pct_p50', '.1f')} | {_cell(b, 'block_pct_p99', '.1f')} |")
     return "\n".join(lines)
 
