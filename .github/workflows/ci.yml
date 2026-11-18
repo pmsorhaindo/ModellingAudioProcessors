@@ -26,7 +26,8 @@ jobs:
       fail-fast: false
       matrix:
         # wdf (#12): the WDF stage reuses prototypes/fullstage (its requirements.txt includes fullstage's); Linux only
-        prototype: [valvelab, fullstage, fit6as6, wdf]
+        # cutdown (#23): the Octatrack table prototype also reuses fullstage's requirements
+        prototype: [valvelab, fullstage, fit6as6, wdf, cutdown]
     defaults:
       run:
         working-directory: prototypes/${{ matrix.prototype }}
