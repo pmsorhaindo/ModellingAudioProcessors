@@ -115,8 +115,9 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Aliasing guard (limits + baseline ratchet)
         run: python -m dk.aliasing_guard --workers "$(nproc)" --json aliasing_guard_results.json
-      # #96: 11 FIR points, verified against full/short 44.1 kHz sweeps. Separate baseline; retain 48 kHz above.
+      # #96: 9 FIR points, verified against full/short 44.1 kHz sweeps. Separate baseline; retain 48 kHz above.
       - name: Aliasing guard at 44.1 kHz (FIR limits + baseline ratchet)
+        if: success() || failure()
         run: python -m dk.aliasing_guard --fs 44100 --workers "$(nproc)" --json aliasing_guard_44100_results.json
       - name: Upload results
         if: always()
