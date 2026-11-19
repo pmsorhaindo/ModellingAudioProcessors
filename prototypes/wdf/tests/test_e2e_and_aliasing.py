@@ -9,7 +9,6 @@
   The full CI subset of every setting runs in `python -m wdf.validate` (wdf/RESULTS.md).
 Run from prototypes/wdf:  python -m pytest -q tests
 """
-import json
 import os
 import sys
 import numpy as np
@@ -56,7 +55,27 @@ def test_aliasing_at_the_worst_ci_tone_matches_the_dk_baseline(drive, monkeypatc
     monkeypatch.setattr(AL, "Stage", WdfStage)
     tone = max(AL.CI_TONES[("standard", "fir")][drive])
     r = AL.measure("standard", "fir", drive, tone, window=AL.CI_WINDOW_S, settle=AL.CI_SETTLE_S)
-    base = json.load(open(AG.BASELINE_JSON))["values"][AG.key("standard", "fir", drive)]
-    assert base["tone"] == tone
+    base = AG.load_baseline(AG.BASELINE_JSON)["values"][AG.key("standard", "fir", drive)]["tones"][str(tone)]
+    assert base["f_hz"] == r["f_hz"]
     assert r["total_dbc"] <= AL.LIMIT_DBC[("standard", "fir")][drive]
     assert abs(r["total_dbc"] - base["total_dbc"]) < AG.TOLERANCE_DB, (r["total_dbc"], base["total_dbc"])
+
+
+def test_validator_ratchets_a_non_worst_tone_against_its_own_baseline(monkeypatch):
+    from wdf import validate as WV
+    base = AG.load_baseline(AG.BASELINE_JSON)["values"]
+
+    def synthetic_measure(job):
+        q, filt, drive, tone, _ = job
+        k = AG.key(q, filt, drive)
+        p = dict(base[k]["tones"][str(tone)])
+        if (k, tone) == ("hq/fir/8V", 10037):
+            p["total_dbc"] += AG.TOLERANCE_DB + 0.01
+            assert p["total_dbc"] < base[k]["tones"]["19037"]["total_dbc"]
+        return dict(setting=q, filt=filt, drive=drive, tone=tone, **p)
+
+    monkeypatch.setattr(WV, "_wdf_measure", synthetic_measure)
+    result = WV.aliasing_subset(workers=1)
+    assert len(result["rows"]) == 18 and not result["passed"]
+    (bad,) = AG.failed(result["rows"])
+    assert (bad["key"], bad["tone"], bad["status"]) == ("hq/fir/8V", 10037, "FAIL regression")

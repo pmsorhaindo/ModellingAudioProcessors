@@ -1218,6 +1218,8 @@ pre-review 231 implementation, excluding unchanged engine/ring/allocator overhea
 
 Per-tone migration: the two affected pytest modules pass **44 tests**, including the non-worst-tone regression,
 format I/O, legacy rejection and committed per-tone coverage. Both measured guards pass all 29 point comparisons.
+The downstream WDF validator uses the same per-tone API; its nine affected pytest cases and targeted 18-point
+WDF aliasing subset also pass, without changing or regenerating the full WDF reference results.
 The earlier full DSP/native/host validation below is retained; DSP source and parameters are unchanged here.
 
 All numerical suites ran serially. `python -m pytest -q dk/tests cpp/tests` passes **243 tests, 2 skipped**

@@ -8,7 +8,7 @@ Run from prototypes/wdf:  python -m wdf.validate [--workers N]   -> wdf/results.
 2. WDF vs DK directly: operating point, small-signal response (both linearised at their operating points), and
    the output sample by sample on the 1 kHz sines and the 4 V burst of the criteria, through process().
 3. Aliasing: the CI subset of dk/aliasing_guard.py (aliasing.CI_TONES, short buffers) on the WDF stage, against
-   the DK stage's limits (aliasing.LIMIT_DBC) and its committed baseline (dk/aliasing_baseline.json).
+   the DK stage's limits (aliasing.LIMIT_DBC) and each tone's own committed baseline (dk/aliasing_baseline.json).
 4. CPU per sample (pure Python, interpreted prototypes: relative numbers only). (a) The s/s figure of
    dk.validate.run (time.perf_counter around process(), resampler included). (b) process_internal() alone on a
    2 V 1 kHz sine at the internal rate, WDF and DK interleaved, median of REPS runs. (c) Multiplies per internal
@@ -96,8 +96,8 @@ def aliasing_subset(workers=None):
     else:
         recs = [_wdf_measure(j) for j in jobs]
     AL.Stage = Stage
-    base = json.load(open(AG.BASELINE_JSON))["values"]
-    rows = AG.compare(AG.worst_by_key(recs), base, AG.limits_by_key())
+    base = AG.load_baseline(AG.BASELINE_JSON)["values"]
+    rows = AG.compare(AG.values_by_key(recs), base, AG.limits_by_key(), AG.tones_by_key())
     return dict(wall_s=time.perf_counter() - t0, rows=rows, passed=not AG.failed(rows), records=recs)
 
 
@@ -230,7 +230,8 @@ def summary(res):
     lines.append(f"parameter_change: {json.dumps(res['parameter_change'], default=float)}")
     if "aliasing" in res:
         for row in res["aliasing"]["rows"]:
-            lines.append(f"aliasing {row['key']}: {row['measured_dbc']:.2f} dBc, baseline {row['baseline_dbc']:.2f}, "
+            lines.append(f"aliasing {row['key']} at {row['tone']} Hz: {row['measured_dbc']:.2f} dBc, "
+                         f"baseline {row['baseline_dbc']:.2f}, "
                          f"delta {row['delta_db']:+.2f} dB, limit {row['limit_dbc']}, {row['status']}")
     return "\n".join(lines)
 
