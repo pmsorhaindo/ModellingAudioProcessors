@@ -329,3 +329,18 @@ def test_host_rate_python_parity(fs, quality):
     assert cpp.fs == fs * QUALITY[quality][0]
     assert cpp.latency_samples == py.latency_samples
     assert cpp.iteration_stats()["nonconverged"] == py.iteration_stats()["nonconverged"] == 0
+
+
+def test_fir_rate_rule_and_geometry_match_python():
+    from dk.resample import Resampler, first_fir_taps
+    # Include unswept pull-up/down and low rates: they retain historical geometry, not inferred certification.
+    rates = (22050, 32000, 44056, 44100, 44144, 46000, 47952, 48000, 88200, 96000, 176400, 192000)
+    cases = [(fs, os_) for fs in rates for os_ in (2, 4, 8, 16)]
+    p = subprocess.run([_exe(), "fir-geometry"], input="".join(f"{fs} {os_}\n" for fs, os_ in cases),
+                       capture_output=True, text=True, check=True)
+    rows = [json.loads(line) for line in p.stdout.splitlines()]
+    assert len(rows) == len(cases)
+    for (fs, os_), row in zip(cases, rows):
+        rs = Resampler(fs, os_)
+        assert row == dict(first_taps=first_fir_taps(fs), latency=rs.latency_samples, pad=rs.pad,
+                           up_delay=rs.up_delay_internal, macs=rs.macs()[0])

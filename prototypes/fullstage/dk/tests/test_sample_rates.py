@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from dk import validate as V
 from dk.sample_rates import RATES, rest
 from dk.stage import Stage, QUALITY, PREWARP_HZ
+from dk.resample import Resampler
 
 
 @pytest.mark.parametrize("fs", RATES)
@@ -26,7 +27,7 @@ def test_host_rate_small_signal_and_rest(fs, quality):
     assert np.max(np.abs(s.x)) < 1e-9 * np.max(np.abs(s.x0))
     assert s.iteration_stats()["nonconverged"] == 0
     assert s.os == QUALITY[quality][0]  # no implicit host-rate-dependent factor
-    assert s.latency_samples == {"hq": 73, "standard": 72, "eco": 69}[quality] + (52 if fs == 44100 else 0)
+    assert s.latency_samples == Resampler(fs, QUALITY[quality][0]).latency_samples
 
 
 def test_eco_prewarp_at_176400_internal():

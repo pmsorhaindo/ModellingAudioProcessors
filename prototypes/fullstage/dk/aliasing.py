@@ -106,16 +106,20 @@ CI_TONES_44100 = {
 }
 
 
+LIMITS_BY_RATE = {48000: LIMIT_DBC, 44100: LIMIT_DBC_44100}
+CI_TONES_BY_RATE = {48000: CI_TONES, 44100: CI_TONES_44100}
+
+
 def limits_for_rate(fs=FS):
     """44.1 kHz FIR budget; otherwise retain the original 48 kHz acceptance budget (#74)."""
-    return LIMIT_DBC_44100 if fs == 44100 else LIMIT_DBC
+    return LIMITS_BY_RATE.get(fs, LIMIT_DBC)
 
 
 def ci_tones_for_rate(fs=FS):
     """Only rates with measured, full-sweep-verified CI coverage have a lean subset."""
-    if fs not in (44100, FS):
+    if fs not in CI_TONES_BY_RATE:
         raise ValueError(f"no verified CI subset at {fs} Hz")
-    return CI_TONES_44100 if fs == 44100 else CI_TONES
+    return CI_TONES_BY_RATE[fs]
 
 
 def collision_order(m, n, mask=MASK_BINS):

@@ -95,7 +95,8 @@ def build_variant(scratch, name):
     (folder / "dk_core.h").write_text(header)
     exes = {}
     for harness, flags in (("test_core", ("-O2",)), ("bench", ("-O3",))):
-        src = (ROOT / f"cpp/{harness}.cpp").read_text()
+        src = subprocess.check_output(["git", "show", f"bb588c4:prototypes/fullstage/cpp/{harness}.cpp"],
+                                      text=True)
         if harness == "bench":
             src = replace_once(src, "static constexpr double FS = 48000.0;", "static constexpr double FS = 44100.0;")
             if name == "prewarp20k":
@@ -122,9 +123,11 @@ def run_measurements(name, exes):
     VC.EXE = exes["test_core"]
     saved_stage, saved_fir = AL.Stage, RS.FIR_FIRST
     saved_44100 = getattr(RS, "FIR_FIRST_44100", None)
+    saved_rule = RS.first_fir_taps
     AL.Stage = ExperimentStage
     RS.FIR_FIRST = (231 if name == "fir231" else 127, 9.0)
     RS.FIR_FIRST_44100 = RS.FIR_FIRST
+    RS.first_fir_taps = lambda fs: RS.FIR_FIRST[0] if fs == 44100 else saved_rule(fs)
     records = []
     try:
         for q in ("hq", "standard", "eco"):
@@ -157,6 +160,7 @@ def run_measurements(name, exes):
                     latency=latency, time_domain_ac_20k=ac)
     finally:
         AL.Stage, RS.FIR_FIRST = saved_stage, saved_fir
+        RS.first_fir_taps = saved_rule
         if saved_44100 is not None:
             RS.FIR_FIRST_44100 = saved_44100
 

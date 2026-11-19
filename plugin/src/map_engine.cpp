@@ -21,23 +21,15 @@ dkcore::Quality Engine::core_quality(int q) {
 }
 
 int Engine::latency_for(int q, double sample_rate) {
-    // #96: the first FIR is longer at 44.1 kHz. Derive both tables from the core, once in the constructor.
-    auto latency = [](int quality, double fs) {
-        dkcore::Resampler r; r.prepare(core_quality(quality).os, fs); return r.latency_samples();
-    };
-    static const int table[2][kNumQualities] = {
-        {latency(kEco, 48000.0), latency(kStandard, 48000.0), latency(kHQ, 48000.0)},
-        {latency(kEco, 44100.0), latency(kStandard, 44100.0), latency(kHQ, 44100.0)},
-    };
-    return table[sample_rate == 44100.0 ? 1 : 0][clamp_quality(q)];
+    return dkcore::fir_geometry(core_quality(q).os, sample_rate).latency_samples;
 }
 
 Engine::Engine() {
     slot_[0] = std::make_unique<dkcore::StereoStage>();
     slot_[1] = std::make_unique<dkcore::StereoStage>();
     for (auto& s : slot_) s->set_bias_range(kBiasRange.min, kBiasRange.max);   // the bias line (#73), per prepare
-    (void)latency_for(kQualityDefault);                 // build the table here, not on the audio thread
-    active_latency_.store(latency_for(kQualityDefault), std::memory_order_relaxed);
+    for (int q = 0; q < kNumQualities; ++q) target_latency_[q].store(latency_for(q, 48000.0));
+    active_latency_.store(latency_samples(), std::memory_order_relaxed);
 }
 
 Engine::~Engine() { release(); }
@@ -47,7 +39,8 @@ bool Engine::prepare(double sample_rate) {
     prepared_.store(false, std::memory_order_relaxed);
     if (!(sample_rate > 0.0) || !std::isfinite(sample_rate)) return false;
     fs_ = sample_rate;
-    latency_fs_.store(sample_rate, std::memory_order_relaxed);
+    for (int q = 0; q < kNumQualities; ++q)
+        target_latency_[q].store(latency_for(q, sample_rate), std::memory_order_relaxed);
     const int q = quality_target();
     double b = bias_t_.load(std::memory_order_relaxed);
     dkcore::BuildStatus st = slot_[0]->prepare(fs_, core_quality(q), b);

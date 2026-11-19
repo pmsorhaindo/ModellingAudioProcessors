@@ -76,7 +76,7 @@ public:
 
     int quality_target() const { return quality_t_.load(std::memory_order_relaxed); }
     // latency of the requested quality (what the host should compensate once the switch is done)
-    int latency_samples() const { return latency_for(quality_target(), latency_fs_.load(std::memory_order_relaxed)); }
+    int latency_samples() const { return target_latency_[quality_target()].load(std::memory_order_relaxed); }
     // latency of the slot the audio thread is running now
     int active_latency_samples() const { return active_latency_.load(std::memory_order_relaxed); }
     int active_quality() const { return active_quality_.load(std::memory_order_relaxed); }
@@ -87,7 +87,7 @@ public:
     // the audio thread last passed to the running stage (clamped to kBiasRange; the stage ramps to it)
     int bias_status() const { return bias_status_.load(std::memory_order_relaxed); }
     double applied_bias() const { return applied_bias_.load(std::memory_order_relaxed); }
-    static int latency_for(int quality, double sample_rate = 48000.0);
+    static int latency_for(int quality, double sample_rate);
     static dkcore::Quality core_quality(int quality);
 
     // ---- audio thread -----------------------------------------------------------------------------------------
@@ -136,7 +136,7 @@ private:
     std::atomic<int> pending_{-1};                      // worker -> audio: slot prepared, switch to it
     std::atomic<int> audio_slot_{0};                    // audio -> worker: the slot the audio thread is using
     std::atomic<int> active_latency_{0}, active_quality_{kQualityDefault};
-    std::atomic<double> latency_fs_{48000.0};           // target-latency queries may come from any thread
+    std::atomic<int> target_latency_[kNumQualities]{}; // populated off the audio thread from core geometry
     std::atomic<int> bias_status_{0};
     std::atomic<double> applied_bias_{kBiasRange.def};
     std::atomic<bool> prepared_{false};

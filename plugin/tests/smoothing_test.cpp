@@ -135,7 +135,7 @@ static Vec bias_reference(const std::vector<float>& xf, double drive, double out
     auto* s = new dkcore::Stage;
     s->prepare(FS, q, b0);
     dkcore::Resampler r;
-    r.prepare(q.os);
+    r.prepare(q.os, FS);
     Vec y(NS);
     double u[dkcore::MAX_OS], v[dkcore::MAX_OS], last = b0;
     for (std::size_t i = 0; i < NS; ++i) {
@@ -284,7 +284,7 @@ static Vec drive_internal(const std::vector<float>& xf, double d0, double d1, in
     auto* s = new dkcore::Stage;
     s->prepare(FS, q, 1.0);
     dkcore::Resampler r;
-    r.prepare(q.os);
+    r.prepare(q.os, FS);
     const double D = r.up_delay_internal();
     Vec y(NS);
     double u[dkcore::MAX_OS], v[dkcore::MAX_OS];

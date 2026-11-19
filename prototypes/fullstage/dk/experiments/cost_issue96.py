@@ -22,7 +22,9 @@ DEST = E.ROOT / "dk/results_issue96_cost.json"
 def transfer(name, exe):
     """1 kHz small-signal group delay; circuit + FIR, rather than pretending ADAA adds a pure output delay."""
     saved = RS.FIR_FIRST_44100
+    saved_rule = RS.first_fir_taps
     RS.FIR_FIRST_44100 = (231 if name == "fir231" else 127, 9.0)
+    RS.first_fir_taps = lambda fs: RS.FIR_FIRST_44100[0] if fs == 44100 else saved_rule(fs)
     E.ExperimentStage.variant, VC.EXE = name, exe
     n, n0 = 44100, 11025
     t = np.arange(n+n0+200)/44100
@@ -39,6 +41,7 @@ def transfer(name, exe):
                           nonconverged=st.iteration_stats()["nonconverged"])
     finally:
         RS.FIR_FIRST_44100 = saved
+        RS.first_fir_taps = saved_rule
     return out
 
 
@@ -49,6 +52,8 @@ def quadrature_check(exe):
             json.loads(E.DEST.read_text())["variants"]["adaa8"]["worst"].values()}
     keys |= {(q, d, 19037) for q in ("hq", "standard", "eco") for d in AL.DRIVES}
     saved_stage, saved_fir = AL.Stage, RS.FIR_FIRST_44100
+    saved_rule = RS.first_fir_taps
+    RS.first_fir_taps = lambda fs: 127 if fs == 44100 else saved_rule(fs)
     AL.Stage, RS.FIR_FIRST_44100 = E.ExperimentStage, (127, 9.0)
     E.ExperimentStage.variant, VC.EXE = "adaa16", exe
     records = []
@@ -61,6 +66,7 @@ def quadrature_check(exe):
         return dict(records=records, max_abs_delta_db=max(abs(r["delta_db"]) for r in records))
     finally:
         AL.Stage, RS.FIR_FIRST_44100 = saved_stage, saved_fir
+        RS.first_fir_taps = saved_rule
 
 
 def main():

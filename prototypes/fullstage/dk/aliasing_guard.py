@@ -32,7 +32,14 @@ sys.path.insert(0, os.path.dirname(HERE))
 from dk import aliasing as AL  # noqa: E402 -- after the sys.path setup
 
 BASELINE_JSON = os.path.join(HERE, "aliasing_baseline.json")
-BASELINE_44100_JSON = os.path.join(HERE, "aliasing_baseline_44100.json")
+def baseline_path(fs):
+    """One ratchet per certified rate; preserve the legacy 48 kHz filename."""
+    if fs not in AL.LIMITS_BY_RATE:
+        raise ValueError(f"no aliasing baseline policy at {fs} Hz")
+    return BASELINE_JSON if fs == AL.FS else os.path.join(HERE, f"aliasing_baseline_{fs}.json")
+
+
+BASELINE_44100_JSON = baseline_path(44100)
 TOLERANCE_DB = 1.5
 
 
@@ -161,7 +168,8 @@ def write_baseline(path, measured, reason, fs=AL.FS):
 def main(argv=None):
     ap = argparse.ArgumentParser(description="CI aliasing guard: absolute limits plus a baseline ratchet (#35).")
     ap.add_argument("--workers", type=int, default=os.cpu_count(), help="processes for the subset")
-    ap.add_argument("--fs", type=int, choices=(44100, AL.FS), default=AL.FS, help="host rate (default 48000)")
+    ap.add_argument("--fs", type=int, choices=sorted(AL.LIMITS_BY_RATE), default=AL.FS,
+                    help="host rate (default 48000)")
     ap.add_argument("--baseline", help="baseline JSON (default: separate committed baseline for the selected rate)")
     ap.add_argument("--json", help="write the full results (records, rows) here")
     ap.add_argument("--update-baseline", action="store_true", help="rewrite the baseline from this run")
@@ -173,7 +181,7 @@ def main(argv=None):
         ap.error("--update-baseline needs --reason \"...\" (it is stored in the baseline; also put it in the commit)")
     if a.update_baseline and a.triode_math != "libm":
         ap.error("the baseline is measured with --triode-math libm (what CI runs)")
-    a.baseline = a.baseline or (BASELINE_44100_JSON if a.fs == 44100 else BASELINE_JSON)
+    a.baseline = a.baseline or baseline_path(a.fs)
     base = load_baseline(a.baseline)
     if base["values"] and base.get("method", {}).get("fs_base", AL.FS) != a.fs:
         ap.error("baseline host rate differs from --fs; use a separate baseline file for each rate")

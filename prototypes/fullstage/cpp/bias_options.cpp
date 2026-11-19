@@ -49,7 +49,7 @@ static Vec run_internal(Quality q, double b0, const Vec& x, const std::function<
     Stage* s = new Stage;
     s->prepare(FS, q, b0);
     Resampler r;
-    r.prepare(q.os);
+    r.prepare(q.os, FS);
     Vec y(x.size());
     double u[MAX_OS], v[MAX_OS];
     for (size_t i = 0; i < x.size(); ++i) {
