@@ -1061,15 +1061,30 @@ waveforms (8192 samples, libm/fast × HQ/standard/eco) remain bit-identical. Thi
 not a new full 48 kHz sweep.
 
 The original **18-point 48 kHz FIR/IIR guard and baseline are retained**. The same 15-minute CI job runs
-`--fs 44100` with **9 FIR points**, the chosen limits, and independent `aliasing_baseline_44100.json`
+`--fs 44100` with **11 FIR points**, the chosen limits, and independent `aliasing_baseline_44100.json`
 with the unchanged 1.5 dB ratchet. The 44.1 kHz step now uses `if: success() || failure()` (C7), so a
 48 kHz failure still produces both rate reports; cancellation still skips the step.
 
 | quality | 2 V CI tones Hz | 8 V CI tones Hz |
 |---|---|---|
-| hq | 8037 | 10037, 19037 |
-| standard | 8037 | 10037, 16037 |
+| hq | 8037, 19037 | 10037, 19037 |
+| standard | 8037, 19037 | 10037, 16037 |
 | eco | 13037 | 10037, 18037 |
+
+N1 re-review retains 19037 Hz as well as the worst 8037 Hz in both 2 V rows to protect the near-Nyquist
+region independently. Fresh Python measurements use unchanged 215/23 taps, factors, limits and libm:
+full 0.25 s / 1 s buffers in `results_issue96_regions.json`, and short 0.2 s / 0.1 s buffers in
+`results_issue96_guard_44100.json`. Short tones land at 8040 / 19040 Hz after the coherent-bin safeguard.
+
+| quality / 2 V tone Hz | full dBc | full margin dB | short dBc | short margin dB |
+|---|---|---|---|---|
+| hq / 8037 | -122.48710 | 4.28710 | -121.93416 | 3.73416 |
+| hq / 19037 | -123.23064 | 5.03064 | -123.44120 | 5.24120 |
+| standard / 8037 | -121.70139 | 3.40139 | -121.22442 | 2.92442 |
+| standard / 19037 | -123.27340 | 4.97340 | -123.47123 | 5.17123 |
+
+The baseline retains the existing worst-per-setting ratchet format; its 2 V tone lists now contain both
+points. All 11 measured records, including the 19037 Hz values, are committed with the guard result.
 
 The entire short grid (0.2 s settling / 0.1 s analysis) confirms the subset covers **every full and short
 worst tone** with 215 taps. Short-buffer worst totals are −121.93416 / −64.59071 / −121.22442 / −47.42561 /
@@ -1080,8 +1095,8 @@ Mid-band 10037 Hz points at 8 V remain. Coverage tests examine all committed rec
 guard independently measures its actual short-buffer subset and baseline.
 
 The 44.1 kHz baseline is intentionally updated with `--fs 44100 --update-baseline --reason`:
-“Select 215 first-stage taps from the full 27-length sweep with 3 dB nominal headroom; retain original HQ/8V
-and eco/8V limits, cover 8037 Hz, and leave 48 kHz unchanged”. The 48 kHz baseline is not refreshed.
+“Add 19037 Hz beside 8037 Hz for HQ and standard 2 V near-Nyquist coverage; retain 215 taps and all existing
+limits; 48 kHz unchanged”. The 48 kHz baseline is not refreshed.
 A baseline from another host rate is refused before measuring.
 
 ### Shared geometry, storage and host reporting (C3–C5, C8–C9)
@@ -1163,9 +1178,9 @@ TSan, rate/geometry parity, all affected Python suites and the short functional 
 The separate pure-refactor check passed 18 bit-identical waveforms; the shipped check passed six unchanged
 48 kHz waveforms, both 114-point full sweeps, the complete short grid, reference and rest criteria.
 
-Both Python guards pass every limit and ratchet row: **14.60 s at 48 kHz** (18 points), **8.64 s at 44.1 kHz**
-(9 points), serially on this M1, recorded in `results_issue96_guard_{48000,44100}.json`.
-Their 23.24 s local total is not a hosted-runner timing claim. CI keeps its 15-minute timeout and adds no
+Both Python guards pass every limit and ratchet row: **29.75 s at 48 kHz** (18 points), **19.13 s at 44.1 kHz**
+(11 points), serially on this M1, recorded in `results_issue96_guard_{48000,44100}.json`.
+Their 48.88 s local total is not a hosted-runner timing claim. CI keeps its 15-minute timeout and adds no
 full sweep, C++ build or benchmark to the aliasing job. The #95 JSONs, 48 kHz limits/tones, `MARGIN_DB`,
 64× ground truth and `aliasing_baseline.json` are unchanged.
 

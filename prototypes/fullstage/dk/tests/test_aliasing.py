@@ -103,3 +103,9 @@ def test_44100_full_and_short_sweep_worst_tones_are_in_ci_subset():
         A.check_limits([dict(fs_base=44100), dict(fs_base=48000)])
     with pytest.raises(ValueError, match="FIR only"):
         A.check_limits([dict(fs_base=44100, setting="hq", filt="iir")])
+
+
+def test_44100_ci_protects_both_floor_regions_at_2v():
+    # 8037 is worst with 215 taps; 19037 guards an independently vulnerable near-Nyquist region (N1).
+    for q in ("hq", "standard"):
+        assert {8037, 19037} <= set(A.CI_TONES_44100[(q, "fir")][2.0])

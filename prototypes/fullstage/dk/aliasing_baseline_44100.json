@@ -1,14 +1,15 @@
 {
- "reason": "Select 215 first-stage taps from the full 27-length sweep with 3 dB nominal headroom; retain original HQ/8V and eco/8V limits, cover 8037 Hz, and leave 48 kHz unchanged",
+ "reason": "Add 19037 Hz beside 8037 Hz for HQ and standard 2 V near-Nyquist coverage; retain 215 taps and all existing limits; 48 kHz unchanged",
  "updated": "2026-11-19",
- "git_rev": "9c214de",
+ "git_rev": "6156725",
  "tolerance_db": 1.5,
  "method": {
   "fs_base": 44100,
   "tones": {
    "hq/fir": {
     "2V": [
-     8037
+     8037,
+     19037
     ],
     "8V": [
      10037,
@@ -17,7 +18,8 @@
    },
    "standard/fir": {
     "2V": [
-     8037
+     8037,
+     19037
     ],
     "8V": [
      10037,
@@ -48,7 +50,8 @@
    "tone": 8037,
    "f_hz": 8040.0,
    "tones": [
-    8037
+    8037,
+    19037
    ]
   },
   "hq/fir/8V": {
@@ -65,7 +68,8 @@
    "tone": 8037,
    "f_hz": 8040.0,
    "tones": [
-    8037
+    8037,
+    19037
    ]
   },
   "standard/fir/8V": {
