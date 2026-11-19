@@ -344,3 +344,37 @@ def test_fir_rate_rule_and_geometry_match_python():
         rs = Resampler(fs, os_)
         assert row == dict(first_taps=first_fir_taps(fs), latency=rs.latency_samples, pad=rs.pad,
                            up_delay=rs.up_delay_internal, macs=rs.macs()[0])
+
+
+def test_first_fir_capacity_tracks_longest_registry_entry(tmp_path):
+    """A future rate longer than 215 must resize the actual first-stage buffers at compile time."""
+    _exe()  # apply the suite's missing-compiler policy
+    with open(os.path.join(ROOT, "cpp", "dk_core.h")) as f:
+        header = f.read()
+    start = header.index("inline constexpr FirRate FIRST_FIR_BY_RATE[]")
+    end = header.index(";", start) + 1
+    registry = ("inline constexpr FirRate FIRST_FIR_BY_RATE[] = "
+                "{{44100.0, FIR_FIRST_44100_TAPS}, {50000.0, 319}, {51000.0, 231}};")
+    header = header[:start] + registry + header[end:]
+    header = header.replace('#include "../dk/fastmath.h"', f'#include "{ROOT}/dk/fastmath.h"')
+    (tmp_path / "dk_core.h").write_text(header)
+    source = tmp_path / "capacity.cpp"
+    source.write_text('''#include "dk_core.h"
+using namespace dkcore;
+static_assert(FIR_MAX_TAPS == 319, "capacity must cover the longest entry, not the first or last");
+constexpr FirRate smaller[] = {{22050.0, 23}};
+static_assert(max_first_fir_taps(smaller) == FIR_FIRST_TAPS, "capacity must include the fallback");
+int main() {
+    Resampler r;
+    if (!r.prepare(8, 50000.0) || r.ntaps(0) != 319) return 1;
+    double hi[MAX_OS];
+    for (int i = 0; i < 256; ++i) {
+        r.up(0.1, hi);
+        if (!std::isfinite(r.down(hi))) return 2;
+    }
+}
+''')
+    exe = tmp_path / "capacity"
+    subprocess.run([VC.compiler(), *VC.CXXFLAGS, "-O2", str(source), "-o", str(exe)],
+                   check=True, capture_output=True, text=True)
+    subprocess.run([str(exe)], check=True, capture_output=True)

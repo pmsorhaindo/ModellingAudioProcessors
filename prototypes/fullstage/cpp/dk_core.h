@@ -51,6 +51,7 @@
 #define DK_CORE_H
 
 #include <atomic>
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -110,12 +111,18 @@ inline constexpr int MAX_OS = 16;                       // fixed buffers: os = 2
 
 inline constexpr int FIR_FIRST_TAPS = 127, FIR_LATER_TAPS = 23;   // resample.FIR_FIRST / FIR_LATER, Kaiser beta 9
 inline constexpr int FIR_FIRST_44100_TAPS = 215;         // resample.FIR_FIRST_44100 (#96); other rates unchanged
-inline constexpr int FIR_MAX_TAPS = FIR_FIRST_44100_TAPS;
 inline constexpr double FIR_BETA = 9.0;
 
 // Validated exceptions only. Unmeasured rates retain the historical geometry, without an aliasing claim.
 struct FirRate { double fs; int taps; };
 inline constexpr FirRate FIRST_FIR_BY_RATE[] = {{44100.0, FIR_FIRST_44100_TAPS}};
+template <std::size_t N> constexpr int max_first_fir_taps(const FirRate (&rates)[N]) {
+    int taps = FIR_FIRST_TAPS;
+    for (const auto& row : rates) if (row.taps > taps) taps = row.taps;
+    return taps;
+}
+// Size the first filter from every registered geometry, including the unlisted-rate fallback.
+inline constexpr int FIR_MAX_TAPS = max_first_fir_taps(FIRST_FIR_BY_RATE);
 constexpr int first_fir_taps(double fs) {
     for (const auto& row : FIRST_FIR_BY_RATE) if (fs == row.fs) return row.taps;
     return FIR_FIRST_TAPS;
@@ -1043,6 +1050,7 @@ template <int N, class T> struct FirHalfBand {
     int nt = 0;
     Fir<BR, T> upe, upo, dne, dno;
     void prepare(int taps) {
+        assert(taps >= 3 && taps <= N && taps % 2 == 1);
         nt = taps;
         double e[BR], o[BR];
         firwin_halfband(nt, FIR_BETA, h);
