@@ -51,6 +51,7 @@
 #define DK_CORE_H
 
 #include <atomic>
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -109,7 +110,37 @@ inline constexpr Quality HQ{16, 0.0}, STANDARD{8, 0.0}, ECO{4, 17300.0};   // st
 inline constexpr int MAX_OS = 16;                       // fixed buffers: os = 2, 4, 8 or 16
 
 inline constexpr int FIR_FIRST_TAPS = 127, FIR_LATER_TAPS = 23;   // resample.FIR_FIRST / FIR_LATER, Kaiser beta 9
+inline constexpr int FIR_FIRST_44100_TAPS = 215;         // resample.FIR_FIRST_44100 (#96); other rates unchanged
 inline constexpr double FIR_BETA = 9.0;
+
+// Validated exceptions only. Unmeasured rates retain the historical geometry, without an aliasing claim.
+struct FirRate { double fs; int taps; };
+inline constexpr FirRate FIRST_FIR_BY_RATE[] = {{44100.0, FIR_FIRST_44100_TAPS}};
+template <std::size_t N> constexpr int max_first_fir_taps(const FirRate (&rates)[N]) {
+    int taps = FIR_FIRST_TAPS;
+    for (const auto& row : rates) if (row.taps > taps) taps = row.taps;
+    return taps;
+}
+// Size the first filter from every registered geometry, including the unlisted-rate fallback.
+inline constexpr int FIR_MAX_TAPS = max_first_fir_taps(FIRST_FIR_BY_RATE);
+constexpr int first_fir_taps(double fs) {
+    for (const auto& row : FIRST_FIR_BY_RATE) if (fs == row.fs) return row.taps;
+    return FIR_FIRST_TAPS;
+}
+struct FirGeometry { int stages = 0, pad = 0, latency_samples = 0, up_delay_internal = 0; };
+constexpr FirGeometry fir_geometry(int os, double fs) {
+    if (!(fs > 0.0 && fs < INFINITY) || os < 2 || os > MAX_OS) return {};
+    int n = 0;
+    while ((1 << n) < os) ++n;
+    if ((1 << n) != os) return {};
+    int d = 0;
+    for (int i = 0; i < n; ++i) {
+        const int nt = i == 0 ? first_fir_taps(fs) : FIR_LATER_TAPS;
+        d += (nt - 1) * os / (1 << (i + 1));
+    }
+    const int pad = ((-d) % os + os) % os;
+    return {n, pad, (d + pad) / os, d / 2};
+}
 
 // node order of circuit.NODES: src in1 gl g k a out ht
 enum Node { SRC, IN1, GL, GRID, CATH, ANODE, OUT, HTN, NNODES };
@@ -1012,38 +1043,48 @@ template <int N, class T = double> struct Fir {
     }
 };
 
-/* Streaming os-times up -> (stage at os*fs) -> down, as dk/resample.Resampler(fs, os, "fir"): a cascade of 2x
- * linear-phase half-band FIR stages (stage 0 next to the base rate: 127 taps, later ones 23), polyphase branches,
- * a pad delay so the latency is a whole number of base samples. up() starts from zero history; the first down()
- * after reset() primes the decimator with its first sample (the operating-point value). T: as for Fir. */
+// Each half-band owns only its required capacity; stage 0 is the long, rate-selected filter.
+template <int N, class T> struct FirHalfBand {
+    static constexpr int BR = (N + 1) / 2 + 1;
+    double h[N]{};
+    int nt = 0;
+    Fir<BR, T> upe, upo, dne, dno;
+    void prepare(int taps) {
+        assert(taps >= 3 && taps <= N && taps % 2 == 1);
+        nt = taps;
+        double e[BR], o[BR];
+        firwin_halfband(nt, FIR_BETA, h);
+        const int ne = (nt + 1) / 2, no = nt / 2;
+        for (int k = 0; k < ne; ++k) e[k] = 2.0 * h[2 * k];
+        for (int k = 0; k < no; ++k) o[k] = 2.0 * h[2 * k + 1];
+        upe.set(e, ne); upo.set(o, no);
+        for (int k = 0; k < ne; ++k) e[k] = h[2 * k];
+        o[0] = 0.0;
+        for (int k = 0; k < no; ++k) o[k + 1] = h[2 * k + 1];
+        dne.set(e, ne); dno.set(o, no + 1);
+    }
+    void reset() { upe.clear(); upo.clear(); dne.clear(); dno.clear(); }
+    T prime(T c) { return dne.prime(c) + dno.prime(c); }
+    void up(const T* x, T* y, int n) {
+        for (int j = 0; j < n; ++j) { const T v = x[j]; y[2*j] = upe.tick(v); y[2*j+1] = upo.tick(v); }
+    }
+    void down(const T* x, T* y, int n) {
+        for (int j = 0; j < n; ++j) y[j] = dne.tick(x[2*j]) + dno.tick(x[2*j+1]);
+    }
+};
+
+/* Streaming FIR cascade, same arithmetic/order as dk.resample. Geometry comes from fir_geometry().
+ * Fixed first/later capacities, no allocation or virtual dispatch; prepare designs coefficients off the audio thread.
+ * up starts at zero; the first down after reset primes the decimator from its first sample (the DC point). */
 template <class T> class ResamplerT {
 public:
-    static constexpr int BR = (FIR_FIRST_TAPS + 1) / 2 + 1;     // branch taps: 64, +1 for the down odd branch
-
-    bool prepare(int os) {
-        int n = 0;
-        while ((1 << n) < os) ++n;
-        if ((1 << n) != os || n < 1 || os > MAX_OS) return false;
-        os_ = os; nst_ = n;
-        int d_int = 0;
-        for (int i = 0; i < n; ++i) {
-            const int nt = i == 0 ? FIR_FIRST_TAPS : FIR_LATER_TAPS;
-            double h[FIR_FIRST_TAPS], e[BR], o[BR];
-            firwin_halfband(nt, FIR_BETA, h);
-            std::memcpy(taps_[i], h, sizeof(double) * nt); ntaps_[i] = nt;
-            const int ne = (nt + 1) / 2, no = nt / 2;
-            for (int k = 0; k < ne; ++k) e[k] = 2.0 * h[2 * k];
-            for (int k = 0; k < no; ++k) o[k] = 2.0 * h[2 * k + 1];
-            upe_[i].set(e, ne); upo_[i].set(o, no);
-            for (int k = 0; k < ne; ++k) e[k] = h[2 * k];
-            o[0] = 0.0;                                             // odd branch is one low-rate sample late
-            for (int k = 0; k < no; ++k) o[k + 1] = h[2 * k + 1];
-            dne_[i].set(e, ne); dno_[i].set(o, no + 1);
-            d_int += 2 * ((nt - 1) / 2) * os / (1 << (i + 1));
-        }
-        pad_ = ((-d_int) % os + os) % os;                           // extra internal-rate delay -> whole base samples
-        latency_ = (d_int + pad_) / os;
-        up_delay_ = d_int / 2;
+    bool prepare(int os, double fs_base) {
+        const auto g = fir_geometry(os, fs_base);
+        if (!g.stages) return false;
+        os_ = os; nst_ = g.stages;
+        first_.prepare(first_fir_taps(fs_base));
+        for (int i = 1; i < nst_; ++i) later_[i-1].prepare(FIR_LATER_TAPS);
+        pad_ = g.pad; latency_ = g.latency_samples; up_delay_ = g.up_delay_internal;
         double pd[MAX_OS + 1] = {};
         pd[pad_] = 1.0;
         delay_.set(pd, pad_ + 1);
@@ -1051,45 +1092,42 @@ public:
         return true;
     }
     void reset() {
-        for (int i = 0; i < nst_; ++i) { upe_[i].clear(); upo_[i].clear(); dne_[i].clear(); dno_[i].clear(); }
-        delay_.clear();
-        primed_ = false;
+        first_.reset();
+        for (int i = 1; i < nst_; ++i) later_[i-1].reset();
+        delay_.clear(); primed_ = false;
     }
     int os() const { return os_; }
-    int latency_samples() const { return latency_; }        // base-rate delay of up -> down (exact for fir)
-    int up_delay_internal() const { return up_delay_; }     // interpolator delay, internal-rate samples
+    int latency_samples() const { return latency_; }
+    int up_delay_internal() const { return up_delay_; }
     int pad() const { return pad_; }
-    const double* taps(int stage) const { return taps_[stage]; }
-    int ntaps(int stage) const { return ntaps_[stage]; }
-    int macs() const {                                       // non-zero multiplies per base sample, each way
+    const double* taps(int stage) const { return stage == 0 ? first_.h : later_[stage-1].h; }
+    int ntaps(int stage) const { return stage == 0 ? first_.nt : later_[stage-1].nt; }
+    int macs() const {
         int s = 0;
         for (int i = 0; i < nst_; ++i) {
             int nz = 0;
-            for (int k = 0; k < ntaps_[i]; ++k) nz += std::fabs(taps_[i][k]) > 1e-15;
+            for (int k = 0; k < ntaps(i); ++k) nz += std::fabs(taps(i)[k]) > 1e-15;
             s += nz << i;
         }
         return s;
     }
-
-    // one base-rate sample in, os internal-rate samples out
     void up(T x, T* y) {
         T a[MAX_OS], b[MAX_OS];
         a[0] = x;
         int len = 1;
         T* cur = a; T* nxt = b;
         for (int i = 0; i < nst_; ++i) {
-            for (int j = 0; j < len; ++j) { const T v = cur[j]; nxt[2 * j] = upe_[i].tick(v); nxt[2 * j + 1] = upo_[i].tick(v); }
+            if (i == 0) first_.up(cur, nxt, len); else later_[i-1].up(cur, nxt, len);
             len *= 2;
             T* t = cur; cur = nxt; nxt = t;
         }
         std::memcpy(y, cur, sizeof(T) * os_);
     }
-    // os internal-rate samples in, one base-rate sample out
     T down(const T* y) {
         T a[MAX_OS], b[MAX_OS];
         if (!primed_) {
             T c = delay_.prime(y[0]);
-            for (int i = nst_ - 1; i >= 0; --i) c = dne_[i].prime(c) + dno_[i].prime(c);
+            for (int i = nst_ - 1; i >= 0; --i) c = i == 0 ? first_.prime(c) : later_[i-1].prime(c);
             primed_ = true;
         }
         for (int j = 0; j < os_; ++j) a[j] = pad_ ? delay_.tick(y[j]) : y[j];
@@ -1097,17 +1135,15 @@ public:
         T* cur = a; T* nxt = b;
         for (int i = nst_ - 1; i >= 0; --i) {
             len /= 2;
-            for (int j = 0; j < len; ++j) nxt[j] = dne_[i].tick(cur[2 * j]) + dno_[i].tick(cur[2 * j + 1]);
+            if (i == 0) first_.down(cur, nxt, len); else later_[i-1].down(cur, nxt, len);
             T* t = cur; cur = nxt; nxt = t;
         }
         return cur[0];
     }
-
 private:
     int os_ = 0, nst_ = 0, pad_ = 0, latency_ = 0, up_delay_ = 0;
-    double taps_[4][FIR_FIRST_TAPS] = {};
-    int ntaps_[4] = {};
-    Fir<BR, T> upe_[4], upo_[4], dne_[4], dno_[4];
+    FirHalfBand<FIR_MAX_TAPS, T> first_;
+    FirHalfBand<FIR_LATER_TAPS, T> later_[3];
     Fir<MAX_OS + 1, T> delay_;
     bool primed_ = false;
 };
@@ -1375,7 +1411,7 @@ public:
                         const Newton& nw = Newton{}, const TriodeParams& par = DZ_12AX7_RSD1) {
         std::lock_guard<std::mutex> lk(producer_);
         prepared_ = false;
-        if (!(fs_base > 0.0) || !rs_.prepare(q.os)) return BuildStatus::bad_argument;
+        if (!(fs_base > 0.0) || !rs_.prepare(q.os, fs_base)) return BuildStatus::bad_argument;
         const BuildStatus st = install_locked(fs_base, q, bias, math, nw, par);
         if (st == BuildStatus::ok) reset();
         return st;
@@ -1534,7 +1570,7 @@ public:
                         const Newton& nw = Newton{}, const TriodeParams& par = DZ_12AX7_RSD1) {
         std::lock_guard<std::mutex> lk(producer_);
         prepared_ = false;
-        if (!(fs_base > 0.0) || !rs_.prepare(q.os)) return BuildStatus::bad_argument;
+        if (!(fs_base > 0.0) || !rs_.prepare(q.os, fs_base)) return BuildStatus::bad_argument;
         const BuildStatus st = install_locked(fs_base, q, bias, math, nw, par);
         if (st == BuildStatus::ok) reset();
         return st;

@@ -95,8 +95,9 @@ jobs:
         run: plugin/tests/run_checks.sh plugin/build --au
 
   # Blocking aliasing guard (#35): the lean aliasing subset for every setting x filter at 2 V and 8 V, against
-  # the absolute limits (dk/aliasing.py LIMIT_DBC) and the committed baseline ratchet (dk/aliasing_baseline.json,
-  # 1.5 dB tolerance). To change the baseline on purpose: python -m dk.aliasing_guard --update-baseline --reason "..."
+  # the absolute limits (dk/aliasing.py LIMIT_DBC) and each tone's own committed baseline (separate rate files,
+  # per-tone format version 2, unchanged 1.5 dB tolerance). To update intentionally:
+  # python -m dk.aliasing_guard --update-baseline --reason "..."
   aliasing:
     name: aliasing
     runs-on: ubuntu-latest
@@ -115,12 +116,18 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Aliasing guard (limits + baseline ratchet)
         run: python -m dk.aliasing_guard --workers "$(nproc)" --json aliasing_guard_results.json
+      # #96: 11 FIR points, verified against full/short 44.1 kHz sweeps. Separate baseline; retain 48 kHz above.
+      - name: Aliasing guard at 44.1 kHz (FIR limits + baseline ratchet)
+        if: success() || failure()
+        run: python -m dk.aliasing_guard --fs 44100 --workers "$(nproc)" --json aliasing_guard_44100_results.json
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: aliasing-guard-results
-          path: prototypes/fullstage/aliasing_guard_results.json
+          path: |
+            prototypes/fullstage/aliasing_guard_results.json
+            prototypes/fullstage/aliasing_guard_44100_results.json
           if-no-files-found: warn
 
   # Blocking lint (#87). Settings (line length 120, select E and F) are in ruff.toml at the repo root, shared with

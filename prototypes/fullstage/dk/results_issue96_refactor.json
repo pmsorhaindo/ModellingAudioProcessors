@@ -1,0 +1,143 @@
+{
+ "method": "Apple M1, clang -O2; pre-review 29c4153 vs pure refactor, 8192 samples, 18 waveforms",
+ "waveforms": [
+  {
+   "fs": 44100,
+   "quality": "hq",
+   "math": "libm",
+   "bit_equal": true,
+   "max_diff": 0.0
+  },
+  {
+   "fs": 44100,
+   "quality": "hq",
+   "math": "fast",
+   "bit_equal": true,
+   "max_diff": 0.0
+  },
+  {
+   "fs": 44100,
+   "quality": "standard",
+   "math": "libm",
+   "bit_equal": true,
+   "max_diff": 0.0
+  },
+  {
+   "fs": 44100,
+   "quality": "standard",
+   "math": "fast",
+   "bit_equal": true,
+   "max_diff": 0.0
+  },
+  {
+   "fs": 44100,
+   "quality": "eco",
+   "math": "libm",
+   "bit_equal": true,
+   "max_diff": 0.0
+  },
+  {
+   "fs": 44100,
+   "quality": "eco",
+   "math": "fast",
+   "bit_equal": true,
+   "max_diff": 0.0
+  },
+  {
+   "fs": 48000,
+   "quality": "hq",
+   "math": "libm",
+   "bit_equal": true,
+   "max_diff": 0.0
+  },
+  {
+   "fs": 48000,
+   "quality": "hq",
+   "math": "fast",
+   "bit_equal": true,
+   "max_diff": 0.0
+  },
+  {
+   "fs": 48000,
+   "quality": "standard",
+   "math": "libm",
+   "bit_equal": true,
+   "max_diff": 0.0
+  },
+  {
+   "fs": 48000,
+   "quality": "standard",
+   "math": "fast",
+   "bit_equal": true,
+   "max_diff": 0.0
+  },
+  {
+   "fs": 48000,
+   "quality": "eco",
+   "math": "libm",
+   "bit_equal": true,
+   "max_diff": 0.0
+  },
+  {
+   "fs": 48000,
+   "quality": "eco",
+   "math": "fast",
+   "bit_equal": true,
+   "max_diff": 0.0
+  },
+  {
+   "fs": 96000,
+   "quality": "hq",
+   "math": "libm",
+   "bit_equal": true,
+   "max_diff": 0.0
+  },
+  {
+   "fs": 96000,
+   "quality": "hq",
+   "math": "fast",
+   "bit_equal": true,
+   "max_diff": 0.0
+  },
+  {
+   "fs": 96000,
+   "quality": "standard",
+   "math": "libm",
+   "bit_equal": true,
+   "max_diff": 0.0
+  },
+  {
+   "fs": 96000,
+   "quality": "standard",
+   "math": "fast",
+   "bit_equal": true,
+   "max_diff": 0.0
+  },
+  {
+   "fs": 96000,
+   "quality": "eco",
+   "math": "libm",
+   "bit_equal": true,
+   "max_diff": 0.0
+  },
+  {
+   "fs": 96000,
+   "quality": "eco",
+   "math": "fast",
+   "bit_equal": true,
+   "max_diff": 0.0
+  }
+ ],
+ "sizeof_bytes": {
+  "before": {
+   "Resampler": 37936,
+   "Stage": 49120,
+   "StereoStage": 80320
+  },
+  "after": {
+   "Resampler": 12992,
+   "Stage": 24176,
+   "StereoStage": 35408
+  }
+ }
+}

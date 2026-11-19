@@ -203,13 +203,15 @@ pytest keeps just the metric, limit-coverage and ground-truth unit tests.
 ### CI guard and baseline ratchet (#35)
 `dk/aliasing_guard.py`, run by the blocking `aliasing` CI job (separate from `test`). It runs the lean subset
 (`CI_TONES`, `CI_SETTLE_S` / `CI_WINDOW_S`: 18 points, 12 setting / filter / drive combinations) in parallel
-processes, and fails if any combination
+processes, and checks every setting × requested tone separately. It fails if any point
+
 - reads above its absolute limit (`LIMIT_DBC`, above), or
-- reads more than **1.5 dB** worse than the committed baseline `dk/aliasing_baseline.json`
+- reads more than **1.5 dB** worse than its own recorded value in `dk/aliasing_baseline.json`
   (`aliasing_guard.TOLERANCE_DB`), even under the limit.
 
-Reading more than 1.5 dB better passes, with a note suggesting a baseline update. A combination with no baseline
-entry, or whose CI tones have changed since the baseline, also fails. The job writes the table below to the step
+Reading more than 1.5 dB better passes, with a note suggesting a baseline update. A configured tone with no
+baseline entry or measurement also fails; an actual coherent frequency mismatch
+fails as well. The current job writes one row per tone (18 at 48 kHz, 11 at 44.1 kHz) to the step
 summary (measured, baseline, delta = measured − baseline, limit, margin = limit − measured, status) and uploads the
 full results (every record, the baseline used, the rows) as the `aliasing-guard-results` artifact.
 
@@ -219,7 +221,8 @@ matter. It sits halfway into the ~3 dB margin of every limit, so the ratchet tri
 octave of oversampling costs 14–19 dB at 8 V. A slightly weaker half-band shows directly in the 2 V resampler floor
 (the demo below: +2.2 dB for Kaiser β 9.0 → 8.8 in the first FIR stage).
 
-Baseline (`--update-baseline --reason "Initial baseline (#35): CI subset at 330ee9a"`, delta 0.00 dB everywhere):
+Historical initial baseline (`--update-baseline --reason "Initial baseline (#35): CI subset at 330ee9a"`);
+the table shows each setting's worst point. Current format version 2 stores all tones separately:
 
 | setting / filter / drive | worst CI tone | baseline dBc | limit dBc | margin dB |
 |---|---|---|---|---|
@@ -236,7 +239,8 @@ Baseline (`--update-baseline --reason "Initial baseline (#35): CI subset at 330e
 | eco / IIR / 2 V | 16040 Hz | −75.70 | −72.7 | 3.00 |
 | eco / IIR / 8 V | 19040 Hz | −32.60 | −29.6 | 3.00 |
 
-**Proof by deliberate degradation** (local only, reverted, never committed; `git diff` of `dk/stage.py` and
+**Historical proof by deliberate degradation** (original worst-per-setting guard, local only, reverted, never
+committed; `git diff` of `dk/stage.py` and
 `dk/resample.py` empty afterwards):
 
 | change | result | exit |
@@ -252,8 +256,9 @@ coefficients either way), so the output is bit-identical and the guard correctly
 
 **Updating the baseline** (an intended trade-off, or locking in an improvement):
 `python -m dk.aliasing_guard --update-baseline --reason "..."` reruns the subset and rewrites the baseline with the
-reason, date and git revision. Put the same reason in the commit message. It refuses while any combination is over
-its absolute limit; that needs a deliberate `LIMIT_DBC` change, documented here.
+reason, date and git revision, format version 2 and every measured tone's exact total_dbc/f_hz. Put the same
+reason in the commit message. It refuses when a configured point is missing or over its absolute limit;
+investigate those points before updating.
 
 Cost: 7.8 s wall on 8 cores (54 s CPU). CI runs it with `--workers $(nproc)` (4 on `ubuntu-latest`, so expect
 ~15–20 s plus install). The unit tests of the comparison logic (`dk/tests/test_aliasing_guard.py`, synthetic
@@ -586,6 +591,9 @@ non-transcendental arithmetic and call overhead. No float fast path (not needed 
 
 ## Host sample rates (#74, 18 Nov 2026)
 
+Historical #95 measurements with the original 127-tap first FIR. The #96 report below supersedes the 44.1 kHz
+DSP, acceptance budget and latency. The #95 JSONs are retained unchanged as the before measurements.
+
 The shipped quality policy stays **fixed factor** at every tested host rate: HQ 16× without pre-warp, standard 8×
 without pre-warp, eco 4× with the existing 17,300 Hz small-cap pre-warp. The 48 kHz settings, coefficients and
 output are unchanged. The alternative internal-rate policy was measured separately below; it is not enabled by
@@ -792,3 +800,448 @@ with libm and fast math. `python -m dk.aliasing_guard --workers 8` passes every 
 and baseline ratchet. The multi-rate validators return 1 for the four genuine 44.1 kHz aliasing failures;
 the experimental factor proposal returns 1 for its three documented failures. All numerical suites ran serially.
 Ruff 0.17.3 passes with the unchanged 120-character E/F configuration.
+
+## 44.1 kHz aliasing (#96)
+
+**Recommendation: combine a rate-appropriate internal-folding budget with a longer first FIR.** At 44.1 kHz,
+ship 215 / 23 taps (first / later stages, Kaiser β 9), keep HQ / standard / eco at 16× / 8× / 4× and keep eco's
+17.3 kHz pre-warp. Preserve the existing HQ/standard 2 V limits: the FIR addresses those resampler-floor misses.
+Use the independently derived octave-headroom limits below for standard/8 V and eco/2 V; retain the original
+limits for HQ/8 V and eco/8 V, which already passed before the DSP change. This accepts a measured rate
+trade-off; it does **not** claim to meet every original 48 kHz aliasing limit or establish inaudibility. No 48 kHz
+limit, factor, coefficient or delay is changed. Both rate baselines now use the shared per-tone ratchet.
+The #95 recommendation against halving factors
+at higher host rates still stands; #74's broader rate-policy work is not settled by this change.
+
+### Method and baseline confirmation
+
+`dk/experiments/issue96.py` generates isolated C++ research headers from the exact #95 core (`bb588c4`), then
+uses the existing `cpp/test_core.cpp` CLI and `dk.aliasing.measure` metric. It measures the original design,
+a 231-tap first FIR, eco pre-warp at 20 kHz, and a first-order ADAA prototype. All points are **44,100 Hz,
+FIR / libm / double / mono**, Drive = Bias = Output = 1, sine peak 2 / 8 V, the complete 19-tone offset grid
+1037, 2037, …, 19037 Hz. Settling is 0.25 s and analysis 1 s, periodic Hann, ±3-bin harmonic masks,
+20 Hz–20 kHz total non-harmonic energy relative to the fundamental. The coherent-bin/collision-order safeguard
+and extended-input/drop-output latency compensation are unchanged. Each candidate starts from its DC rest point.
+The experimental pre-warp applies only to eco; other qualities are not re-labelled as new measurements.
+
+`results_issue96.json` retains every sweep record, the A calculation and the initial short CPU runs.
+`results_issue96_cost.json` contains the comparative CPU repeats, measured group delay and ADAA quadrature check.
+`results_issue96_shipped.json` separately measures the **actual shipped Python and C++ implementations**, full
+reference validation and full offset sweeps, plus a complete short-buffer C++ grid to verify CI coverage.
+The #95 sample-rate JSONs and 48 kHz 64× ground truth remain unchanged. No 44.1 kHz 64× ground truth was generated.
+Suites ran serially; the shipped Python sweep alone uses independent worker processes within its suite.
+
+The pinned baseline full sweep reproduces the #95 worst values below (both Python and C++ #95 records agree at
+this displayed precision). It confirms the four misses and eco/8 V's tight pass before making any comparison.
+
+| setting | drive V | original 44.1 kHz worst dBc | tone Hz | 48 kHz limit dBc | margin dB |
+|---|---|---|---|---|---|
+| hq | 2 | −112.51 | 19037 | −118.2 | −5.69 |
+| hq | 8 | −64.59 | 19037 | −63.0 | 1.59 |
+| standard | 2 | −112.61 | 19037 | −118.3 | −5.69 |
+| standard | 8 | −47.53 | 16037 | −48.6 | −1.07 |
+| eco | 2 | −68.22 | 13037 | −72.7 | −4.48 |
+| eco | 8 | −29.74 | 18037 | −29.6 | 0.14 |
+
+### A: a headroom budget, with audibility considered and rejected as the acceptance basis
+
+Use an empirical power-law model of alias **energy relative to the fundamental**, calibrated independently of
+44.1 kHz: for each setting/drive, let `W48` and `W96` be the full-sweep worst total dBc already committed in #95
+with fixed factors. Define `s = W48 − W96` dB per octave, equivalent to energy proportional to internal rate
+raised to `−s/(10 log10(2))`. Losing `log2(48000/44100) = 0.122256` octaves then costs
+`Δ = s log2(48000/44100)` dB. Transfer the **existing limit**, including its existing margin, by that Δ and round
+up to 0.1 dB: `L44 = ceil(10 (L48 + Δ)) / 10`. Do not add another 3 dB. This rule predicts acceptance before
+using the 44.1 kHz sweep; it is not a fit of the acceptance line to that sweep's maximum.
+
+| setting | drive V | s dB/octave | predicted Δ dB | pure headroom proposal dBc | original 44.1 margin dB |
+|---|---|---|---|---|---|
+| hq | 2 | 31.7266 | 3.8788 | −114.3 | **−1.79** |
+| hq | 8 | 15.5174 | 1.8971 | −61.1 | 3.49 |
+| standard | 2 | 31.8271 | 3.8911 | −114.4 | **−1.79** |
+| standard | 8 | 14.3287 | 1.7518 | −46.8 | 0.73 |
+| eco | 2 | 55.3200 | 6.7632 | −65.9 | 2.32 |
+| eco | 8 | 19.0897 | 2.3338 | −27.2 | 2.54 |
+
+This is a local engineering budget, not a universal spectral law: harmonic crossings move the worst tone and
+make rate dependence non-smooth. The untouched 88.2 kHz fixed-factor sweep is an intermediate held-out check:
+for the four internal-folding rows (HQ/8 V, standard/8 V, eco/2 V, eco/8 V), measured minus predicted is
+−0.044 / −0.316 / +0.550 / +1.884 dB, within the original approximately 3 dB margin. At 44.1 kHz,
+standard/8 V is 2.42 dB worse than the predicted *measurement*, leaving only 0.73 dB against the transferred
+limit. That uncertainty is explicit; no extra allowance was added to cover it.
+
+**Reject applying this model to the HQ/standard 2 V resampler floor.** Their original 44.1 kHz results fail even
+the pure headroom proposals. The filter transition changes disproportionately when the base Nyquist approaches
+20 kHz; internal-rate scaling alone does not model it. Retain −118.2 / −118.3 dBc there and redesign the FIR.
+For standard/8 V and eco/2 V, choose the headroom proposals as the 44.1 kHz limits. HQ/8 V and eco/8 V
+already passed their original limits in #95: retain −63.0 and −29.6 dBc rather than spending the model's
+allowance unnecessarily (C6). HQ/standard 2 V retain −118.2 / −118.3 dBc. Tests derive the two transferred
+limits from the independent 48/96 kHz records and check the other four against the unchanged original limits.
+This is a selective engineering budget, with only two relaxed rows. Standard/8 V remains a thin-margin case: its
+short-window margin is about 0.63 dB and the empirical model misses about 2.42 dB of its rate effect; no further
+adjustment is made. If that margin later proves insufficient, investigate the model or DSP rather than nudging
+the limit again.
+
+An **audibility-based budget** would require output calibration, playback SPL, alias frequencies, masking by
+the fundamental/harmonics and a stated listening criterion. dBc alone supplies none of those: the same relative
+alias level can correspond to different absolute listening levels. The low-drive HQ/standard floor and the
+strongly driven eco result also cannot share a credible universal audibility threshold. No calibrated listening
+experiment or perceptual reference was measured here, so do not invent an “inaudible” dBc cutoff or substitute
+one for the engineering budget. The headroom argument is reproducible from existing independent measurements;
+the audibility argument is rejected as an acceptance basis with the available evidence.
+
+### B: FIR, pre-warp and ADAA experiments
+
+**FIR design.** The first half-band's protected transition is from 20 kHz to `fs − 20 kHz`: 8 kHz at 48 kHz,
+4.1 kHz at 44.1 kHz. Scale the existing **tap length** inversely with normalised transition width:
+`127 × (8000/96000) / (4100/88200) = 227.6707`; round upward to a half-band length `4m+3`, giving **231 taps**.
+That transition scaling supplied the original 231-tap candidate; it is not a minimum-latency selection.
+
+**C1 review: measure length, do not assume monotonic rejection.** The first-stage length is swept through
+**every half-band length 127, 131, …, 231** (27 lengths). For each, measure both HQ and standard at 2 V over
+the complete 19-tone grid with the full 0.25 s / 1 s buffers: **1,026 actual C++ process records**.
+`experiments/tap_sweep_issue96.py` pins the pre-review core at `29c4153` and varies only that filter length;
+`results_issue96_taps.json` stores all records. The selection rule, declared before the sweep, is the
+**shortest tested length with at least the existing `MARGIN_DB = 3.0` dB headroom against both unchanged
+2 V limits**. This retains the nominal margin used in the original 48 kHz design; it neither adds 3 dB
+to a limit nor claims that 3 dB guarantees all unmeasured tones or platforms.
+
+| first taps | added base samples | minimum HQ/standard 2 V margin dB | full-grid worst tone Hz |
+|---|---|---|---|
+| 127 | 0 | -5.694 | 19037 |
+| 131 | 2 | -1.779 | 18037 |
+| 135 | 4 | 0.628 | 17037 |
+| 139 | 6 | -0.056 | 19037 |
+| 143 | 8 | -3.892 | 19037 |
+| 147 | 10 | -4.817 | 19037 |
+| 151 | 12 | -2.986 | 19037 |
+| 155 | 14 | -0.752 | 8037 |
+| 159 | 16 | 1.908 | 8037 |
+| 163 | 18 | 2.356 | 19037 |
+| 167 | 20 | -1.701 | 19037 |
+| 171 | 22 | -2.540 | 19037 |
+| 175 | 24 | -1.665 | 19037 |
+| 179 | 26 | 0.104 | 8037 |
+| 183 | 28 | 1.915 | 8037 |
+| 187 | 30 | 1.550 | 8037 |
+| 191 | 32 | 0.900 | 19037 |
+| 195 | 34 | -0.831 | 19037 |
+| 199 | 36 | -0.486 | 19037 |
+| 203 | 38 | 1.491 | 19037 |
+| 207 | 40 | 1.725 | 8037 |
+| 211 | 42 | 2.612 | 8037 |
+| 215 | 44 | 3.401 | 8037 |
+| 219 | 46 | 1.081 | 19037 |
+| 223 | 48 | 0.419 | 19037 |
+| 227 | 50 | 1.387 | 19037 |
+| 231 | 52 | 3.785 | 18037 |
+
+The reviewer correctly identified 159 taps' improvement at 19 kHz, but its full-grid worst moves to **8,037 Hz**:
+minimum margin **1.908 dB**, versus **3.785 dB** for 231. 163 taps is a lower-latency trade-off at +18 samples
+and 2.356 dB; 175 fails at −1.665 dB. **215 taps is the shortest meeting the stated 3 dB criterion**, at
+3.401 dB and **+44 samples**, eight samples less than 231. That is the selected margin/latency trade-off,
+not a claim that longer always helps or that 159 fails the absolute limits.
+
+Keep cutoff at half-band, β = 9, and later stages at 23 taps. The original 0.01 dB passband / 85 dB
+image-rejection test is a **nonregression** check (C2): 127 taps also passes it. Peak stopband rejection alone
+does not predict the nonlinear stage's −120 dBc floor. The full stage sweeps above and the actual aliasing CI
+guard discriminate that floor. The FIR cannot remove aliases already folded inside the circuit solver.
+The FIR/pre-warp/ADAA and cost tables below retain the original #95-based **231-tap experiment** as historical
+comparison; the current 215-tap implementation is remeasured in “Shipped measurements” below.
+
+**Pre-warp.** Test 20 kHz, the top of the protected audio band, as an alternative to the existing 17.3 kHz
+minimax compromise. It changes the small-cap companion coefficients without adding per-sample operations or
+buffering. It makes eco aliasing slightly worse. The direct 1 mV / 20 kHz gain error changes from −0.06359 dB
+to +0.00148 dB, but that single-frequency result is not a full-band accuracy claim. #95's independent minimax
+search still favours 17,302 Hz at this internal rate. Retain 17.3 kHz; retuning it does not repair FIR transition
+rejection or substitute for oversampling.
+
+**ADAA applicability and honest prototype.** The stage is an implicit two-port nonlinear feedback system,
+`v = p − K i(v)`, with capacitor history updated from the solved currents. Applying a scalar waveshaper's ADAA
+formula only to the final audio output would not anti-alias this stage. However, the DZ currents decompose into
+two scalar laws: grid current depends on Vgk; cathode current depends on `Vgk + Vak/μ`; plate current is cathode
+minus grid current. A first-order divided difference of each law's antiderivative equals its average along the
+segment from the previous solved port value to the current unknown.
+
+The prototype evaluates that integral by eight-point Gauss–Legendre quadrature, avoiding subtraction of nearby
+antiderivatives of fractional softplus powers. It integrates both currents and the **matching Jacobian**
+`∫ t J(v_previous + t(v − v_previous)) dt`; history stays fixed during every Newton solve and line search.
+DC still uses the original law. This is a changed feedback discretisation, with its own frequency response,
+not a circuit-equivalent drop-in. The research generator changes the mono tick only; no production ADAA or
+stereo ADAA option is exposed. The `currents_only` prototype also evaluates the Jacobian, so its measured cost
+is the cost of this honest prototype, not an optimised lower bound for all ADAA implementations.
+
+Worst full-sweep dBc for every implemented candidate; “—” means the pre-warp candidate does not apply to that
+quality. The two limit columns allow direct comparison with both the original budget and A's pure proposal.
+
+| setting / drive | 48 kHz limit | pure A limit | baseline | FIR 231 | eco pre-warp 20k | ADAA 8-node |
+|---|---|---|---|---|---|---|
+| hq / 2 V | −118.2 | −114.3 | −112.51 | −122.13 | — | −113.00 |
+| hq / 8 V | −63.0 | −61.1 | −64.59 | −64.59 | — | −71.78 |
+| standard / 2 V | −118.3 | −114.4 | −112.61 | −122.09 | — | −113.41 |
+| standard / 8 V | −48.6 | −46.8 | −47.53 | −47.53 | — | −45.74 |
+| eco / 2 V | −72.7 | −65.9 | −68.22 | −68.22 | −67.74 | −72.38 |
+| eco / 8 V | −29.6 | −27.2 | −29.74 | −29.74 | −29.72 | −24.47 |
+
+The longer FIR passes all six chosen limits; it still fails the original standard/8 V and eco/2 V limits.
+Pre-warp 20k leaves both resampler-floor misses and standard/8 V unchanged, and still fails eco/2 V against
+the original budget. ADAA passes only HQ/8 V against the original budget; against the pure A proposal it passes
+HQ/8 V and eco/2 V, while standard/8 V and eco/8 V worsen. In particular, ADAA eco/2 V at −72.38 dBc still
+misses −72.7 dBc. There is no claim of universal ADAA improvement.
+
+ADAA's directly measured 1 mV / 20 kHz errors versus the existing DZ AC reference are **−0.14089 / −0.31350 /
+−0.58280 dB** (HQ / standard / eco), exceeding the unchanged 0.1 dB criterion in every setting. These come from
+actual processed audio; using the old DK matrices' analytical small-signal result for ADAA would be invalid.
+Together with the aliasing regressions and CPU cost, this rejects this ADAA discretisation. More elaborate
+state/integrator compensation or a different ADAA method remains research work, not an unmeasured shipped option.
+
+### Comparative M1 CPU and latency cost
+
+`python -m dk.experiments.cost_issue96` uses the existing `cpp/bench.cpp` signal, block timers, counters and
+round-robin configuration scheduling, with generated headers for each option. Apple M1 (MacBookAir10,1,
+4 P + 4 E cores), macOS 15.6.1, Apple clang 17, project warning flags and **`-O3`**; no fast-math switch.
+Mono/libm, block 64, same quality and 2 / 8 V input peak for baseline and candidate. Each pass processes
+22,016 base samples (0.499229 s), the beginning of the existing Karplus–Strong phrase, with one untimed warm-up
+and **three timed passes**. Repeat three short rounds, forward / reverse / forward candidate order; report the
+median of the three run medians. Runs are serial, on the same machine, without simultaneous numerical suites.
+Raw run ranges, host power/thermal/load state, counters and P-core fractions are committed in
+`results_issue96_cost.json`; the earlier five-pass exploratory timings remain in `results_issue96.json`.
+This is a targeted comparison, not a replacement for the official CPU benchmarks.
+
+Wall ns per base sample; parentheses are candidate / same-quality, same-level baseline:
+
+| quality / input peak | baseline ns | FIR 231 ns (ratio) | pre-warp 20k ns (ratio) | ADAA 8-node ns (ratio) |
+|---|---|---|---|---|
+| hq / 2 V | 5271.3 | 5219.3 (0.990×) | — | 27525.5 (5.222×) |
+| hq / 8 V | 5853.0 | 5866.6 (1.002×) | — | 29232.1 (4.994×) |
+| standard / 2 V | 2881.1 | 2897.6 (1.006×) | — | 14985.6 (5.201×) |
+| standard / 8 V | 3220.6 | 3246.7 (1.008×) | — | 16261.7 (5.049×) |
+| eco / 2 V | 1635.0 | 1662.7 (1.017×) | 1630.9 (0.997×) | 8586.2 (5.251×) |
+| eco / 8 V | 1772.6 | 1795.9 (1.013×) | 1771.6 (0.999×) | 8735.4 (4.928×) |
+
+FIR ratios span 0.990–1.017: small effects relative to run variability, not evidence of an HQ speedup. For
+example HQ/2 V run medians span 5213.9–5360.9 ns baseline and 5190.0–5290.8 ns with the longer FIR. Pre-warp
+has the same runtime operation structure and its measured ratios are approximately 1. ADAA costs 4.93–5.25×
+in this prototype. Every timed configuration was deterministic and had zero counted non-converged samples.
+Some passes migrated between core types (lowest reported P-cycle fraction 0.9226); do not turn these short
+wall-clock comparisons into precise hardware-throughput or cross-machine claims.
+
+| option | reported HQ / standard / eco base samples | buffering increase | measured 1 kHz group-delay change, base samples |
+|---|---|---|---|
+| original 44.1 kHz | 73 / 72 / 69 | reference | 0 / 0 / 0 |
+| first FIR 231 taps | 125 / 124 / 121 | +52 each = +1.17914 ms | +52.000000 / +52.000000 / +52.000000 |
+| eco pre-warp 20k | — / — / 69 | 0 | — / — / −0.005206 |
+| ADAA prototype | 73 / 72 / 69 | 0 whole output-delay samples | +0.011275 / +0.022544 / +0.045118 |
+
+The group-delay measurement processes coherent 999 and 1001 Hz tones, 10 µV each, with 0.25 s settling and a
+1 s window, and differentiates their complex transfer phase. It includes the circuit's phase, whereas reported
+latency is the FIR delay. ADAA's port averaging changes frequency-dependent phase through feedback, so its
+unchanged reported FIR delay must not be described as unchanged transfer phase or as an exact half-sample
+output delay. Pre-warp also changes circuit phase without adding buffering. The FIR's exact added delay is
+confirmed by the group measurement and impulse tests. Its structural non-zero coefficient count per direction
+rises by 52 (247/143/91 → 299/195/143 for HQ/standard/eco); this is not an instruction or CPU estimate.
+
+The sixteen-node ADAA check repeats all six eight-node sweep worst cases and each quality/drive at 19,037 Hz
+(nine unique points). Largest total-dBc change is **0.001901 dB**, far smaller than the aliasing regressions
+that reject this candidate. This is a targeted integration-convergence check, not a sixteen-node full sweep.
+
+### Shipped measurements, CI and scope (C1–C9 review revision)
+
+The **215-tap implementation** is remeasured with full 114-point sweeps in each backend, and a complete
+114-point short-buffer C++ grid. Python / C++ full-sweep worst dBc follow; `LIMIT_DBC` at 48 kHz is unchanged.
+
+| setting / drive | Python / C++ dBc | worst tone Hz | chosen limit dBc | full-sweep margin dB |
+|---|---|---|---|---|
+| hq/2V | -122.48710 / -122.48710 | 8037 | -118.2 | 4.28710 |
+| hq/8V | -64.59115 / -64.59115 | 19037 | -63.0 | 1.59115 |
+| standard/2V | -121.70139 / -121.70139 | 8037 | -118.3 | 3.40139 |
+| standard/8V | -47.53168 / -47.53168 | 16037 | -46.8 | 0.73168 |
+| eco/2V | -68.22041 / -68.22041 | 13037 | -65.9 | 2.32041 |
+| eco/8V | -29.74234 / -29.74234 | 18037 | -29.6 | 0.14234 |
+
+Maximum Python/C++ total-dBc difference is **2.02e-7 dB** (rounded upward). Both backends pass the existing
+operating-point, AC stage/chain, tested H2–H5 and burst criteria, without tolerance changes.
+Worst AC-chain error is 0.0154175 / 0.0613472 / 0.0640930 dB for HQ/standard/eco (rounded upward).
+All comparison tolerances pass. First-100-ms rest stays below 1e-9 V (worst Python 3.384e-14 V; C++ zero).
+Against the **pre-review 29c4153 core** on this machine with the same build flags, all six 48 kHz mono
+waveforms (8192 samples, libm/fast × HQ/standard/eco) remain bit-identical. This is a waveform check,
+not a new full 48 kHz sweep.
+
+The original **18-point 48 kHz FIR/IIR tone set and limits are retained**; its baseline is freshly measured
+in the same per-tone format as 44.1 kHz. The same 15-minute CI job runs
+`--fs 44100` with **11 FIR points**, the chosen limits, and independent `aliasing_baseline_44100.json`
+with the unchanged 1.5 dB tolerance applied to each tone separately. The 44.1 kHz step now uses
+`if: success() || failure()` (C7), so a
+48 kHz failure still produces both rate reports; cancellation still skips the step.
+
+| quality | 2 V CI tones Hz | 8 V CI tones Hz |
+|---|---|---|
+| hq | 8037, 19037 | 10037, 19037 |
+| standard | 8037, 19037 | 10037, 16037 |
+| eco | 13037 | 10037, 18037 |
+
+N1 re-review retains 19037 Hz as well as the worst 8037 Hz in both 2 V rows to protect the near-Nyquist
+region independently. Fresh Python measurements use unchanged 215/23 taps, factors, limits and libm:
+full 0.25 s / 1 s buffers in `results_issue96_regions.json`, and short 0.2 s / 0.1 s buffers in
+`results_issue96_guard_44100.json`. Short tones land at 8040 / 19040 Hz after the coherent-bin safeguard.
+
+| quality / 2 V tone Hz | full dBc | full margin dB | short dBc | short margin dB |
+|---|---|---|---|---|
+| hq / 8037 | -122.48710 | 4.28710 | -121.93416 | 3.73416 |
+| hq / 19037 | -123.23064 | 5.03064 | -123.44120 | 5.24120 |
+| standard / 8037 | -121.70139 | 3.40139 | -121.22442 | 2.92442 |
+| standard / 19037 | -123.27340 | 4.97340 | -123.47123 | 5.17123 |
+
+Both baselines use `format_version: 2`, retaining reason / updated / git_rev / tolerance_db / method.
+Each `values[setting]["tones"][requested_tone]` maps to an unrounded `total_dbc` and actual coherent `f_hz`.
+The guard compares each point to its own recorded total, using the setting's unchanged absolute limit
+and the same 1.5 dB tolerance. All 11 / 18 measured records are committed with the two guard results.
+The loader, writer and comparison are shared across rates.
+
+This removes the former worst-per-setting gap: a better tone can now fail the ratchet even when its
+regression leaves the setting's worst value unchanged. Synthetic guard tests exercise that case at
+44.1 kHz HQ/standard 2 V and a 48 kHz multi-tone setting, using an increase of 1.51 dB while remaining
+below the limit and better than the unchanged worst tone. Boundary, missing-point, coherent-frequency,
+round-trip and legacy-format rejection tests also cover the shared path.
+
+Legacy single-value files fail with a useful error before measurement, including during an update.
+Migration therefore measures into a new --baseline path with --update-baseline --reason, validates
+complete coverage/limits, then replaces the corresponding committed file. No old worst value is
+expanded or padded to stand in for an unmeasured tone.
+
+The entire short grid (0.2 s settling / 0.1 s analysis) confirms the subset covers **every full and short
+worst tone** with 215 taps. Short-buffer worst totals are −121.93416 / −64.59071 / −121.22442 / −47.42561 /
+−68.22746 / −29.72203 dBc (HQ2/HQ8/standard2/standard8/eco2/eco8).
+The thinnest margins are eco/8 V **0.12203 dB** and standard/8 V **0.62561 dB**. The 3 dB FIR selection
+criterion applies to the full 2 V grids; standard/2 V's short-window margin is 2.92442 dB.
+Mid-band 10037 Hz points at 8 V remain. Coverage tests examine all committed records, and the Python
+guard independently measures its actual short-buffer subset and baseline.
+
+Both baselines were regenerated from fresh CI-window measurements on the 62b3272-based worktree,
+without changing DSP, filters, limits, tones or tolerance. Reasons recorded via --update-baseline --reason:
+
+- 48 kHz: “Per-tone ratchet migration: freshly measured 48 kHz CI points; preserve 1.5 dB tolerance, limits, tones and DSP”.
+- 44.1 kHz: “Per-tone ratchet migration: freshly measured 44.1 kHz CI points; preserve 1.5 dB tolerance, limits, tones and DSP”.
+
+No rounding or margin padding is applied to recorded values. For example, this measured 44.1 kHz point
+is stored as follows (excerpt; the file also contains the metadata and other tone entries):
+
+```json
+{
+  "format_version": 2,
+  "values": {
+    "hq/fir/2V": {
+      "tones": {
+        "19037": {
+          "total_dbc": -123.44120206910112,
+          "f_hz": 19040.0
+        }
+      }
+    }
+  }
+}
+```
+
+A baseline from another host rate is refused before measuring.
+
+### Shared geometry, storage and host reporting (C3–C5, C8–C9)
+
+Python and C++ each have one `first_fir_taps(fs)` registry. C++ `fir_geometry(os, fs)` derives pad, total
+latency and interpolator delay for both the resampler and plugin; there is no independent plugin rate rule
+or hard-coded latency increment. The engine fills atomic target-latency entries in its constructor and
+non-RT `prepare()`; target queries load the requested quality's entry. Direct resampler preparation and
+`Engine::latency_for` now require an explicit rate, including #97's smoothing and bias-option harnesses.
+No allocations, filter designs, mutexes or syscalls are added to processing.
+
+The 215-tap FIR adds **44 base samples = 0.997732 ms**. Reported HQ/standard/eco FIR delays are
+**117 / 116 / 113 samples** (2.653061 / 2.630385 / 2.562358 ms), versus 73 / 72 / 69 with 127 taps.
+This saves eight samples (0.181406 ms) over 231. Structural non-zero coefficient counts per direction are
+**291 / 187 / 135**, +44 over the original 247 / 143 / 91; these are not instruction counts.
+The existing 512-sample dry ring holds 256 + 117 samples.
+
+A capacity-specific half-band helper gives only the first stage long storage. Before changing the tap count,
+the pure refactor is bit-identical to 29c4153 for **18 waveforms** (44.1 / 48 / 96 kHz × all qualities ×
+libm/fast). At the same 231-tap capacity on M1, `sizeof(Resampler / Stage / StereoStage)` falls from
+**37936 / 49120 / 80320** to **12992 / 24176 / 35408 bytes**, recorded in `results_issue96_refactor.json`.
+Those are the #97-inclusive objects, not the older #95 sizes in the historical cost table.
+
+C8 adds 44.1 kHz FIR taps and 256-base-sample up/down vectors at 4×/8×/16×, checked at the existing
+`TOL_TAPS=1e-14` and `TOL_RS=1e-13`. Every prior 48 kHz vector byte is retained. Native geometry asserts
+8× pad 6, latency 116, up delay 461, MAC count 187, plus HQ/eco delays. A Python/C++ geometry parity test
+also covers 12 rates × 4 factors, including 44,056 / 44,144 / 32,000 / 22,050 Hz.
+
+**C3 scope decision:** centralize selection, but do not extend a transition formula or threshold table to
+unmeasured nearby/lower rates. The measured alias floor is non-monotonic in tap count; a formula does not
+certify it. Also, protecting 20 kHz is impossible at 32 / 22.05 kHz base rates, whose Nyquists are below
+20 kHz. Those rates need an explicit protected-band policy and renewed sweeps, suitable for a follow-up
+rate-policy issue under #74. No issue is opened here. The exact validated 44,100 Hz exception stays; all
+other positive rates retain historical geometry without a new aliasing claim. Adding a validated rate is
+a registry/table change with parity and coverage checks.
+
+The VST3 wrapper change is required for latency reporting (C9): after `setupProcessing()` but before
+activation, the engine still holds the previous prepared rate. `getLatencySamples()` now derives geometry
+from `processSetup.sampleRate`, with a 48 kHz fallback when the setup rate is not positive, and tail reporting uses that
+same latency. The packaged null tool checks both reports across 48 / 44.1 / 96 kHz setups **before activation**.
+AU code and DSP/parameter flow are unchanged.
+
+### Short M1 cost comparison after review
+
+`experiments/review_cost_issue96.py` uses the existing `cpp/bench.cpp` harness pinned to 29c4153,
+with its base rate changed to 44,100 Hz. Apple M1 MacBookAir10,1 / macOS 15.6.1, compiler and host/power/thermal
+state recorded in `results_issue96_review_cost.json`; C++17 / `-O3`, libm, mono, block 64, one instance,
+same quality and 2 / 8 V inputs. Each run is **0.5 s × 3 timed passes**, three rounds in alternating
+baseline/previous/shipped order; report the median of the three run medians in ns per base sample.
+No other numerical suite runs concurrently. This is a short comparison, not an official #21/#76 benchmark.
+
+127 and 231 use the same pre-review #97-inclusive core, changing only the first FIR length at 44.1 kHz.
+The shipped 215 variant includes the C3–C5 geometry/storage refactor, so its cost includes that actual layout
+rather than attributing every difference to tap count alone. Rejected pre-warp and ADAA costs above remain
+their original matched #95-based comparisons; absolute times from different runs are not mixed.
+
+| quality / input peak | baseline 127 ns | previous 231 ns (ratio) | shipped 215 ns (ratio) |
+|---|---|---|---|
+| hq / 2 V | 5175.0 | 5281.4 (1.021×) | 5266.3 (1.018×) |
+| hq / 8 V | 5894.4 | 5833.3 (0.990×) | 5832.6 (0.990×) |
+| standard / 2 V | 2870.7 | 2891.5 (1.007×) | 2886.8 (1.006×) |
+| standard / 8 V | 3193.4 | 3258.8 (1.020×) | 3226.9 (1.010×) |
+| eco / 2 V | 1627.3 | 1659.8 (1.020×) | 1652.0 (1.015×) |
+| eco / 8 V | 1764.5 | 1795.2 (1.017×) | 1780.7 (1.009×) |
+
+All passes are deterministic with zero nonconvergence. Shipped/baseline ratios span 0.990–1.018×;
+differences this small are comparable to run scatter and do not establish a speedup. The deterministic
+latency saving over 231 is eight samples; against 127 the cost remains +44 samples. Per-run ranges,
+counters and host states are retained. At 215 capacity, measured `sizeof(Stage / StereoStage)` is
+**23536 / 34256 bytes**, versus 49120 / 80320 before review (231 capacity), and 32480 / 50368 for the
+127-tap baseline using the pre-review layout. The plugin's two core slots save 92,128 bytes versus the
+pre-review 231 implementation, excluding unchanged engine/ring/allocator overhead.
+
+### Verification and unmeasured scope
+
+Per-tone migration: the two affected pytest modules pass **44 tests**, including the non-worst-tone regression,
+format I/O, legacy rejection and committed per-tone coverage. Both measured guards pass all 29 point comparisons.
+The downstream WDF validator uses the same per-tone API; its nine affected pytest cases and targeted 18-point
+WDF aliasing subset also pass, without changing or regenerating the full WDF reference results.
+The earlier full DSP/native/host validation below is retained; DSP source and parameters are unchanged here.
+
+All numerical suites ran serially. `python -m pytest -q dk/tests cpp/tests` passes **243 tests, 2 skipped**
+(x86-only builds on arm64), including native C++ core vectors, mono/stereo no-allocation checks, SIMD/scalar,
+TSan, rate/geometry parity, all affected Python suites and the short functional bench smoke.
+The separate pure-refactor check passed 18 bit-identical waveforms; the shipped check passed six unchanged
+48 kHz waveforms, both 114-point full sweeps, the complete short grid, reference and rest criteria.
+
+Both Python guards pass every limit and ratchet row: **14.95 s at 48 kHz** (18 points), **9.20 s at 44.1 kHz**
+(11 points), serially on this M1, recorded in `results_issue96_guard_{48000,44100}.json`.
+Their 24.16 s local total is not a hosted-runner timing claim. CI keeps its 15-minute timeout and adds no
+full sweep, C++ build or benchmark to the aliasing job. The #95 JSONs, 48 kHz limits/tones, `MARGIN_DB`,
+and 64× ground truth are unchanged. Both baseline files are deliberately regenerated in per-tone format.
+
+Release arm64 CMake build of the shared engine, packaged VST3 and null tool succeeds.
+`map_engine_test` and `map_smoothing_test` both pass, including exact engine nulls, bypass/live switching
+and zero process allocations. **Nine packaged VST3 null/live-switch runs** pass (all three qualities ×
+44.1 / 48 / 96 kHz); each checks the C9 pre-activation reports across all three setup rates.
+Ruff **0.17.3** passes all prototypes and the existing commit hook, with the unchanged E/F and 120-column config.
+
+Not remeasured: the original rejected pre-warp/ADAA experiments (their pinned results are retained), calibrated
+audibility, 44.1 kHz 64× truth, full IIR/fast-math/stereo aliasing, all drive/bias positions, unlisted rates,
+compensated/higher-order ADAA, official benchmarks, other machines, AU packaged host tests or live host
+sample-rate transitions. Hosted GitHub CI and renewed cross-model review still need their normal run.
+No issue is claimed complete by this review response, and the PR is not merged.

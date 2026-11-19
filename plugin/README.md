@@ -59,7 +59,7 @@ v1 scope (#75 option A): these and no more.
 | Drive | 0–8 × (1) | linear gain on the input, before the stage (20 ms ramp in the wrapper) |
 | Bias | 0.5–2.0 × Rk (1) | cathode resistor scale (1.0 = 1.5 kΩ); 20 ms ramp in the core (`set_bias`, #73) |
 | Output | 0–4 × (1) | linear gain after the stage (20 ms ramp in the wrapper) |
-| Quality | Eco 4× / Standard 8× / HQ 16× (Standard) | `dkcore::ECO`, `STANDARD`, `HQ`; latency 69 / 72 / 73 samples |
+| Quality | Eco 4× / Standard 8× / HQ 16× (Standard) | `dkcore::ECO`, `STANDARD`, `HQ`; latency 113 / 116 / 117 samples at 44.1 kHz (#96), 69 / 72 / 73 elsewhere |
 | Bypass | off / on | wrapper-level, 10 ms crossfade to the dry input delayed by the latency (the host's AU bypass property and the VST 3 `kIsBypass` parameter both drive it) |
 
 - **Bias range.** The core's reference vectors cover bias 1.0 and 1.5. The range ends 0.5 and 2.0 build a pack and

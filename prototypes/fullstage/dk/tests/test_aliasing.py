@@ -2,16 +2,19 @@
 non-harmonic energy over the full offset-tone sweep (1037 ... 19037 Hz at 2 V and 8 V, 1 s windows; validate.py
 runs it) plus aliasing.MARGIN_DB. The per-setting limit check on the lean subset (aliasing.CI_TONES with CI_SETTLE_S /
 CI_WINDOW_S buffers) is enforced by dk.aliasing_guard, the blocking `aliasing` CI job (#35), together with a baseline
-ratchet; run it locally with `python -m dk.aliasing_guard`. Here: the limits and CI tones cover every setting, filter
-and drive, the metric itself (periodic Hann, coherent bins, masks) is checked on synthetic signals, and the 64x ground
-truth sits below every limit.
+ratchet for each tone; run it locally with `python -m dk.aliasing_guard`. Here: the limits and CI tones cover every
+setting, filter and drive, the metric itself (periodic Hann, coherent bins, masks) is checked on synthetic signals,
+and the 64x ground truth sits below every limit.
 """
 import os
 import sys
+import json
+import math
 import numpy as np
 import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from dk import aliasing as A
+from dk import aliasing_guard as G
 from dk.stage import QUALITY
 
 FS = A.FS
@@ -67,3 +70,59 @@ def test_ground_truth_covers_the_sweep_and_sits_below_every_limit():
             sel = A.select(gt, f"{A.GROUND_TRUTH_OS}x", flt, d)
             assert sorted(r["tone"] for r in sel) == list(A.SWEEP_HZ)
             assert all(max(r["total_dbc"] for r in sel) < A.LIMIT_DBC[(q, flt)][d] for q in QUALITY)
+
+
+def test_44100_budget_uses_independent_octave_secants_and_preserves_resampler_floor_limits():
+    old = json.load(open(os.path.join(os.path.dirname(A.__file__), "results_sample_rates.json")))
+    for (q, flt), limits in A.LIMIT_DBC_44100.items():
+        for d, lim in limits.items():
+            if (q in ("hq", "standard") and d == 2.0) or (q in ("hq", "eco") and d == 8.0):
+                assert lim == A.LIMIT_DBC[(q, flt)][d]
+            else:
+                w48 = A.worst(old["rates"]["48000"]["aliasing_records"], q, flt, d)["total_dbc"]
+                w96 = A.worst(old["rates"]["96000"]["aliasing_records"], q, flt, d)["total_dbc"]
+                expected = math.ceil((A.LIMIT_DBC[(q, flt)][d] + (w48-w96)*math.log2(48000/44100))*10)/10
+                assert lim == expected
+    assert A.limits_for_rate(48000) is A.LIMIT_DBC
+    assert A.limits_for_rate(44100) is A.LIMIT_DBC_44100
+    with pytest.raises(ValueError, match="no verified CI subset"):
+        A.ci_tones_for_rate(96000)
+
+
+def test_44100_full_and_short_sweep_worst_tones_are_in_ci_subset():
+    data = json.load(open(os.path.join(os.path.dirname(A.__file__), "results_issue96_shipped.json")))
+    assert not data["failures"]
+    for sweep in data["sweeps"].values():
+        for (q, f), tones in A.CI_TONES_44100.items():
+            for d, selected in tones.items():
+                rows = A.select(sweep["records"], q, f, d)
+                assert sorted(r["tone"] for r in rows) == list(A.SWEEP_HZ)
+                assert max(rows, key=lambda r: r["total_dbc"])["tone"] in selected
+                assert max(r["total_dbc"] for r in rows) <= A.LIMIT_DBC_44100[(q, f)][d]
+    # A caller must not accidentally combine rates and select one rate's budget for another.
+    with pytest.raises(ValueError, match="one host rate"):
+        A.check_limits([dict(fs_base=44100), dict(fs_base=48000)])
+    with pytest.raises(ValueError, match="FIR only"):
+        A.check_limits([dict(fs_base=44100, setting="hq", filt="iir")])
+
+
+def test_44100_ci_protects_both_floor_regions_at_2v():
+    # 8037 is worst with 215 taps; 19037 guards an independently vulnerable near-Nyquist region (N1).
+    for q in ("hq", "standard"):
+        assert {8037, 19037} <= set(A.CI_TONES_44100[(q, "fir")][2.0])
+
+
+@pytest.mark.parametrize("fs", [48000, 44100])
+def test_guard_records_compare_each_ci_tone_to_its_own_baseline(fs):
+    path = os.path.join(os.path.dirname(A.__file__), f"results_issue96_guard_{fs}.json")
+    data = json.load(open(path))
+    base = G.load_baseline(G.baseline_path(fs))
+    measured = G.values_by_key(data["records"])
+    rows = G.compare(measured, base["values"], G.limits_by_key(fs), G.tones_by_key(fs))
+    expected = {(k, t) for k, tones in G.tones_by_key(fs).items() for t in tones}
+    assert {(r["key"], r["tone"]) for r in rows} == expected and len(rows) == len(expected)
+    assert not G.failed(rows)
+    for r in rows:
+        own_baseline = base["values"][r["key"]]["tones"][str(r["tone"])]
+        assert r["baseline_dbc"] == own_baseline["total_dbc"]
+        assert r["delta_db"] == r["measured_dbc"] - own_baseline["total_dbc"]

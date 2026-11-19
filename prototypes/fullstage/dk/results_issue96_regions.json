@@ -1,0 +1,100 @@
+{
+ "method": {
+  "source_commit": "6156725 plus N1/N2 review changes; DSP and limits unchanged",
+  "backend": "Python Stage",
+  "fs_base": 44100,
+  "filter": "fir",
+  "first_taps": 215,
+  "later_taps": 23,
+  "beta": 9,
+  "drive": 2,
+  "tones": [
+   8037,
+   19037
+  ],
+  "qualities": [
+   "hq",
+   "standard"
+  ],
+  "window_s": 1.0,
+  "settle_s": 0.25,
+  "python": "3.15.2",
+  "numpy": "2.5.4",
+  "scipy": "1.18.1",
+  "command": "A.sweep([('hq','fir'),('standard','fir')], drives=(2.0,), tones=(8037,19037), fs=44100, workers=4)"
+ },
+ "records": [
+  {
+   "setting": "hq",
+   "os": 16,
+   "filt": "fir",
+   "drive": 2.0,
+   "tone": 8037,
+   "fs_base": 44100,
+   "f_hz": 8037.0,
+   "window_s": 1.0,
+   "settle_s": 0.25,
+   "collision_order": 4900,
+   "total_dbc": -122.4871034468221,
+   "worst_dbc": -124.29586562090365,
+   "worst_hz": 19989.0,
+   "internal_dbc": -190.12620074895125,
+   "resampler_dbc": -122.48711076600416,
+   "other_dbc": -180.68848487663485
+  },
+  {
+   "setting": "hq",
+   "os": 16,
+   "filt": "fir",
+   "drive": 2.0,
+   "tone": 19037,
+   "fs_base": 44100,
+   "f_hz": 19037.0,
+   "window_s": 1.0,
+   "settle_s": 0.25,
+   "collision_order": 3081,
+   "total_dbc": -123.23063795684563,
+   "worst_dbc": -126.63912046017688,
+   "worst_hz": 6026.0,
+   "internal_dbc": -220.44471153593213,
+   "resampler_dbc": -123.23063795945474,
+   "other_dbc": -217.09392835691844
+  },
+  {
+   "setting": "standard",
+   "os": 8,
+   "filt": "fir",
+   "drive": 2.0,
+   "tone": 8037,
+   "fs_base": 44100,
+   "f_hz": 8037.0,
+   "window_s": 1.0,
+   "settle_s": 0.25,
+   "collision_order": 4900,
+   "total_dbc": -121.7013914810361,
+   "worst_dbc": -124.35191970888427,
+   "worst_hz": 19989.0,
+   "internal_dbc": -129.23832744289194,
+   "resampler_dbc": -122.54382323294153,
+   "other_dbc": -180.70742670038953
+  },
+  {
+   "setting": "standard",
+   "os": 8,
+   "filt": "fir",
+   "drive": 2.0,
+   "tone": 19037,
+   "fs_base": 44100,
+   "f_hz": 19037.0,
+   "window_s": 1.0,
+   "settle_s": 0.25,
+   "collision_order": 3081,
+   "total_dbc": -123.27340478723625,
+   "worst_dbc": -126.71049298845563,
+   "worst_hz": 6026.0,
+   "internal_dbc": -137.4315713519706,
+   "resampler_dbc": -123.443401199384,
+   "other_dbc": -216.41042970018475
+  }
+ ]
+}

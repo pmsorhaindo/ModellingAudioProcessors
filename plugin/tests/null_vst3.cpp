@@ -108,7 +108,16 @@ int main(int argc, char** argv) {
         if (ctrl->setComponentState(st) != kResultOk) { std::fprintf(stderr, "FAIL: setComponentState\n"); return 1; }
     }
     ProcessSetup setup{kOffline, kSample32, kMaxBlock, s.fs};
-    if (proc->setupProcessing(setup) != kResultOk) { std::fprintf(stderr, "FAIL: setupProcessing\n"); return 1; }
+    // Query several setups before activation. The engine has not prepared any of these rates yet.
+    for (double fs : {48000.0, 44100.0, 96000.0, s.fs}) {
+        setup.sampleRate = fs;
+        if (proc->setupProcessing(setup) != kResultOk) { std::fprintf(stderr, "FAIL: setupProcessing\n"); return 1; }
+        const int want = mapvs::Engine::latency_for(s.quality, fs);
+        const int tail = want + int(std::lround(mapvs::kTailSeconds * fs));
+        if (int(proc->getLatencySamples()) != want || int(proc->getTailSamples()) != tail) {
+            std::fprintf(stderr, "FAIL: pre-activation latency/tail at %.0f Hz\n", fs); return 1;
+        }
+    }
     if (comp->setActive(true) != kResultOk) { std::fprintf(stderr, "FAIL: setActive\n"); return 1; }
     proc->setProcessing(true);
     HostProcessData data;
@@ -146,7 +155,7 @@ int main(int argc, char** argv) {
     std::vector<float> qL(nlive), qR(nlive), zero(nlive, 0.0f);
     if (render(proc, data, L, R, qL, qR, nlive, &changes, true)) return 1;
     const uint32 lat2 = proc->getLatencySamples();
-    const int want = mapvs::Engine::latency_for(target_q);
+    const int want = mapvs::Engine::latency_for(target_q, s.fs);
     std::size_t bad = 0;
     for (std::size_t i = 0; i < nlive; ++i) bad += !std::isfinite(qL[i]) || !std::isfinite(qR[i]);
     std::printf("live: quality -> %s, bias -> 1.5: getLatencySamples %u (want %d), nonfinite %zu\n",

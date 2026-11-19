@@ -20,22 +20,16 @@ dkcore::Quality Engine::core_quality(int q) {
     }
 }
 
-int Engine::latency_for(int q) {
-    // The resampler's latency depends only on the oversampling factor; computed once (non-RT, first call).
-    static const int table[kNumQualities] = {
-        [] { dkcore::Resampler r; r.prepare(dkcore::ECO.os); return r.latency_samples(); }(),
-        [] { dkcore::Resampler r; r.prepare(dkcore::STANDARD.os); return r.latency_samples(); }(),
-        [] { dkcore::Resampler r; r.prepare(dkcore::HQ.os); return r.latency_samples(); }(),
-    };
-    return table[clamp_quality(q)];
+int Engine::latency_for(int q, double sample_rate) {
+    return dkcore::fir_geometry(core_quality(q).os, sample_rate).latency_samples;
 }
 
 Engine::Engine() {
     slot_[0] = std::make_unique<dkcore::StereoStage>();
     slot_[1] = std::make_unique<dkcore::StereoStage>();
     for (auto& s : slot_) s->set_bias_range(kBiasRange.min, kBiasRange.max);   // the bias line (#73), per prepare
-    (void)latency_for(kQualityDefault);                 // build the table here, not on the audio thread
-    active_latency_.store(latency_for(kQualityDefault), std::memory_order_relaxed);
+    for (int q = 0; q < kNumQualities; ++q) target_latency_[q].store(latency_for(q, 48000.0));
+    active_latency_.store(latency_samples(), std::memory_order_relaxed);
 }
 
 Engine::~Engine() { release(); }
@@ -45,6 +39,8 @@ bool Engine::prepare(double sample_rate) {
     prepared_.store(false, std::memory_order_relaxed);
     if (!(sample_rate > 0.0) || !std::isfinite(sample_rate)) return false;
     fs_ = sample_rate;
+    for (int q = 0; q < kNumQualities; ++q)
+        target_latency_[q].store(latency_for(q, sample_rate), std::memory_order_relaxed);
     const int q = quality_target();
     double b = bias_t_.load(std::memory_order_relaxed);
     dkcore::BuildStatus st = slot_[0]->prepare(fs_, core_quality(q), b);

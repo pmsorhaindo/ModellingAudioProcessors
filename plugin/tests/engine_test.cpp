@@ -105,8 +105,9 @@ int main() {
     }
 
     // 2.-4. bypass, live switch, allocation
-    {
+    for (double fs : {44100.0, 48000.0}) {
         Settings s;
+        s.fs = fs;
         s.seconds = 0.4;
         std::vector<float> L, R, pL, pR;
         make_signal(s, L, R);
@@ -140,7 +141,8 @@ int main() {
         }
         finite = true;
         for (float v : pL) finite = finite && std::isfinite(v);
-        check(adopted && e.active_latency_samples() == mapvs::Engine::latency_for(mapvs::kHQ) && e.bias_status() == 0,
+        check(adopted && e.active_latency_samples() == mapvs::Engine::latency_for(mapvs::kHQ, s.fs)
+              && e.latency_samples() == e.active_latency_samples() && e.bias_status() == 0,
               "live quality switch to HQ and bias swap to 2.0 adopted",
               fmt("active quality %.0f, active latency %.0f, bias status %.0f", e.active_quality(),
                   e.active_latency_samples(), e.bias_status()));
@@ -152,7 +154,8 @@ int main() {
             run_engine(e, L, R, pL, pR, 2, true);
             adopted = e.active_quality() == mapvs::kEco && e.applied_bias() == 0.5;
         }
-        check(adopted && e.active_latency_samples() == mapvs::Engine::latency_for(mapvs::kEco),
+        check(adopted && e.active_latency_samples() == mapvs::Engine::latency_for(mapvs::kEco, s.fs)
+              && e.latency_samples() == e.active_latency_samples(),
               "live switch back to Eco and bias 0.5 adopted");
         check(g_allocs.load() == 0, "no allocation in process() (bypass, crossfade, switches, swaps)",
               fmt("%.0f allocations", double(g_allocs.load())));

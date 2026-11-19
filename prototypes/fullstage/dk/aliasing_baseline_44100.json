@@ -1,0 +1,118 @@
+{
+ "format_version": 2,
+ "reason": "Per-tone ratchet migration: freshly measured 44.1 kHz CI points; preserve 1.5 dB tolerance, limits, tones and DSP",
+ "updated": "2026-11-19",
+ "git_rev": "62b3272",
+ "tolerance_db": 1.5,
+ "method": {
+  "fs_base": 44100,
+  "tones": {
+   "hq/fir": {
+    "2V": [
+     8037,
+     19037
+    ],
+    "8V": [
+     10037,
+     19037
+    ]
+   },
+   "standard/fir": {
+    "2V": [
+     8037,
+     19037
+    ],
+    "8V": [
+     10037,
+     16037
+    ]
+   },
+   "eco/fir": {
+    "2V": [
+     13037
+    ],
+    "8V": [
+     10037,
+     18037
+    ]
+   }
+  },
+  "settle_s": 0.2,
+  "window_s": 0.1,
+  "band_hz": [
+   20.0,
+   20000.0
+  ],
+  "mask_bins": 3
+ },
+ "values": {
+  "hq/fir/2V": {
+   "tones": {
+    "8037": {
+     "total_dbc": -121.93415719071223,
+     "f_hz": 8040.0
+    },
+    "19037": {
+     "total_dbc": -123.44120206910112,
+     "f_hz": 19040.0
+    }
+   }
+  },
+  "hq/fir/8V": {
+   "tones": {
+    "10037": {
+     "total_dbc": -73.04455558952753,
+     "f_hz": 10040.0
+    },
+    "19037": {
+     "total_dbc": -64.59070770042209,
+     "f_hz": 19040.0
+    }
+   }
+  },
+  "standard/fir/2V": {
+   "tones": {
+    "8037": {
+     "total_dbc": -121.22442455372278,
+     "f_hz": 8040.0
+    },
+    "19037": {
+     "total_dbc": -123.471233354997,
+     "f_hz": 19040.0
+    }
+   }
+  },
+  "standard/fir/8V": {
+   "tones": {
+    "10037": {
+     "total_dbc": -58.606741060060436,
+     "f_hz": 10040.0
+    },
+    "16037": {
+     "total_dbc": -47.425605133231166,
+     "f_hz": 16040.0
+    }
+   }
+  },
+  "eco/fir/2V": {
+   "tones": {
+    "13037": {
+     "total_dbc": -68.22746347752582,
+     "f_hz": 13040.0
+    }
+   }
+  },
+  "eco/fir/8V": {
+   "tones": {
+    "10037": {
+     "total_dbc": -44.761686744567356,
+     "f_hz": 10040.0
+    },
+    "18037": {
+     "total_dbc": -29.722033287676854,
+     "f_hz": 18030.0
+    }
+   }
+  }
+ }
+}

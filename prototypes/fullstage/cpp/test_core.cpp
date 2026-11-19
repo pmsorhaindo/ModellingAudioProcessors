@@ -164,8 +164,8 @@ static bool allfinite(const double* a, size_t n) { for (size_t i = 0; i < n; ++i
 
 // ---- tests ---------------------------------------------------------------------------------------------------
 static void test_taps(const std::map<std::string, Vec>& V) {
-    for (int nt : {FIR_FIRST_TAPS, FIR_LATER_TAPS}) {
-        double h[FIR_FIRST_TAPS];
+    for (int nt : {FIR_FIRST_TAPS, FIR_LATER_TAPS, FIR_FIRST_44100_TAPS}) {
+        double h[FIR_MAX_TAPS];
         firwin_halfband(nt, FIR_BETA, h);
         const Vec r = need(V, "taps.fir" + std::to_string(nt));
         const double e = maxdiff(h, r.data(), r.size());
@@ -274,10 +274,10 @@ static void test_solver(const std::map<std::string, Vec>& V) {
 
 static void test_resampler(const std::map<std::string, Vec>& V) {
     double worst = 0;
-    for (int os : {4, 8, 16}) {
-        const std::string p = "rs" + std::to_string(os) + ".";
+    for (double fs : {48000.0, 44100.0}) for (int os : {4, 8, 16}) {
+        const std::string p = (fs == 48000.0 ? "rs" : "rs44100_") + std::to_string(os) + ".";
         Resampler r;
-        check(r.prepare(os), p + "prepare");
+        check(r.prepare(os, fs), p + "prepare");
         const Vec x = need(V, p + "up.in");
         Vec y(x.size() * os);
         for (size_t i = 0; i < x.size(); ++i) r.up(x[i], &y[i * os]);
@@ -292,9 +292,16 @@ static void test_resampler(const std::map<std::string, Vec>& V) {
     }
     metric("resampler_rel", worst);
     Resampler r;
-    r.prepare(8);   // dk.resample.Resampler(48000, 8): pad 6, latency 72, up delay 285, macs 143 (dk/RESULTS.md)
+    r.prepare(8, 48000.0);   // dk.resample.Resampler(48000, 8): pad 6, latency 72, up delay 285, macs 143 (dk/RESULTS.md)
     check(r.pad() == 6 && r.latency_samples() == 72 && r.up_delay_internal() == 285 && r.macs() == 143, "resampler 8x geometry");
-    check(!r.prepare(3) && !r.prepare(32), "os must be 2, 4, 8 or 16");
+    r.prepare(8, 44100.0);
+    check(r.pad() == 6 && r.latency_samples() == 116 && r.up_delay_internal() == 461 && r.macs() == 187,
+          "resampler 44.1 kHz 8x geometry");
+    r.prepare(16, 44100.0);
+    check(r.latency_samples() == 117, "resampler 44.1 kHz HQ latency");
+    r.prepare(4, 44100.0);
+    check(r.latency_samples() == 113, "resampler 44.1 kHz eco latency");
+    check(!r.prepare(3, 48000.0) && !r.prepare(32, 48000.0), "os must be 2, 4, 8 or 16");
 }
 
 // The Python pack for a vectors coef.<name>: the C++ build (parameters, Newton, math) with Python's matrices, DC
@@ -536,7 +543,7 @@ static void test_sample_rates() {
                 StereoStage* stereo = new StereoStage;
                 check(mono->prepare(fs, q, 1.0, math) == BuildStatus::ok, "host-rate mono prepare");
                 check(stereo->prepare(fs, q, 1.0, math) == BuildStatus::ok, "host-rate stereo prepare");
-                const int latency = q.os == 4 ? 69 : q.os == 8 ? 72 : 73;
+                const int latency = fir_geometry(q.os, fs).latency_samples;
                 check(mono->latency_samples() == latency && stereo->latency_samples() == latency,
                       "host-rate latency in base samples");
                 Vec x(size_t(fs * 0.1), 0.0), y(x.size()), l(x.size()), r(x.size());
@@ -1152,7 +1159,7 @@ static Vec bias_reference(Quality q, double b0, double b1, size_t n0, int L, con
     Stage* s = new Stage;
     s->prepare(48000.0, q, b0);
     Resampler r;
-    r.prepare(q.os);
+    r.prepare(q.os, 48000.0);
     Vec y(x.size());
     double u[MAX_OS], v[MAX_OS], last = b0;
     for (size_t i = 0; i < x.size(); ++i) {
@@ -1484,6 +1491,17 @@ static int cli(int argc, char** argv) {
 }
 
 int main(int argc, char** argv) {
+    if (argc > 1 && std::string(argv[1]) == "fir-geometry") {
+        double fs; int os;
+        while (std::scanf("%lf %d", &fs, &os) == 2) {
+            Resampler r;
+            if (!r.prepare(os, fs)) return 2;
+            std::printf("{\"first_taps\":%d,\"latency\":%d,\"pad\":%d,\"up_delay\":%d,\"macs\":%d}\n",
+                        first_fir_taps(fs), r.latency_samples(), r.pad(), r.up_delay_internal(), r.macs());
+        }
+        return 0;
+    }
+
     if (argc > 1 && std::string(argv[1]) == "cli") return cli(argc, argv);
     if (argc > 1 && std::string(argv[1]) == "solve") return cli_solve();
     if (argc > 1 && std::string(argv[1]) == "triode") return cli_triode();

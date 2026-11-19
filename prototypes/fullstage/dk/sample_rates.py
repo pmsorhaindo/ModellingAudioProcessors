@@ -15,6 +15,7 @@ import scipy
 
 from dk import aliasing as AL, validate as V
 from dk.stage import Stage, QUALITY
+from dk.resample import FIR_FIRST_44100
 
 RATES = (44100, 48000, 88200, 96000, 176400, 192000)
 REST_LIMIT_V = 1e-9  # existing #70 rest test / C++ TOL_PINNED_ABS; startup also has a 1e-6 V limit
@@ -67,7 +68,8 @@ def main():
                 platform=platform.platform(),
                 backend=args.backend, filter="fir", triode_math="libm",
                 quality_policy="near internal (experimental)" if args.near_internal else "fixed factor",
-                criteria=V.CRIT, aliasing_limits="unchanged dk.aliasing.LIMIT_DBC (48 kHz limits at every rate)",
+                criteria=V.CRIT, aliasing_limits="dk.aliasing.limits_for_rate(fs); #96 budget at 44.1 kHz FIR",
+                fir_first_taps_44100=FIR_FIRST_44100[0],
                 method="dk.validate.run(fs=...), 100 ms rest, full dk.aliasing offset sweep; no timing benchmark; "
                        "existing spice/reference_dz.json criteria; Koren informational; no new 64x reference")
     if args.backend == "cpp":
@@ -80,6 +82,9 @@ def main():
     filename = "results_internal_rate_proposal.json" if args.near_internal else "results_sample_rates.json"
     dest = ROOT / args.backend.replace("python", "dk") / filename
     out = json.loads(dest.read_text()) if args.resume and dest.exists() else dict(method=meta, rates={})
+    if args.resume and any(out["method"].get(k) != meta[k]
+                           for k in ("backend", "quality_policy", "aliasing_limits", "fir_first_taps_44100")):
+        ap.error("resume data uses another DSP/aliasing policy; start without --resume (retain #95 data separately)")
     out["method"] = meta
 
     def save():

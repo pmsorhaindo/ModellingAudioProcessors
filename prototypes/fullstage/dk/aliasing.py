@@ -90,6 +90,38 @@ CI_TONES = {
     ("eco", "iir"): {2.0: (16037,), 8.0: (10037, 19037)},
 }
 
+# #96: 44.1 kHz FIR policy, measured and derived in RESULTS.md / results_issue96.json. Keep the resampler-floor
+# limits at 2 V HQ/standard; the 215-tap first FIR restores them. For the internal-folding cases, extrapolate the
+# independent #95 48->96 kHz octave secant over log2(48000/44100), preserving the original margin and rounding up
+# to 0.1 dB. Retain the original HQ/8 V and eco/8 V limits: #95 already passed them at 44.1 kHz.
+# This is a rate/headroom budget, not an audibility claim. IIR at 44.1 kHz is not yet validated.
+LIMIT_DBC_44100 = {
+    ("hq", "fir"): {2.0: -118.2, 8.0: -63.0},
+    ("standard", "fir"): {2.0: -118.3, 8.0: -46.8},
+    ("eco", "fir"): {2.0: -65.9, 8.0: -29.6},
+}
+CI_TONES_44100 = {
+    ("hq", "fir"): {2.0: (8037, 19037), 8.0: (10037, 19037)},
+    ("standard", "fir"): {2.0: (8037, 19037), 8.0: (10037, 16037)},
+    ("eco", "fir"): {2.0: (13037,), 8.0: (10037, 18037)},
+}
+
+
+LIMITS_BY_RATE = {48000: LIMIT_DBC, 44100: LIMIT_DBC_44100}
+CI_TONES_BY_RATE = {48000: CI_TONES, 44100: CI_TONES_44100}
+
+
+def limits_for_rate(fs=FS):
+    """44.1 kHz FIR budget; otherwise retain the original 48 kHz acceptance budget (#74)."""
+    return LIMITS_BY_RATE.get(fs, LIMIT_DBC)
+
+
+def ci_tones_for_rate(fs=FS):
+    """Only rates with measured, full-sweep-verified CI coverage have a lean subset."""
+    if fs not in CI_TONES_BY_RATE:
+        raise ValueError(f"no verified CI subset at {fs} Hz")
+    return CI_TONES_BY_RATE[fs]
+
 
 def collision_order(m, n, mask=MASK_BINS):
     """Smallest d >= 1 with d*m within `mask` bins of a multiple of n: harmonics k, j with k -+ j < d never fold
@@ -194,8 +226,14 @@ def worst(records, setting, filt, drive):
 
 def check_limits(records):
     """{(setting, filt, drive): (worst total, its tone, limit, pass)} for every limited combination in records."""
+    rates = {r.get("fs_base", FS) for r in records}
+    if len(rates) > 1:
+        raise ValueError("check_limits expects one host rate at a time")
+    limits = limits_for_rate(next(iter(rates), FS))
+    if any((r["setting"], r["filt"]) in LIMIT_DBC and (r["setting"], r["filt"]) not in limits for r in records):
+        raise ValueError("no validated aliasing budget for this rate/filter (44.1 kHz is FIR only)")
     out = {}
-    for (q, flt), lim in LIMIT_DBC.items():
+    for (q, flt), lim in limits.items():
         for d, L in lim.items():
             if select(records, q, flt, d):
                 w = worst(records, q, flt, d)

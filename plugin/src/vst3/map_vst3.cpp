@@ -82,10 +82,14 @@ public:
     tresult PLUGIN_API canProcessSampleSize(int32 size) override {
         return size == kSample32 ? kResultTrue : kResultFalse;
     }
-    uint32 PLUGIN_API getLatencySamples() override { return uint32(engine_.latency_samples()); }
+    uint32 PLUGIN_API getLatencySamples() override {
+        // Hosts may query after setupProcessing and before activation/Engine::prepare.
+        const double fs = processSetup.sampleRate > 0.0 ? processSetup.sampleRate : 48000.0;
+        return uint32(Engine::latency_for(engine_.quality_target(), fs));
+    }
     uint32 PLUGIN_API getTailSamples() override {
         const double fs = processSetup.sampleRate > 0.0 ? processSetup.sampleRate : 48000.0;
-        return uint32(engine_.latency_samples() + std::lround(kTailSeconds * fs));
+        return uint32(getLatencySamples() + std::lround(kTailSeconds * fs));
     }
 
     // non-RT, never concurrently with process(): the host's activation is the one place where prepare() runs

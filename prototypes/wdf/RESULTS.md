@@ -97,10 +97,15 @@ with wide margins (operating point 1e-9 relative, AC 1e-7 dB and 1e-6°, outputs
 `test_wdf_stage.py`), and also check that the probed map has DK's K and the same eigenvalues of A.
 
 ### Aliasing (#6, #35)
-This is the blocking CI subset from `dk/aliasing_guard.py`: the worst tone of every setting × filter at 2 V and 8 V,
-run on the WDF by swapping the stage in the worker processes. It is compared with the DK stage's committed baseline
-`dk/aliasing_baseline.json`. **All 12 rows are within their limits, and the largest difference from the DK baseline
-is 8.5e-8 dB.**
+This uses the blocking CI subset from `dk/aliasing_guard.py`, run on the WDF by swapping the stage in the workers.
+The validator now uses the shared format-version-2 loader and per-tone comparison: all 18 CI points are compared
+with their own DK baseline in `dk/aliasing_baseline.json`, with unchanged limits and 1.5 dB tolerance.
+During the per-tone migration, the targeted 18-point WDF subset and all nine tests in
+`test_e2e_and_aliasing.py` pass, including a synthetic non-worst-tone regression through the validator.
+The full WDF reference JSON was not regenerated for this format change.
+
+The historical table below summarizes the worst point of each setting. In that original validation,
+**all 12 setting rows were within their limits, and the largest difference from the DK baseline was 8.5e-8 dB.**
 
 | measured (limit), dBc | FIR 2 V | FIR 8 V | IIR 2 V | IIR 8 V |
 |---|---|---|---|---|
