@@ -26,11 +26,11 @@
 
 namespace mapvs {
 
-class MapValveStageAU : public ausdk::AUEffectBase {
+class GyreAU : public ausdk::AUEffectBase {
     using Base = ausdk::AUEffectBase;
 
 public:
-    explicit MapValveStageAU(AudioComponentInstance ci) : Base(ci, true) {
+    explicit GyreAU(AudioComponentInstance ci) : Base(ci, true) {
         CreateElements();
         Globals()->UseIndexedParameters(kNumParams);
         Globals()->SetParameter(kDrive, AudioUnitParameterValue(kDriveRange.def));
@@ -48,7 +48,7 @@ public:
             });
         });
     }
-    ~MapValveStageAU() override {
+    ~GyreAU() override {
         engine_.release();                                  // joins the worker: no new notifications
         std::lock_guard<std::mutex> lk(token_->m);
         token_->au = nullptr;                               // queued ones become no-ops
@@ -179,7 +179,7 @@ private:
 
     struct Token {
         std::mutex m;
-        MapValveStageAU* au = nullptr;
+        GyreAU* au = nullptr;
     };
     std::shared_ptr<Token> token_ = std::make_shared<Token>();
     Engine engine_;
@@ -187,5 +187,5 @@ private:
 
 }  // namespace mapvs
 
-using MapValveStageAU = mapvs::MapValveStageAU;
-AUSDK_COMPONENT_ENTRY(ausdk::AUBaseFactory, MapValveStageAU)
+using GyreAU = mapvs::GyreAU;
+AUSDK_COMPONENT_ENTRY(ausdk::AUBaseFactory, GyreAU)

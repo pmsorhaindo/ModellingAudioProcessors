@@ -15,7 +15,7 @@ will not use a brand or device name.
 | `prototypes/research/` | research notes: grid-current models, the panel controls of the unit that inspires the project, 6AS6 / 5725 datasheet survey |
 | `prototypes/fullstage/` | one valve gain stage with its reactive parts: ngspice references, the nodal DK model in Python (`dk/`, `dk6as6/`), demo renders (`demo/`) |
 | `prototypes/fullstage/cpp/` | **the realtime core**: header-only C++17 port of the 12AX7 stage (`dk_core.h`), its tests and CPU benchmark |
-| `plugin/` | the AU v2 + VST 3 wrapper of that core (temporary name), its build, tests and checks (`plugin/README.md`) |
+| `plugin/` | the AU v2 + VST 3 wrapper of that core (code name Gyre), its build, tests and checks (`plugin/README.md`) |
 | `prototypes/wdf/` | **reference only**, not the shipping core: the same 12AX7 stage as a wave digital filter in Python (R-type root, triode solved by Newton), compared with the DK stage. The plugin does not depend on it |
 
 ## Status (18 Nov 2026)
@@ -34,8 +34,8 @@ will not use a brand or device name.
   stage that passes the 12AX7 stage's criteria at standard and hq (`prototypes/fullstage/dk6as6/RESULTS.md`). Its
   aliasing is not assessed, and it is not ported to C++.
 - **Plugin, first loadable build** (`plugin/README.md`, #22). AU v2 and VST 3 wrappers of the stereo 12AX7 stage,
-  under a temporary name. Parameters: Drive, Bias, Output, Quality and Bypass. On the M1 it passes the Steinberg
-  validator and `auval`, and offline renders through both plugins null exactly against the C++ core.
+  under the code name Gyre (#116). Parameters: Drive, Bias, Output, Quality and Bypass. On the M1 it passes the
+  Steinberg validator and `auval`, and offline renders through both plugins null exactly against the C++ core.
 - **WDF reference** (#12, `prototypes/wdf/README.md`, `prototypes/wdf/RESULTS.md`). A wave digital filter version of
   the 12AX7 stage, kept as a reference implementation for comparison, not as the shipping core. It passes the DK
   stage's criteria in every setting, with the same output as the DK stage to ≤ 7.4e-8 V. In Python it is 0.92–0.94×

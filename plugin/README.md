@@ -10,16 +10,16 @@ identity: the linker's automatic one on both binaries, and the VST 3 SDK's post-
 .vst3 bundle (its "Adhoc codesign workaround for Xcode 15" in `smtg_add_vst3plugin`). The AU is not signed
 beyond the linker's signature, and auval did not need more.
 
-**The name is temporary.** "MAP Valve Stage (temporary)" is a placeholder until #75 picks a name. Every identifier
-lives in one file, [`src/map_identity.h`](src/map_identity.h): names, bundle identifiers, AU type / subtype /
-manufacturer (`aufx` `vls1` `MapT`) and the VST 3 class IDs. CMake reads the same file to write both Info.plist
-files. All of these will change once a name is picked. Hosts cache them, so the renamed plugin will look like a new
-plugin to them, and old sessions will not find it.
+**Gyre is the working code name** (#75; renamed from the temporary identity in #116), not yet the final shipping
+name. Every identifier lives in one file, [`src/map_identity.h`](src/map_identity.h): names, bundle identifiers, AU
+type / subtype / manufacturer (`aufx` `Gyr1` `MapT`) and the VST 3 class IDs. CMake reads the same file to write
+both Info.plist files, and `tests/run_checks.sh` reads it for the bundle file name and the AU codes. Hosts cache
+these, so a renamed plugin looks like a new plugin to them, and old sessions will not find it.
 
 | file | what |
 |---|---|
 | `CMakeLists.txt` | the build: fetches both SDKs at pinned tags, builds the bundles, the validator and the tests |
-| `src/map_identity.h` | the identity, single source of truth (temporary) |
+| `src/map_identity.h` | the identity, single source of truth |
 | `src/map_params.h` | the parameters, their ranges, the **provisional volts mapping**, the VST 3 state layout |
 | `src/map_engine.{h,cpp}` | the realtime engine both formats share: smoothing, bypass, quality switch, bias worker |
 | `src/vst3/map_vst3.cpp` | VST 3 processor, controller and factory |
@@ -39,9 +39,9 @@ plugin/tests/run_checks.sh plugin/build          # engine test, VST 3 validator,
 plugin/tests/run_checks.sh plugin/build --au     # + installs the AU to ~/Library/Audio/Plug-Ins/Components, auval, AU null
 ```
 
-- Output: `plugin/build/VST3/Release/MAPValveStage-temporary.vst3` and
-  `plugin/build/AU/MAPValveStage-temporary.component`. The build is universal (`arm64;x86_64`) with a macOS 11.0
-  deployment target (AudioUnitSDK's minimum). Use `-DCMAKE_OSX_ARCHITECTURES=arm64` for arm64 only.
+- Output: `plugin/build/VST3/Release/Gyre.vst3` and `plugin/build/AU/Gyre.component`. The build is universal
+  (`arm64;x86_64`) with a macOS 11.0 deployment target (AudioUnitSDK's minimum). Use
+  `-DCMAKE_OSX_ARCHITECTURES=arm64` for arm64 only.
 - Toolchain: CMake ≥ 3.25 and Apple clang with C++23 (AudioUnitSDK 1.4.0 needs `std::expected`). Built here with
   Apple clang 17 from the Command Line Tools alone, with no Xcode.app. The VST 3 SDK's CMake asks `xcodebuild` for
   a version; with the CLT alone, `CMakeLists.txt` passes the CLT version through the SDK's own `XCODE_VERSION`

@@ -15,8 +15,20 @@ AU=0
 [[ "${2:-}" == "--au" || "${1:-}" == "--au" ]] && AU=1
 [[ "${1:-}" == "--au" ]] && BUILD="$(cd "$(dirname "$0")/.." && pwd)/build"
 BIN="$BUILD/bin/Release"
-VST3="$BUILD/VST3/Release/MAPValveStage-temporary.vst3"
-COMPONENT="$BUILD/AU/MAPValveStage-temporary.component"
+# bundle file name and AU codes come from map_identity.h, so they cannot drift from the build
+IDENTITY="$(cd "$(dirname "$0")/.." && pwd)/src/map_identity.h"
+ident() {
+    local v
+    v="$(sed -n "s/^#define $1 \"\(.*\)\"$/\1/p" "$IDENTITY")"
+    [[ -n "$v" ]] || { echo "FAIL: $1 not found in $IDENTITY" >&2; exit 1; }
+    echo "$v"
+}
+BUNDLE_FILE="$(ident MAP_BUNDLE_FILE)"
+AU_TYPE="$(ident MAP_AU_TYPE)"
+AU_SUBTYPE="$(ident MAP_AU_SUBTYPE)"
+AU_MANUFACTURER="$(ident MAP_AU_MANUFACTURER)"
+VST3="$BUILD/VST3/Release/$BUNDLE_FILE.vst3"
+COMPONENT="$BUILD/AU/$BUNDLE_FILE.component"
 
 echo "== engine test"
 "$BIN/map_engine_test"
@@ -35,15 +47,17 @@ echo "== VST 3 null (48 kHz standard; 44.1 kHz eco; 96 kHz hq)"
 "$BIN/map_null_vst3" "$VST3" --fs 96000 --quality 2 --drive 1 --bias 1.5 --output 1
 
 if [[ $AU == 1 ]]; then
-    DEST="$HOME/Library/Audio/Plug-Ins/Components/MAPValveStage-temporary.component"
+    DEST="$HOME/Library/Audio/Plug-Ins/Components/$BUNDLE_FILE.component"
     echo "== install AU -> $DEST"
+    # the pre-#116 temporary identity (aufx vls1 MapT), so it does not stay registered beside the renamed one
+    rm -rf "$HOME/Library/Audio/Plug-Ins/Components/MAPValveStage-temporary.component"
     rm -rf "$DEST"
     ditto "$COMPONENT" "$DEST"
     killall -9 AudioComponentRegistrar 2>/dev/null || true
     sleep 1
     echo "== auval"
-    auval -v aufx vls1 MapT | tail -n 4
-    auval -v aufx vls1 MapT | grep -q "AU VALIDATION SUCCEEDED"
+    auval -v "$AU_TYPE" "$AU_SUBTYPE" "$AU_MANUFACTURER" | tail -n 4
+    auval -v "$AU_TYPE" "$AU_SUBTYPE" "$AU_MANUFACTURER" | grep -q "AU VALIDATION SUCCEEDED"
     echo "== AU null (48 kHz standard; 44.1 kHz eco; 96 kHz hq)"
     "$BIN/map_null_au"
     "$BIN/map_null_au" --fs 44100 --quality 0 --drive 4 --bias 1.0 --output 0.5
