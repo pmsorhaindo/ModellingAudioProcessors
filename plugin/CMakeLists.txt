@@ -1,4 +1,4 @@
-# MAP Valve Stage (temporary name, #75): AU v2 + VST 3 wrapper of the C++ DK core (#22).
+# Gyre (code name, #75 / #116): AU v2 + VST 3 wrapper of the C++ DK core (#22).
 #
 # Our own targets, directly against the two SDKs (docs/licensing-and-wrapper-plan.md section 6):
 #   map_vst3      VST 3 bundle   (Steinberg VST 3 SDK, MIT since 3.8; no VSTGUI)
