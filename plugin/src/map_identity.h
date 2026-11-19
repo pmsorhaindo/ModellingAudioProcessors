@@ -34,9 +34,10 @@
 /* the AU factory symbol: AUSDK_COMPONENT_ENTRY in au/map_au.cpp names it after the class, GyreAU */
 #define MAP_AU_FACTORY "GyreAUFactory"
 
-/* VST 3 class IDs (uuidgen, 18 Nov 2026; kept through the #116 rename), as four 32-bit words */
-#define MAP_VST3_PROCESSOR_UID 0xE74295E2, 0xAF18482C, 0x9E263991, 0xBB1E35DB
-#define MAP_VST3_CONTROLLER_UID 0xAE939A30, 0xD6384E4B, 0xB4057A9C, 0x71D8AA2D
+/* VST 3 class IDs (uuidgen, 19 Nov 2026, new for Gyre in #116), as four 32-bit words:
+ * processor 5F7686CC-2823-4191-954D-D577DCF9338C, controller D13A187B-634B-4510-8C0C-C35724A316F9 */
+#define MAP_VST3_PROCESSOR_UID 0x5F7686CC, 0x28234191, 0x954DD577, 0xDCF9338C
+#define MAP_VST3_CONTROLLER_UID 0xD13A187B, 0x634B4510, 0x8C0CC357, 0x24A316F9
 #define MAP_VST3_CATEGORY "Fx|Distortion"
 
 #endif
