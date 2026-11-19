@@ -1,6 +1,7 @@
 """Harmonic profile of the 6AS6 stage with the #51 vs the #55 valve fit (#26; informational, not a pass criterion).
 
-Same circuit, same DK method and quality (standard, 8x), only the valve parameters change:
+Same circuit, same DK method and quality (standard, 8x), and the same target cathode current (stage.BIAS_MA, so Rk is
+solved per fit), only the valve parameters change:
   #55 'dual' : fit_results["dual_control"]  (KR = 0.2737, XA = 0.5743; the stage's default)
   #51 'r51'  : fit_results["refit_51"]      (no KR / XA, i.e. KR = 0, XA = 1)
 For each: the operating point, the 1 kHz small-signal gain, and H2-H5 (dBc) and THD of the 1 kHz sines at

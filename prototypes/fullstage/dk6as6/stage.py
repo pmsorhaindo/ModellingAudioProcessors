@@ -1,18 +1,22 @@
-"""One 6AS6 common-cathode stage, nodal DK method (issue #26): dk/stage.py's stage with the pentode.
+"""One 6AS6 stage, nodal DK method (issues #26, #102): dk/stage.py's stage with the pentode.
 
 Same controls and streaming resampler as the 12AX7 stage (dk/stage.py, which this subclasses for process(),
 latency, the resampler and iteration_stats()):
   drive, output : linear gains before / after the stage
-  bias          : scale factor on Rk (1.0 = 1.5 kOhm)
+  bias          : target DC cathode current Ik = Ip + Ig2, in mA (default BIAS_MA = 0.45, the manuals' range is
+                  0.1-0.6 mA; #102). The cathode is an unbypassed rheostat to ground: cathode_resistor() solves the
+                  Rk that gives this current at the DC operating point, and Rk is then a fixed resistor for the run
+                  (Stage.rk). The knob law and live bias changes are #110 / #115.
   quality       : QUALITY key, or an (os, prewarp_hz) pair for experiments. Validated here: "standard" = 8x (the
                   12AX7 stage's default) and "hq" = 16x. No eco setting yet: the 12AX7's PREWARP_HZ was derived for
                   its circuit, and a 6AS6 one would need its own minimax derivation and validation.
   filt          : resampler, "fir" (default) or "iir" (dk/resample.py)
   pentode       : valve parameter set (default pentode.DUAL_CONTROL, issue #55; pentode.REFIT_51 for comparison)
-Screen and suppressor are ideal sources (circuit.py: EC2 = 120 V, EC3 = 0 V).
+Screen: an ideal source at EC2 = 120 V; suppressor on the cathode (P1). circuit.py has the values.
 """
 import warnings
 import numpy as np
+from scipy.optimize import brentq
 from dk.stage import Stage as _Stage12AX7, OperatingPointError, NonConvergenceWarning
 from dk.resample import Resampler
 from dk.solver import MAX_IT, TOL_V, TOL_F
@@ -21,13 +25,52 @@ from .solver import solve
 from .pentode import DUAL_CONTROL
 
 QUALITY = {"hq": (16, None), "standard": (8, None)}   # (os, prewarp_hz)
-__all__ = ["Stage", "QUALITY", "OperatingPointError", "NonConvergenceWarning"]
+BIAS_MA = 0.45                     # default target cathode current, mA (S6's default; #102)
+RK_LOG10 = (2.7, 6.0)              # cathode_resistor's bracket, log10(Rk / ohm): ~0.5 kOhm to 1 MOhm
+NEWTON = dict(max_it=MAX_IT, tol_v=TOL_V, tol_f=TOL_F)
+__all__ = ["Stage", "QUALITY", "BIAS_MA", "cathode_resistor", "operating_point", "OperatingPointError",
+           "NonConvergenceWarning"]
+
+
+def operating_point(rk, par=DUAL_CONTROL, newton=tuple(NEWTON.values())):
+    """DC operating point with cathode resistor rk: capacitors open, the stage's Newton solver from zero valve current,
+    source-stepping all supplies (HT, EC2) in 10 steps as the 12AX7 stage does on HT."""
+    m0 = circuit.build(1.0, rk, dc=True)
+    u = np.r_[0.0, circuit.sources()]
+    p = m0["H"] @ u
+    K0 = m0["K"].tolist()
+    i0 = i1 = 0.0
+    for k, s in enumerate(np.linspace(0.1, 1.0, 10), 1):
+        v, i0, i1, it, ok = solve((p * s).tolist(), K0, i0, i1, par, *newton)
+        if not ok:
+            raise OperatingPointError(
+                f"DC operating point did not converge at source step {k}/10 (supplies x {s:.1f}): "
+                f"{it} Newton iterations (max_it, tol_v, tol_f = {newton}), best iterate v={v}, "
+                f"Ip={i0:.6g} A, Ig2={i1:.6g} A, Rk={rk:.6g} ohm")
+    inl = np.array([i0, i1])
+    w = m0["Si"] @ (m0["Nup"].T @ u - m0["Nip"].T @ inl)
+    nodes = dict(zip(circuit.NODES, w[:len(circuit.NODES)]))
+    return dict(vg1k=v[0], vg2k=v[1], vg3k=v[2], vak=v[3], vgk=v[0], ip=i0, ig2=i1, ik=i0 + i1, ia=i0,
+                nodes=nodes, w=w, rk=rk)
+
+
+def cathode_resistor(bias_ma=BIAS_MA, par=DUAL_CONTROL, newton=tuple(NEWTON.values())):
+    """The cathode resistor (ohms) whose DC operating point draws bias_ma mA of cathode current (Ip + Ig2): Brent's
+    method on log10(Rk) over RK_LOG10 (Ik falls monotonically with Rk). Raises OperatingPointError outside the
+    bracket. Converged to 1e-13 in log10(Rk), i.e. Ik to ~1e-12 relative."""
+    ik = bias_ma * 1e-3
+    def err(lg):
+        return operating_point(10.0 ** lg, par, newton)["ik"] / ik - 1.0
+    lo, hi = RK_LOG10
+    if not err(lo) > 0.0 > err(hi):
+        raise OperatingPointError(f"bias {bias_ma} mA is outside what Rk = 10^{lo}..10^{hi} ohm can set")
+    return 10.0 ** brentq(err, lo, hi, xtol=1e-13, rtol=4 * np.finfo(float).eps)
 
 
 class Stage(_Stage12AX7):
-    def __init__(self, fs, bias=1.0, drive=1.0, output=1.0, pentode=DUAL_CONTROL, quality="standard", filt="fir",
+    def __init__(self, fs, bias=BIAS_MA, drive=1.0, output=1.0, pentode=DUAL_CONTROL, quality="standard", filt="fir",
                  newton=None):
-        nw = dict(max_it=MAX_IT, tol_v=TOL_V, tol_f=TOL_F)
+        nw = dict(NEWTON)
         if set(newton or {}) - set(nw):
             raise TypeError(f"unknown newton option(s) {sorted(set(newton) - set(nw))}, expected {sorted(nw)}")
         nw.update(newton or {})
@@ -37,32 +80,15 @@ class Stage(_Stage12AX7):
         self.rs = Resampler(fs, self.os, filt)
         self.fs = fs * self.os
         self.drive, self.output, self.bias, self.par = drive, output, bias, pentode
-        self.m = circuit.build(self.fs, rk_scale=bias, prewarp_hz=self.prewarp_hz)
+        self.rk = cathode_resistor(bias, pentode, self.newton)
+        self.m = circuit.build(self.fs, self.rk, prewarp_hz=self.prewarp_hz)
         self.K = self.m["K"].tolist()
         self.supplies = circuit.sources()
-        self.dc = self.operating_point()
+        self.dc = operating_point(self.rk, pentode, self.newton)
         self.reset()
 
-    # ---- DC operating point: capacitors open, same NR solver, from zero valve current
-    def operating_point(self):
-        m0 = circuit.build(self.fs, rk_scale=self.bias, dc=True)
-        u = np.r_[0.0, self.supplies]
-        p = m0["H"] @ u
-        K0 = m0["K"].tolist()
-        i0 = i1 = 0.0
-        # source-stepping on all supplies (HT, EC2, EC3) in 10 steps, as the 12AX7 stage does on HT
-        for k, s in enumerate(np.linspace(0.1, 1.0, 10), 1):
-            v, i0, i1, it, ok = solve((p * s).tolist(), K0, i0, i1, self.par, *self.newton)
-            if not ok:
-                raise OperatingPointError(
-                    f"DC operating point did not converge at source step {k}/10 (supplies x {s:.1f}): "
-                    f"{it} Newton iterations (max_it, tol_v, tol_f = {self.newton}), best iterate v={v}, "
-                    f"Ip={i0:.6g} A, Ig2={i1:.6g} A, bias={self.bias}")
-        inl = np.array([i0, i1])
-        w = m0["Si"] @ (m0["Nup"].T @ u - m0["Nip"].T @ inl)
-        nodes = dict(zip(circuit.NODES, w[:len(circuit.NODES)]))
-        return dict(vg1k=v[0], vg2k=v[1], vg3k=v[2], vak=v[3], vgk=v[0], ip=i0, ig2=i1, ik=i0 + i1, ia=i0,
-                    nodes=nodes, w=w)
+    def swap_bias(self, bias):
+        raise NotImplementedError("the 6AS6 stage's Rk is fixed for the run; live bias changes are #110 / #115")
 
     def reset(self):
         m, dc = self.m, self.dc
@@ -70,7 +96,8 @@ class Stage(_Stage12AX7):
         # The state runs as the DEVIATION from the operating point: X = x_dc + x, i = i_dc + di. Silence is then x = 0
         # exactly. With the absolute history state (as dk/stage.py), the large DC entries (Ck's ~113 A at hq) make the
         # per-sample rounding a constant error that (I - A)^-1 ~ fs*tau amplifies: 1.2 uV at the output after 100 ms of
-        # silence at hq, 0.14 uV at standard. p_dc = v_dc + K i_dc makes the operating point the exact fixed point.
+        # silence at hq, 0.14 uV at standard (#26, with the placeholder's 22 uF bypass cap; there is none now, #102).
+        # p_dc = v_dc + K i_dc makes the operating point the exact fixed point.
         x_dc = m["Gx"] @ m["Nx"] @ vn            # capacitor history so that every i_c = 0 at t=0
         self.i_dc = np.array([dc["ip"], dc["ig2"]])
         v_dc = np.array([dc["vg1k"], dc["vg2k"], dc["vg3k"], dc["vak"]])

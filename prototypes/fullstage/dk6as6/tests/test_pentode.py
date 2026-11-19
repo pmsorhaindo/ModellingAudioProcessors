@@ -12,7 +12,8 @@ from dk6as6 import pentode as P
 
 SETS = {"dual_control": P.DUAL_CONTROL, "refit_51": P.REFIT_51}
 # Vg1k, Vg2k, Vg3k, Vak: cut-off to positive grid, below / at / above the 120 V screen, g3 cut-off to positive,
-# plate from the knee to above HT (the stage stays inside: Vg2k ~ 117 V, Vg3k = -Vk ~ -3.3 V, Vak 5-300 V)
+# plate from the knee to above HT (the #102 stage stays inside at 0.1-0.6 mA: Vg1k ~ -4.3 to -5.3 V, Vg2k ~ 115 V,
+# Vg3k = 0 with g3 on the cathode, Vak ~ 100-180 V at rest and swinging over the knee and up to HT when driven)
 GRID = list(itertools.product([-8.0, -3.3, -1.0, 0.0, 2.0, 8.0], [0.5, 60.0, 116.7, 140.0],
                               [-12.0, -6.0, -3.3, 0.0, 4.0], [0.3, 2.0, 20.0, 120.0, 181.7, 300.0]))
 
