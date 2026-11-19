@@ -1,7 +1,7 @@
 """CI aliasing guard (#35): the lean aliasing subset for every setting x filter x drive, checked two ways.
 
-1. Absolute limit: each setting / filter / drive's worst total must stay at or below aliasing.limits_for_rate(fs).
-2. Regression ratchet: it must not read more than TOLERANCE_DB worse than the committed baseline
+1. Absolute limit: each tone's total must stay at or below its setting's aliasing.limits_for_rate(fs) limit.
+2. Regression ratchet: each tone must not read more than TOLERANCE_DB worse than its own committed baseline
    (dk/aliasing_baseline.json), even under the limit. Reading more than TOLERANCE_DB better passes, with a note
    suggesting a baseline update so the ratchet tightens.
 
@@ -15,12 +15,13 @@ between platforms and library versions and changes too small to matter. Losing o
 Run (from prototypes/fullstage):
   python -m dk.aliasing_guard [--workers N] [--json out.json]        check; exit status 1 on any failure
   python -m dk.aliasing_guard --fs 44100                           44.1 kHz FIR budget and baseline
-  python -m dk.aliasing_guard --update-baseline --reason "..."       rewrite the baseline (refused over a limit)
+  python -m dk.aliasing_guard --update-baseline --reason "..."       rewrite (refused for missing/over-limit points)
 Writes a markdown table to $GITHUB_STEP_SUMMARY when that is set. The CI job `aliasing` runs the check.
 """
 import argparse
 import datetime
 import json
+import math
 import os
 import platform
 import subprocess
@@ -41,6 +42,7 @@ def baseline_path(fs):
 
 BASELINE_44100_JSON = baseline_path(44100)
 TOLERANCE_DB = 1.5
+FORMAT_VERSION = 2
 
 
 def key(q, flt, d):
@@ -57,45 +59,69 @@ def run_subset(workers=None, triode_math="libm", fs=AL.FS):
     return [AL._job(j) for j in jobs]
 
 
-def worst_by_key(records, fs=AL.FS):
-    """{key: dict(total_dbc, tone, f_hz, tones)} for every setting / filter / drive in records."""
+def values_by_key(records):
+    """Group every measured point by setting and requested tone, without reducing to a worst value."""
     out = {}
-    for (q, flt), tones in AL.ci_tones_for_rate(fs).items():
-        for d in tones:
-            sel = AL.select(records, q, flt, d)
-            if sel:
-                w = max(sel, key=lambda r: r["total_dbc"])
-                out[key(q, flt, d)] = dict(total_dbc=w["total_dbc"], tone=w["tone"], f_hz=w["f_hz"],
-                                           tones=sorted(r["tone"] for r in sel))
+    for r in records:
+        k, tone = key(r["setting"], r["filt"], r["drive"]), str(r["tone"])
+        tones = out.setdefault(k, dict(tones={}))["tones"]
+        if tone in tones:
+            raise ValueError(f"duplicate measurement: {k} at {tone} Hz")
+        tones[tone] = dict(total_dbc=r["total_dbc"], f_hz=r["f_hz"])
+    validate_values(out)
     return out
 
 
-def compare(measured, baseline, limits, tol=TOLERANCE_DB):
-    """One row per key in `limits` ({key: limit dBc}). measured / baseline: {key: dict(total_dbc, tones, ...)}.
+def validate_values(values):
+    """The same per-tone representation is used by measurements, baseline I/O and comparison."""
+    if not isinstance(values, dict):
+        raise ValueError("baseline values must be a per-setting map")
+    for k, entry in values.items():
+        if not isinstance(entry, dict) or not isinstance(entry.get("tones"), dict) or "total_dbc" in entry:
+            raise ValueError(f"{k}: expected per-tone values, not the old single-value baseline format")
+        for tone, point in entry["tones"].items():
+            if not isinstance(tone, str) or not tone.isdecimal() or str(int(tone)) != tone or int(tone) <= 0:
+                raise ValueError(f"{k}: invalid requested tone {tone!r}; use a positive integer Hz key")
+            if not isinstance(point, dict) or any(
+                not isinstance(point.get(field), (int, float)) or isinstance(point[field], bool)
+                or not math.isfinite(point[field]) for field in ("total_dbc", "f_hz")
+            ):
+                raise ValueError(f"{k}/{tone}: each point needs finite total_dbc and f_hz values")
+
+
+def compare(measured, baseline, limits, tones, tol=TOLERANCE_DB):
+    """One row per configured setting × tone, each checked against its own baseline and setting limit.
     status: "FAIL limit" (over the absolute limit), "FAIL regression" (worse than baseline by more than tol),
-    "FAIL no baseline" (no baseline entry, or one measured on other tones), "FAIL not measured",
+    "FAIL no baseline", "FAIL not measured", "FAIL frequency" (different coherent analysis bin),
     "improved" (better than baseline by more than tol: passes, suggests a baseline update), or "ok"."""
+    validate_values(measured)
+    validate_values(baseline)
     rows = []
     for k, lim in limits.items():
-        m, b = measured.get(k), baseline.get(k)
-        row = dict(key=k, limit_dbc=lim, measured_dbc=None, baseline_dbc=None, delta_db=None, margin_db=None)
-        if m is None:
-            rows.append(dict(row, status="FAIL not measured"))
-            continue
-        row.update(measured_dbc=m["total_dbc"], tone=m.get("tone"), margin_db=lim - m["total_dbc"])
-        if b is not None and b.get("tones", m.get("tones")) == m.get("tones"):
-            row.update(baseline_dbc=b["total_dbc"], delta_db=m["total_dbc"] - b["total_dbc"])
-        if m["total_dbc"] > lim:
-            status = "FAIL limit"
-        elif row["delta_db"] is None:
-            status = "FAIL no baseline"
-        elif row["delta_db"] > tol:
-            status = "FAIL regression"
-        elif row["delta_db"] < -tol:
-            status = "improved"
-        else:
-            status = "ok"
-        rows.append(dict(row, status=status))
+        for tone in tones[k]:
+            m = measured.get(k, {}).get("tones", {}).get(str(tone))
+            b = baseline.get(k, {}).get("tones", {}).get(str(tone))
+            row = dict(key=k, tone=tone, limit_dbc=lim, measured_dbc=None, baseline_dbc=None,
+                       delta_db=None, margin_db=None)
+            if m is None:
+                rows.append(dict(row, status="FAIL not measured"))
+                continue
+            row.update(measured_dbc=m["total_dbc"], f_hz=m["f_hz"], margin_db=lim-m["total_dbc"])
+            if b is not None:
+                row.update(baseline_dbc=b["total_dbc"], delta_db=m["total_dbc"]-b["total_dbc"])
+            if m["total_dbc"] > lim:
+                status = "FAIL limit"
+            elif b is None:
+                status = "FAIL no baseline"
+            elif m["f_hz"] != b["f_hz"]:
+                status = "FAIL frequency"
+            elif row["delta_db"] > tol:
+                status = "FAIL regression"
+            elif row["delta_db"] < -tol:
+                status = "improved"
+            else:
+                status = "ok"
+            rows.append(dict(row, status=status))
     return rows
 
 
@@ -107,6 +133,11 @@ def limits_by_key(fs=AL.FS):
     return {key(q, flt, d): L for (q, flt), lim in AL.limits_for_rate(fs).items() for d, L in lim.items()}
 
 
+def tones_by_key(fs=AL.FS):
+    return {key(q, flt, d): tones for (q, flt), drives in AL.ci_tones_for_rate(fs).items()
+            for d, tones in drives.items()}
+
+
 def markdown(rows, tol=TOLERANCE_DB, baseline_meta=None, wall_s=None, baseline_name="dk/aliasing_baseline.json",
              fs=AL.FS):
     def f(v, fmt):
@@ -115,9 +146,10 @@ def markdown(rows, tol=TOLERANCE_DB, baseline_meta=None, wall_s=None, baseline_n
     head = (f"## Aliasing guard: {'FAIL' if bad else 'pass'} ({fs:g} Hz)\n\n"
             f"Absolute limit `aliasing.limits_for_rate({fs:g})`; regression tolerance {tol} dB vs `{baseline_name}`"
             + (f" (updated {baseline_meta.get('updated')}: {baseline_meta.get('reason')})" if baseline_meta else "")
-            + ". Delta = measured − baseline (positive = more aliasing); margin = limit − measured."
+            + ". Each tone has its own baseline. Delta = measured − baseline (positive = more aliasing);"
+            + " margin = limit − measured."
             + (f" {wall_s:.0f} s wall." if wall_s is not None else "") + "\n")
-    lines = [head, "| setting / filter / drive | worst tone Hz | measured dBc | baseline dBc | delta dB | limit dBc"
+    lines = [head, "| setting / filter / drive | requested tone Hz | measured dBc | baseline dBc | delta dB | limit dBc"
              " | margin dB | status |", "|---|---|---|---|---|---|---|---|"]
     for r in rows:
         st = f"**{r['status']}**" if r["status"].startswith("FAIL") else r["status"]
@@ -125,9 +157,11 @@ def markdown(rows, tol=TOLERANCE_DB, baseline_meta=None, wall_s=None, baseline_n
                      f"{f(r['baseline_dbc'], '.2f')} | {f(r['delta_db'], '+.2f')} | {r['limit_dbc']:.1f} | "
                      f"{f(r['margin_db'], '.2f')} | {st} |")
     if bad:
-        lines.append(f"\n{len(bad)} failing: " + ", ".join(f"{r['key']} ({r['status']})" for r in bad) + ".")
+        lines.append(f"\n{len(bad)} failing: " + ", ".join(
+            f"{r['key']} at {r['tone']} Hz ({r['status']})" for r in bad) + ".")
     if imp:
-        lines.append(f"\n{len(imp)} improved by more than {tol} dB (" + ", ".join(r["key"] for r in imp)
+        lines.append(f"\n{len(imp)} improved by more than {tol} dB (" + ", ".join(
+            f"{r['key']} at {r['tone']} Hz" for r in imp)
                      + "). If intended, tighten the ratchet: `python -m dk.aliasing_guard"
                      + (f" --fs {fs:g}" if fs != AL.FS else "")
                      + " --update-baseline --reason \"...\"`, and put the reason in the commit message.")
@@ -155,12 +189,27 @@ def method(fs=AL.FS):
 
 
 def load_baseline(path=BASELINE_JSON):
-    return json.load(open(path)) if os.path.exists(path) else dict(values={})
+    if not os.path.exists(path):
+        return dict(format_version=FORMAT_VERSION, values={})
+    with open(path) as fh:
+        base = json.load(fh)
+    if not isinstance(base, dict) or base.get("format_version") != FORMAT_VERSION:
+        raise ValueError(f"{path}: unsupported baseline format; expected format_version={FORMAT_VERSION} "
+                         "with per-tone values. Remeasure using --update-baseline --baseline NEW_FILE "
+                         '--reason "...", then review and replace this file')
+    if base.get("tolerance_db") != TOLERANCE_DB:
+        raise ValueError(f"{path}: baseline tolerance_db must remain {TOLERANCE_DB}")
+    validate_values(base.get("values"))
+    return base
 
 
 def write_baseline(path, measured, reason, fs=AL.FS):
+    validate_values(measured)
+    if not reason.strip():
+        raise ValueError("a baseline update needs a reason")
     with open(path, "w") as fh:
-        json.dump(dict(reason=reason, updated=datetime.date.today().isoformat(), git_rev=git_rev(),
+        json.dump(dict(format_version=FORMAT_VERSION, reason=reason, updated=datetime.date.today().isoformat(),
+                       git_rev=git_rev(),
                        tolerance_db=TOLERANCE_DB, method=method(fs), values=measured), fh, indent=1)
         fh.write("\n")
 
@@ -182,15 +231,18 @@ def main(argv=None):
     if a.update_baseline and a.triode_math != "libm":
         ap.error("the baseline is measured with --triode-math libm (what CI runs)")
     a.baseline = a.baseline or baseline_path(a.fs)
-    base = load_baseline(a.baseline)
+    try:
+        base = load_baseline(a.baseline)
+    except ValueError as exc:
+        ap.error(str(exc))
     if base["values"] and base.get("method", {}).get("fs_base", AL.FS) != a.fs:
         ap.error("baseline host rate differs from --fs; use a separate baseline file for each rate")
 
     t0 = time.perf_counter()
     recs = run_subset(a.workers, a.triode_math, a.fs)
     wall = time.perf_counter() - t0
-    measured = worst_by_key(recs, a.fs)
-    rows = compare(measured, base["values"], limits_by_key(a.fs))
+    measured = values_by_key(recs)
+    rows = compare(measured, base["values"], limits_by_key(a.fs), tones_by_key(a.fs))
     meta = {k: base[k] for k in ("updated", "reason") if k in base} or None
     md = markdown(rows, baseline_meta=meta, wall_s=wall,
                   baseline_name=shown_path(a.baseline), fs=a.fs)
@@ -205,15 +257,17 @@ def main(argv=None):
                        rows=rows, measured=measured, records=recs), open(a.json, "w"), indent=1)
 
     if a.update_baseline:
-        over = [r for r in rows if r["status"] == "FAIL limit"]
+        over = [r for r in rows if r["status"] in ("FAIL limit", "FAIL not measured")]
         if over:
-            sys.exit("not updating the baseline: over the absolute limit at " + ", ".join(r["key"] for r in over))
+            sys.exit("not updating the baseline: " + ", ".join(
+                f"{r['key']} at {r['tone']} Hz ({r['status']})" for r in over))
         write_baseline(a.baseline, measured, a.reason.strip(), a.fs)
         print(f"baseline written to {os.path.relpath(a.baseline)}. Commit it with the reason in the message, e.g.\n"
               f"  git commit -m \"Aliasing baseline: {a.reason.strip()}\" {os.path.relpath(a.baseline)}")
         return 0
     if failed(rows):
-        print("aliasing guard FAILED: " + ", ".join(f"{r['key']} ({r['status']})" for r in failed(rows)),
+        print("aliasing guard FAILED: " + ", ".join(
+            f"{r['key']} at {r['tone']} Hz ({r['status']})" for r in failed(rows)),
               file=sys.stderr)
         return 1
     return 0

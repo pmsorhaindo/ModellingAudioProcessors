@@ -512,7 +512,8 @@ Processing remains allocation-free and uses the same arithmetic/order as before 
 `results_issue96_refactor.json` records bit-identical output before/after the storage refactor and object sizes.
 `results_issue96_review_cost.json` repeats a short M1 CPU comparison for 127 / previous 231 / shipped 215.
 Both validators use `dk.aliasing.limits_for_rate(fs)`; test limits are not embedded in the realtime core.
-The original 48 kHz limits, guard and baseline remain unchanged.
+The original 48 kHz DSP, limits and CI tones remain unchanged. Both rates use the shared per-tone ratchet
+and freshly measured format-version-2 baselines; see the report above.
 
 ## Limitations
 

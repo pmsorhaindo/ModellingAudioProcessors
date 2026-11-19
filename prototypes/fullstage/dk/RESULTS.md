@@ -203,13 +203,15 @@ pytest keeps just the metric, limit-coverage and ground-truth unit tests.
 ### CI guard and baseline ratchet (#35)
 `dk/aliasing_guard.py`, run by the blocking `aliasing` CI job (separate from `test`). It runs the lean subset
 (`CI_TONES`, `CI_SETTLE_S` / `CI_WINDOW_S`: 18 points, 12 setting / filter / drive combinations) in parallel
-processes, and fails if any combination
+processes, and checks every setting × requested tone separately. It fails if any point
+
 - reads above its absolute limit (`LIMIT_DBC`, above), or
-- reads more than **1.5 dB** worse than the committed baseline `dk/aliasing_baseline.json`
+- reads more than **1.5 dB** worse than its own recorded value in `dk/aliasing_baseline.json`
   (`aliasing_guard.TOLERANCE_DB`), even under the limit.
 
-Reading more than 1.5 dB better passes, with a note suggesting a baseline update. A combination with no baseline
-entry, or whose CI tones have changed since the baseline, also fails. The job writes the table below to the step
+Reading more than 1.5 dB better passes, with a note suggesting a baseline update. A configured tone with no
+baseline entry or measurement also fails; an actual coherent frequency mismatch
+fails as well. The current job writes one row per tone (18 at 48 kHz, 11 at 44.1 kHz) to the step
 summary (measured, baseline, delta = measured − baseline, limit, margin = limit − measured, status) and uploads the
 full results (every record, the baseline used, the rows) as the `aliasing-guard-results` artifact.
 
@@ -219,7 +221,8 @@ matter. It sits halfway into the ~3 dB margin of every limit, so the ratchet tri
 octave of oversampling costs 14–19 dB at 8 V. A slightly weaker half-band shows directly in the 2 V resampler floor
 (the demo below: +2.2 dB for Kaiser β 9.0 → 8.8 in the first FIR stage).
 
-Baseline (`--update-baseline --reason "Initial baseline (#35): CI subset at 330ee9a"`, delta 0.00 dB everywhere):
+Historical initial baseline (`--update-baseline --reason "Initial baseline (#35): CI subset at 330ee9a"`);
+the table shows each setting's worst point. Current format version 2 stores all tones separately:
 
 | setting / filter / drive | worst CI tone | baseline dBc | limit dBc | margin dB |
 |---|---|---|---|---|
@@ -236,7 +239,8 @@ Baseline (`--update-baseline --reason "Initial baseline (#35): CI subset at 330e
 | eco / IIR / 2 V | 16040 Hz | −75.70 | −72.7 | 3.00 |
 | eco / IIR / 8 V | 19040 Hz | −32.60 | −29.6 | 3.00 |
 
-**Proof by deliberate degradation** (local only, reverted, never committed; `git diff` of `dk/stage.py` and
+**Historical proof by deliberate degradation** (original worst-per-setting guard, local only, reverted, never
+committed; `git diff` of `dk/stage.py` and
 `dk/resample.py` empty afterwards):
 
 | change | result | exit |
@@ -252,8 +256,9 @@ coefficients either way), so the output is bit-identical and the guard correctly
 
 **Updating the baseline** (an intended trade-off, or locking in an improvement):
 `python -m dk.aliasing_guard --update-baseline --reason "..."` reruns the subset and rewrites the baseline with the
-reason, date and git revision. Put the same reason in the commit message. It refuses while any combination is over
-its absolute limit; that needs a deliberate `LIMIT_DBC` change, documented here.
+reason, date and git revision, format version 2 and every measured tone's exact total_dbc/f_hz. Put the same
+reason in the commit message. It refuses when a configured point is missing or over its absolute limit;
+investigate those points before updating.
 
 Cost: 7.8 s wall on 8 cores (54 s CPU). CI runs it with `--workers $(nproc)` (4 on `ubuntu-latest`, so expect
 ~15–20 s plus install). The unit tests of the comparison logic (`dk/tests/test_aliasing_guard.py`, synthetic
@@ -804,7 +809,8 @@ ship 215 / 23 taps (first / later stages, Kaiser β 9), keep HQ / standard / eco
 Use the independently derived octave-headroom limits below for standard/8 V and eco/2 V; retain the original
 limits for HQ/8 V and eco/8 V, which already passed before the DSP change. This accepts a measured rate
 trade-off; it does **not** claim to meet every original 48 kHz aliasing limit or establish inaudibility. No 48 kHz
-limit, baseline, guard, factor, coefficient or delay is changed. The #95 recommendation against halving factors
+limit, factor, coefficient or delay is changed. Both rate baselines now use the shared per-tone ratchet.
+The #95 recommendation against halving factors
 at higher host rates still stands; #74's broader rate-policy work is not settled by this change.
 
 ### Method and baseline confirmation
@@ -1060,9 +1066,11 @@ Against the **pre-review 29c4153 core** on this machine with the same build flag
 waveforms (8192 samples, libm/fast × HQ/standard/eco) remain bit-identical. This is a waveform check,
 not a new full 48 kHz sweep.
 
-The original **18-point 48 kHz FIR/IIR guard and baseline are retained**. The same 15-minute CI job runs
+The original **18-point 48 kHz FIR/IIR tone set and limits are retained**; its baseline is freshly measured
+in the same per-tone format as 44.1 kHz. The same 15-minute CI job runs
 `--fs 44100` with **11 FIR points**, the chosen limits, and independent `aliasing_baseline_44100.json`
-with the unchanged 1.5 dB ratchet. The 44.1 kHz step now uses `if: success() || failure()` (C7), so a
+with the unchanged 1.5 dB tolerance applied to each tone separately. The 44.1 kHz step now uses
+`if: success() || failure()` (C7), so a
 48 kHz failure still produces both rate reports; cancellation still skips the step.
 
 | quality | 2 V CI tones Hz | 8 V CI tones Hz |
@@ -1083,8 +1091,22 @@ full 0.25 s / 1 s buffers in `results_issue96_regions.json`, and short 0.2 s / 0
 | standard / 8037 | -121.70139 | 3.40139 | -121.22442 | 2.92442 |
 | standard / 19037 | -123.27340 | 4.97340 | -123.47123 | 5.17123 |
 
-The baseline retains the existing worst-per-setting ratchet format; its 2 V tone lists now contain both
-points. All 11 measured records, including the 19037 Hz values, are committed with the guard result.
+Both baselines use `format_version: 2`, retaining reason / updated / git_rev / tolerance_db / method.
+Each `values[setting]["tones"][requested_tone]` maps to an unrounded `total_dbc` and actual coherent `f_hz`.
+The guard compares each point to its own recorded total, using the setting's unchanged absolute limit
+and the same 1.5 dB tolerance. All 11 / 18 measured records are committed with the two guard results.
+The loader, writer and comparison are shared across rates.
+
+This removes the former worst-per-setting gap: a better tone can now fail the ratchet even when its
+regression leaves the setting's worst value unchanged. Synthetic guard tests exercise that case at
+44.1 kHz HQ/standard 2 V and a 48 kHz multi-tone setting, using an increase of 1.51 dB while remaining
+below the limit and better than the unchanged worst tone. Boundary, missing-point, coherent-frequency,
+round-trip and legacy-format rejection tests also cover the shared path.
+
+Legacy single-value files fail with a useful error before measurement, including during an update.
+Migration therefore measures into a new --baseline path with --update-baseline --reason, validates
+complete coverage/limits, then replaces the corresponding committed file. No old worst value is
+expanded or padded to stand in for an unmeasured tone.
 
 The entire short grid (0.2 s settling / 0.1 s analysis) confirms the subset covers **every full and short
 worst tone** with 215 taps. Short-buffer worst totals are −121.93416 / −64.59071 / −121.22442 / −47.42561 /
@@ -1094,9 +1116,31 @@ criterion applies to the full 2 V grids; standard/2 V's short-window margin is 2
 Mid-band 10037 Hz points at 8 V remain. Coverage tests examine all committed records, and the Python
 guard independently measures its actual short-buffer subset and baseline.
 
-The 44.1 kHz baseline is intentionally updated with `--fs 44100 --update-baseline --reason`:
-“Add 19037 Hz beside 8037 Hz for HQ and standard 2 V near-Nyquist coverage; retain 215 taps and all existing
-limits; 48 kHz unchanged”. The 48 kHz baseline is not refreshed.
+Both baselines were regenerated from fresh CI-window measurements on the 62b3272-based worktree,
+without changing DSP, filters, limits, tones or tolerance. Reasons recorded via --update-baseline --reason:
+
+- 48 kHz: “Per-tone ratchet migration: freshly measured 48 kHz CI points; preserve 1.5 dB tolerance, limits, tones and DSP”.
+- 44.1 kHz: “Per-tone ratchet migration: freshly measured 44.1 kHz CI points; preserve 1.5 dB tolerance, limits, tones and DSP”.
+
+No rounding or margin padding is applied to recorded values. For example, this measured 44.1 kHz point
+is stored as follows (excerpt; the file also contains the metadata and other tone entries):
+
+```json
+{
+  "format_version": 2,
+  "values": {
+    "hq/fir/2V": {
+      "tones": {
+        "19037": {
+          "total_dbc": -123.44120206910112,
+          "f_hz": 19040.0
+        }
+      }
+    }
+  }
+}
+```
+
 A baseline from another host rate is refused before measuring.
 
 ### Shared geometry, storage and host reporting (C3–C5, C8–C9)
@@ -1172,17 +1216,21 @@ pre-review 231 implementation, excluding unchanged engine/ring/allocator overhea
 
 ### Verification and unmeasured scope
 
+Per-tone migration: the two affected pytest modules pass **44 tests**, including the non-worst-tone regression,
+format I/O, legacy rejection and committed per-tone coverage. Both measured guards pass all 29 point comparisons.
+The earlier full DSP/native/host validation below is retained; DSP source and parameters are unchanged here.
+
 All numerical suites ran serially. `python -m pytest -q dk/tests cpp/tests` passes **243 tests, 2 skipped**
 (x86-only builds on arm64), including native C++ core vectors, mono/stereo no-allocation checks, SIMD/scalar,
 TSan, rate/geometry parity, all affected Python suites and the short functional bench smoke.
 The separate pure-refactor check passed 18 bit-identical waveforms; the shipped check passed six unchanged
 48 kHz waveforms, both 114-point full sweeps, the complete short grid, reference and rest criteria.
 
-Both Python guards pass every limit and ratchet row: **29.75 s at 48 kHz** (18 points), **19.13 s at 44.1 kHz**
+Both Python guards pass every limit and ratchet row: **14.95 s at 48 kHz** (18 points), **9.20 s at 44.1 kHz**
 (11 points), serially on this M1, recorded in `results_issue96_guard_{48000,44100}.json`.
-Their 48.88 s local total is not a hosted-runner timing claim. CI keeps its 15-minute timeout and adds no
+Their 24.16 s local total is not a hosted-runner timing claim. CI keeps its 15-minute timeout and adds no
 full sweep, C++ build or benchmark to the aliasing job. The #95 JSONs, 48 kHz limits/tones, `MARGIN_DB`,
-64× ground truth and `aliasing_baseline.json` are unchanged.
+and 64× ground truth are unchanged. Both baseline files are deliberately regenerated in per-tone format.
 
 Release arm64 CMake build of the shared engine, packaged VST3 and null tool succeeds.
 `map_engine_test` and `map_smoothing_test` both pass, including exact engine nulls, bypass/live switching

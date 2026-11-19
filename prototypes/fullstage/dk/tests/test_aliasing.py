@@ -2,9 +2,9 @@
 non-harmonic energy over the full offset-tone sweep (1037 ... 19037 Hz at 2 V and 8 V, 1 s windows; validate.py
 runs it) plus aliasing.MARGIN_DB. The per-setting limit check on the lean subset (aliasing.CI_TONES with CI_SETTLE_S /
 CI_WINDOW_S buffers) is enforced by dk.aliasing_guard, the blocking `aliasing` CI job (#35), together with a baseline
-ratchet; run it locally with `python -m dk.aliasing_guard`. Here: the limits and CI tones cover every setting, filter
-and drive, the metric itself (periodic Hann, coherent bins, masks) is checked on synthetic signals, and the 64x ground
-truth sits below every limit.
+ratchet for each tone; run it locally with `python -m dk.aliasing_guard`. Here: the limits and CI tones cover every
+setting, filter and drive, the metric itself (periodic Hann, coherent bins, masks) is checked on synthetic signals,
+and the 64x ground truth sits below every limit.
 """
 import os
 import sys
@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from dk import aliasing as A
+from dk import aliasing_guard as G
 from dk.stage import QUALITY
 
 FS = A.FS
@@ -109,3 +110,19 @@ def test_44100_ci_protects_both_floor_regions_at_2v():
     # 8037 is worst with 215 taps; 19037 guards an independently vulnerable near-Nyquist region (N1).
     for q in ("hq", "standard"):
         assert {8037, 19037} <= set(A.CI_TONES_44100[(q, "fir")][2.0])
+
+
+@pytest.mark.parametrize("fs", [48000, 44100])
+def test_guard_records_compare_each_ci_tone_to_its_own_baseline(fs):
+    path = os.path.join(os.path.dirname(A.__file__), f"results_issue96_guard_{fs}.json")
+    data = json.load(open(path))
+    base = G.load_baseline(G.baseline_path(fs))
+    measured = G.values_by_key(data["records"])
+    rows = G.compare(measured, base["values"], G.limits_by_key(fs), G.tones_by_key(fs))
+    expected = {(k, t) for k, tones in G.tones_by_key(fs).items() for t in tones}
+    assert {(r["key"], r["tone"]) for r in rows} == expected and len(rows) == len(expected)
+    assert not G.failed(rows)
+    for r in rows:
+        own_baseline = base["values"][r["key"]]["tones"][str(r["tone"])]
+        assert r["baseline_dbc"] == own_baseline["total_dbc"]
+        assert r["delta_db"] == r["measured_dbc"] - own_baseline["total_dbc"]

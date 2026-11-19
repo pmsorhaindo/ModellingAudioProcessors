@@ -95,8 +95,9 @@ jobs:
         run: plugin/tests/run_checks.sh plugin/build --au
 
   # Blocking aliasing guard (#35): the lean aliasing subset for every setting x filter at 2 V and 8 V, against
-  # the absolute limits (dk/aliasing.py LIMIT_DBC) and the committed baseline ratchet (dk/aliasing_baseline.json,
-  # 1.5 dB tolerance). To change the baseline on purpose: python -m dk.aliasing_guard --update-baseline --reason "..."
+  # the absolute limits (dk/aliasing.py LIMIT_DBC) and each tone's own committed baseline (separate rate files,
+  # per-tone format version 2, unchanged 1.5 dB tolerance). To update intentionally:
+  # python -m dk.aliasing_guard --update-baseline --reason "..."
   aliasing:
     name: aliasing
     runs-on: ubuntu-latest

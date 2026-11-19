@@ -1,7 +1,8 @@
 {
- "reason": "Add 19037 Hz beside 8037 Hz for HQ and standard 2 V near-Nyquist coverage; retain 215 taps and all existing limits; 48 kHz unchanged",
+ "format_version": 2,
+ "reason": "Per-tone ratchet migration: freshly measured 44.1 kHz CI points; preserve 1.5 dB tolerance, limits, tones and DSP",
  "updated": "2026-11-19",
- "git_rev": "6156725",
+ "git_rev": "62b3272",
  "tolerance_db": 1.5,
  "method": {
   "fs_base": 44100,
@@ -46,57 +47,72 @@
  },
  "values": {
   "hq/fir/2V": {
-   "total_dbc": -121.93415719071223,
-   "tone": 8037,
-   "f_hz": 8040.0,
-   "tones": [
-    8037,
-    19037
-   ]
+   "tones": {
+    "8037": {
+     "total_dbc": -121.93415719071223,
+     "f_hz": 8040.0
+    },
+    "19037": {
+     "total_dbc": -123.44120206910112,
+     "f_hz": 19040.0
+    }
+   }
   },
   "hq/fir/8V": {
-   "total_dbc": -64.59070770042209,
-   "tone": 19037,
-   "f_hz": 19040.0,
-   "tones": [
-    10037,
-    19037
-   ]
+   "tones": {
+    "10037": {
+     "total_dbc": -73.04455558952753,
+     "f_hz": 10040.0
+    },
+    "19037": {
+     "total_dbc": -64.59070770042209,
+     "f_hz": 19040.0
+    }
+   }
   },
   "standard/fir/2V": {
-   "total_dbc": -121.22442455372278,
-   "tone": 8037,
-   "f_hz": 8040.0,
-   "tones": [
-    8037,
-    19037
-   ]
+   "tones": {
+    "8037": {
+     "total_dbc": -121.22442455372278,
+     "f_hz": 8040.0
+    },
+    "19037": {
+     "total_dbc": -123.471233354997,
+     "f_hz": 19040.0
+    }
+   }
   },
   "standard/fir/8V": {
-   "total_dbc": -47.425605133231166,
-   "tone": 16037,
-   "f_hz": 16040.0,
-   "tones": [
-    10037,
-    16037
-   ]
+   "tones": {
+    "10037": {
+     "total_dbc": -58.606741060060436,
+     "f_hz": 10040.0
+    },
+    "16037": {
+     "total_dbc": -47.425605133231166,
+     "f_hz": 16040.0
+    }
+   }
   },
   "eco/fir/2V": {
-   "total_dbc": -68.22746347752582,
-   "tone": 13037,
-   "f_hz": 13040.0,
-   "tones": [
-    13037
-   ]
+   "tones": {
+    "13037": {
+     "total_dbc": -68.22746347752582,
+     "f_hz": 13040.0
+    }
+   }
   },
   "eco/fir/8V": {
-   "total_dbc": -29.722033287676854,
-   "tone": 18037,
-   "f_hz": 18030.0,
-   "tones": [
-    10037,
-    18037
-   ]
+   "tones": {
+    "10037": {
+     "total_dbc": -44.761686744567356,
+     "f_hz": 10040.0
+    },
+    "18037": {
+     "total_dbc": -29.722033287676854,
+     "f_hz": 18030.0
+    }
+   }
   }
  }
 }

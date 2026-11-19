@@ -36,7 +36,8 @@ ngspice netlist, which `spice/run_refs.py` generates; see `spice/README.md`).
    64× ground truth, with a limit for each setting and resampler (worst case + 3 dB).
 10. CI aliasing guard (#35, `dk/aliasing_guard.py`): a blocking `aliasing` CI job runs the lean subset for every
     setting × resampler at 2 V and 8 V. It fails over the absolute limit, and also on any regression of more than
-    1.5 dB against the committed baseline (`dk/aliasing_baseline.json`). Proven with deliberately degraded local changes,
+    1.5 dB on any tone against its own committed baseline (`dk/aliasing_baseline.json`). Proven with
+    deliberately degraded local changes,
     never committed (`dk/RESULTS.md`).
 11. Netlists generated from `dk/circuit.VALUES` (#4): `spice/run_refs.py` builds every ngspice netlist from VALUES and
     the shared `SOLVER`; the hand-written `.cir` duplicates are gone, and `spice/tests/test_netlists.py` fails on any
@@ -70,17 +71,32 @@ python -m dk6as6.compare_fits                      # 6AS6: #51 vs #55 harmonics 
 
 ### Aliasing guard and its baseline (#35)
 The `aliasing` CI job runs `python -m dk.aliasing_guard` at 48 kHz, then `--fs 44100` for the 11-point FIR subset.
-At 48 kHz, for each setting / resampler / drive it fails if the
-worst total is over `aliasing.LIMIT_DBC`, or if it is more than **1.5 dB** worse than `dk/aliasing_baseline.json`
+At 48 kHz, for each setting / resampler / drive / requested tone it fails if that tone's
+total is over `aliasing.LIMIT_DBC`, or if it is more than **1.5 dB** worse than its own recorded value in
+`dk/aliasing_baseline.json`
 (`aliasing_guard.TOLERANCE_DB`), even under the limit. More than 1.5 dB better passes, with a note to update the
-baseline. The job writes a per-setting table to the run's step summary and uploads `aliasing_guard_results.json` as
+baseline. The job writes a per-tone table to the run's step summary and uploads `aliasing_guard_results.json` as
 the `aliasing-guard-results` artifact.
 
 44.1 kHz uses `aliasing.LIMIT_DBC_44100`, `CI_TONES_44100`, and `dk/aliasing_baseline_44100.json`, with the same
-1.5 dB ratchet. The first FIR half-band has 215 taps at this rate, retaining 127 at every other rate. The
+1.5 dB per-tone ratchet and shared loader/writer/comparison code. The first FIR half-band has 215 taps at this rate,
+retaining 127 at every other rate. The
 [derivation, experiments and costs](dk/RESULTS.md#441-khz-aliasing-96) explain the rate-specific internal-folding
 budget; it is not an audibility claim. Baseline updates select only the requested rate: add `--fs 44100` to
 `--update-baseline --reason "..."`. A baseline for another rate is refused.
+
+Baselines use `format_version: 2`: `values[setting]["tones"][requested_tone]` stores that point's unrounded
+`total_dbc` and actual coherent `f_hz`. The JSON tone key is the requested integer frequency as a string;
+the actual short-window bin can differ. Every configured point gets its own comparison, including
+non-worst tones. Missing measurements/baseline points and mismatched coherent frequencies fail.
+
+Old single-value baselines are rejected before DSP runs, even with `--update-baseline`. To migrate, measure
+into a new file, review it, then replace the rate's committed baseline (repeat for each rate):
+
+```bash
+python -m dk.aliasing_guard --fs 44100 --baseline new-baseline.json --update-baseline --reason "Per-tone baseline migration"
+# Review new-baseline.json, then replace dk/aliasing_baseline_44100.json.
+```
 
 To change the baseline on purpose (an intended trade-off, or locking in an improvement):
 ```bash
@@ -88,8 +104,7 @@ python -m dk.aliasing_guard --update-baseline --reason "first FIR half-band 127 
 git commit -m "Aliasing baseline: <the same reason>" dk/aliasing_baseline.json
 ```
 The reason is stored in the baseline JSON. **Put the same reason in the commit message**, so `git log
-dk/aliasing_baseline.json` tells you why each change was made. The update is refused while any setting is over its
-absolute limit: change `LIMIT_DBC` (and RESULTS.md) for that, deliberately.
+dk/aliasing_baseline.json` tells you why each change was made. The update requires all configured points to be measured and within their existing absolute limits.
 Python needs numpy and scipy (see `../valvelab/requirements.txt`). Plots are not committed (the
 connector used for commits only accepts text); `results.json` carries the numbers.
 
