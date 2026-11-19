@@ -100,8 +100,9 @@ def hiir_nbr_coefs(attenuation, transition):
 PASS_HZ = 20000.0
 FIR_FIRST, FIR_LATER = (127, 9.0), (23, 9.0)   # (taps, Kaiser beta): >= 92.8 dB stop, < 0.0003 dB ripple
 # At 44.1 kHz the 20 kHz -> fs-20 kHz transition is 4.1 kHz instead of 8 kHz. Scale the tap length inversely with
-# normalised transition width, then round up to 4m+3: 127*(8000/96000)/(4100/88200) -> 231. See RESULTS.md (#96).
-FIR_FIRST_44100 = (231, 9.0)
+# normalised transition width suggests 231. The full 127..231 tap sweep selects the shortest length retaining
+# MARGIN_DB headroom at both HQ/standard 2 V: 215. See RESULTS.md (#96, C1).
+FIR_FIRST_44100 = (215, 9.0)
 FIRST_FIR_TAPS_BY_RATE = {44100: FIR_FIRST_44100[0]}
 
 

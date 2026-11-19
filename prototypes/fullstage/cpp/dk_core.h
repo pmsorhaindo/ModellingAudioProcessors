@@ -109,7 +109,7 @@ inline constexpr Quality HQ{16, 0.0}, STANDARD{8, 0.0}, ECO{4, 17300.0};   // st
 inline constexpr int MAX_OS = 16;                       // fixed buffers: os = 2, 4, 8 or 16
 
 inline constexpr int FIR_FIRST_TAPS = 127, FIR_LATER_TAPS = 23;   // resample.FIR_FIRST / FIR_LATER, Kaiser beta 9
-inline constexpr int FIR_FIRST_44100_TAPS = 231;         // resample.FIR_FIRST_44100 (#96); other rates unchanged
+inline constexpr int FIR_FIRST_44100_TAPS = 215;         // resample.FIR_FIRST_44100 (#96); other rates unchanged
 inline constexpr int FIR_MAX_TAPS = FIR_FIRST_44100_TAPS;
 inline constexpr double FIR_BETA = 9.0;
 

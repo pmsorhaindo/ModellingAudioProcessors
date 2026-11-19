@@ -1,15 +1,14 @@
 {
- "reason": "Establish 44.1 kHz FIR ratchet after transition-scaled 231-tap design and #96 octave-headroom limits; 48 kHz untouched",
- "updated": "2026-11-18",
- "git_rev": "bb588c4",
+ "reason": "Select 215 first-stage taps from the full 27-length sweep with 3 dB nominal headroom; retain original HQ/8V and eco/8V limits, cover 8037 Hz, and leave 48 kHz unchanged",
+ "updated": "2026-11-19",
+ "git_rev": "9c214de",
  "tolerance_db": 1.5,
  "method": {
   "fs_base": 44100,
   "tones": {
    "hq/fir": {
     "2V": [
-     18037,
-     19037
+     8037
     ],
     "8V": [
      10037,
@@ -18,8 +17,7 @@
    },
    "standard/fir": {
     "2V": [
-     18037,
-     19037
+     8037
     ],
     "8V": [
      10037,
@@ -46,16 +44,15 @@
  },
  "values": {
   "hq/fir/2V": {
-   "total_dbc": -122.08612446299482,
-   "tone": 19037,
-   "f_hz": 19040.0,
+   "total_dbc": -121.93415719071223,
+   "tone": 8037,
+   "f_hz": 8040.0,
    "tones": [
-    18037,
-    19037
+    8037
    ]
   },
   "hq/fir/8V": {
-   "total_dbc": -64.59069214191206,
+   "total_dbc": -64.59070770042209,
    "tone": 19037,
    "f_hz": 19040.0,
    "tones": [
@@ -64,16 +61,15 @@
    ]
   },
   "standard/fir/2V": {
-   "total_dbc": -122.14769528923661,
-   "tone": 19037,
-   "f_hz": 19040.0,
+   "total_dbc": -121.22442455372278,
+   "tone": 8037,
+   "f_hz": 8040.0,
    "tones": [
-    18037,
-    19037
+    8037
    ]
   },
   "standard/fir/8V": {
-   "total_dbc": -47.425606976070924,
+   "total_dbc": -47.425605133231166,
    "tone": 16037,
    "f_hz": 16040.0,
    "tones": [
@@ -82,7 +78,7 @@
    ]
   },
   "eco/fir/2V": {
-   "total_dbc": -68.2270076495978,
+   "total_dbc": -68.22746347752582,
    "tone": 13037,
    "f_hz": 13040.0,
    "tones": [
@@ -90,7 +86,7 @@
    ]
   },
   "eco/fir/8V": {
-   "total_dbc": -29.72205080527288,
+   "total_dbc": -29.722033287676854,
    "tone": 18037,
    "f_hz": 18030.0,
    "tones": [

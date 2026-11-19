@@ -26,6 +26,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--workers", type=int, default=1)
     ap.add_argument("--scratch", type=Path, required=True)
+    ap.add_argument("--baseline-exe", type=Path, help="pre-review core for the 48 kHz bit comparison")
     ap.add_argument("--ci-only", action="store_true", help="retain full/reference measurements, recheck short tones")
     args = ap.parse_args()
     out = dict(method=dict(fs=44100, quality="fixed 16/8/4; eco prewarp 17300 Hz", filter="fir", triode_math="libm",
@@ -99,8 +100,9 @@ def main():
     assert [(r["setting"], r["drive"], r["tone"]) for r in pr] == [
         (r["setting"], r["drive"], r["tone"]) for r in cr]
     out["aliasing_max_python_cpp_diff_db"] = max(abs(p["total_dbc"]-c["total_dbc"]) for p, c in zip(pr, cr))
-    # Same machine/build flags, pinned #95 binary vs current core, two math paths and all settings at 48 kHz.
-    old = args.scratch.resolve() / "baseline/test_core"
+    # Same machine/build flags; compare against the explicitly supplied pre-review core, or original #95 binary.
+    old = args.baseline_exe.resolve() if args.baseline_exe else args.scratch.resolve() / "baseline/test_core"
+    out["method"]["48000_reference"] = "29c4153 pre-review" if args.baseline_exe else "bb588c4 (#95)"
     out["unchanged_48000"] = []
     for q, (os_, pw) in QUALITY.items():
         for math in ("libm", "fast"):

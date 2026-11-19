@@ -178,6 +178,21 @@ def entries():
         add(f"case.{name}.in", x)
         add(f"case.{name}.out", y)
         add(f"case.{name}.stats", stats)
+    out.extend(resampler_44100_entries())
+    return out
+
+
+def resampler_44100_entries():
+    """Separate seed and appended entries preserve every existing 48 kHz vector byte."""
+    from dk.resample import _FirHB, FIR_FIRST_44100
+    out = [(f"taps.fir{FIR_FIRST_44100[0]}", _FirHB(*FIR_FIRST_44100).h)]
+    rng = np.random.default_rng(9644100)
+    for os_ in (4, 8, 16):
+        x = r10(rng.normal(0.0, 1.0, 256))
+        y = r10(rng.normal(0.5, 1.0, 256 * os_))
+        p = f"rs44100_{os_}"
+        out.extend([(p + ".up.in", x), (p + ".up.out", Resampler(44100, os_).up(x)),
+                    (p + ".down.in", y), (p + ".down.out", Resampler(44100, os_).down(y))])
     return out
 
 

@@ -77,7 +77,7 @@ baseline. The job writes a per-setting table to the run's step summary and uploa
 the `aliasing-guard-results` artifact.
 
 44.1 kHz uses `aliasing.LIMIT_DBC_44100`, `CI_TONES_44100`, and `dk/aliasing_baseline_44100.json`, with the same
-1.5 dB ratchet. The first FIR half-band has 231 taps at this rate, retaining 127 at every other rate. The
+1.5 dB ratchet. The first FIR half-band has 215 taps at this rate, retaining 127 at every other rate. The
 [derivation, experiments and costs](dk/RESULTS.md#441-khz-aliasing-96) explain the rate-specific internal-folding
 budget; it is not an audibility claim. Baseline updates select only the requested rate: add `--fs 44100` to
 `--update-baseline --reason "..."`. A baseline for another rate is refused.

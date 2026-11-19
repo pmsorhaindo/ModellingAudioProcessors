@@ -77,6 +77,8 @@ def test_fir_latency_is_exact(os_, fs):
 
 @pytest.mark.parametrize("os_", FACTORS)
 def test_44100_fir_preserves_filter_spec(os_):
+    """Nonregression of the original filter spec (127 taps also meets it). The stage aliasing guard
+    discriminates the 2 V resampler floor; peak stopband rejection alone does not predict it."""
     rs = Resampler(44100, os_, "fir")
     f, H = measured_up_response(rs)
     assert np.max(np.abs(20 * np.log10(H[f <= 20000]))) < PASS_DB / 2

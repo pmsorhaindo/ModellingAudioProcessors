@@ -75,7 +75,7 @@ def test_44100_budget_uses_independent_octave_secants_and_preserves_resampler_fl
     old = json.load(open(os.path.join(os.path.dirname(A.__file__), "results_sample_rates.json")))
     for (q, flt), limits in A.LIMIT_DBC_44100.items():
         for d, lim in limits.items():
-            if q in ("hq", "standard") and d == 2.0:
+            if (q in ("hq", "standard") and d == 2.0) or (q in ("hq", "eco") and d == 8.0):
                 assert lim == A.LIMIT_DBC[(q, flt)][d]
             else:
                 w48 = A.worst(old["rates"]["48000"]["aliasing_records"], q, flt, d)["total_dbc"]

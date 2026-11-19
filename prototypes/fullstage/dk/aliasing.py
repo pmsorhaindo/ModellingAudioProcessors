@@ -91,17 +91,18 @@ CI_TONES = {
 }
 
 # #96: 44.1 kHz FIR policy, measured and derived in RESULTS.md / results_issue96.json. Keep the resampler-floor
-# limits at 2 V HQ/standard; the 231-tap first FIR restores them. For the internal-folding cases, extrapolate the
+# limits at 2 V HQ/standard; the 215-tap first FIR restores them. For the internal-folding cases, extrapolate the
 # independent #95 48->96 kHz octave secant over log2(48000/44100), preserving the original margin and rounding up
-# to 0.1 dB. This is a rate/headroom budget, not an audibility claim. IIR at 44.1 kHz is not yet validated.
+# to 0.1 dB. Retain the original HQ/8 V and eco/8 V limits: #95 already passed them at 44.1 kHz.
+# This is a rate/headroom budget, not an audibility claim. IIR at 44.1 kHz is not yet validated.
 LIMIT_DBC_44100 = {
-    ("hq", "fir"): {2.0: -118.2, 8.0: -61.1},
+    ("hq", "fir"): {2.0: -118.2, 8.0: -63.0},
     ("standard", "fir"): {2.0: -118.3, 8.0: -46.8},
-    ("eco", "fir"): {2.0: -65.9, 8.0: -27.2},
+    ("eco", "fir"): {2.0: -65.9, 8.0: -29.6},
 }
 CI_TONES_44100 = {
-    ("hq", "fir"): {2.0: (18037, 19037), 8.0: (10037, 19037)},
-    ("standard", "fir"): {2.0: (18037, 19037), 8.0: (10037, 16037)},
+    ("hq", "fir"): {2.0: (8037,), 8.0: (10037, 19037)},
+    ("standard", "fir"): {2.0: (8037,), 8.0: (10037, 16037)},
     ("eco", "fir"): {2.0: (13037,), 8.0: (10037, 18037)},
 }
 

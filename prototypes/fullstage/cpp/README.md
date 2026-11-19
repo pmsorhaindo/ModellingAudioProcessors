@@ -30,8 +30,8 @@ stays the reference. Everything here is checked against it.
   `sizeof(Coeffs)` is 1.3 kB.
 * **Quality settings.** `HQ` 16×, `STANDARD` 8× (default) and `ECO` 4× with the 17.3 kHz small-cap pre-warp are
   `stage.QUALITY` (tested). The core owns the oversampling: the same streaming half-band FIR cascade (127 / 23 taps,
-  first stage 231 taps at 44.1 kHz only, Kaiser β 9, polyphase), pad delay and decimator priming. At 8× the delay is
-  124 base samples at 44.1 kHz and 72 elsewhere. See the #96 report below.
+  first stage 215 taps at 44.1 kHz only, Kaiser β 9, polyphase), pad delay and decimator priming. At 8× the delay is
+  116 base samples at 44.1 kHz and 72 elsewhere. See the #96 report below.
   `filt="iir"` is **not ported**: the Python stage stays the reference for the IIR resampler.
 * **Same arithmetic as Python.** The triode, the solver (pnjlim, line search, best iterate) and the resampler's
   transposed direct form II (scipy `lfilter` order) do the same operations in the same order. In a build without
@@ -489,31 +489,35 @@ with no C++/Python reproduction failures. Ruff 0.17.3 passes with the unchanged 
 
 ## 44.1 kHz FIR and aliasing policy (#96)
 
-Only at **44,100 Hz**, `Stage::prepare()` and `StereoStage::prepare()` now pass the base rate to
-`ResamplerT::prepare(os, fs_base)`, selecting a **231-tap** first half-band instead of 127; later stages stay
-23 taps, Kaiser β stays 9. The Python design makes the same choice. The factors and eco pre-warp stay 16 / 8 / 4
-and 17.3 kHz. Other rates retain their original taps, coefficients and delay. The second argument defaults to
-48 kHz for direct `Resampler::prepare(os)` callers.
+Only at **44,100 Hz**, the shared `first_fir_taps(fs)` rule selects **215 taps** instead of 127.
+Later stages stay 23 taps, Kaiser β stays 9, and the Python design selects the same geometry. A full
+27-length / 19-tone HQ+standard 2 V sweep selects the shortest length retaining the original 3 dB margin;
+159 taps passes the absolute limits but its worst tone moves to 8,037 Hz and leaves 1.91 dB. See
+[the #96 report](../dk/RESULTS.md#441-khz-aliasing-96) and `../dk/results_issue96_taps.json`.
 
-HQ / standard / eco now report **125 / 124 / 121 base samples** at 44.1 kHz (2.8345 / 2.8118 / 2.7438 ms), an
-increase of 52 samples (1.1791 ms); elsewhere the original 73 / 72 / 69 counts remain. The shared plugin engine's
-target-latency table must distinguish these rates: it now derives both tables from the core. Its bypass ring
-already has room. AU/VST3 glue is unchanged; null-test expectations pass their actual host rate.
+`ResamplerT::prepare(os, fs_base)` requires an explicit rate. `fir_geometry(os, fs_base)` is the single pure
+geometry calculation for the resampler and plugin latency reporting; no runtime filter design occurs in a
+latency query. HQ / standard / eco report **117 / 116 / 113 base samples** at 44.1 kHz, **+44 samples
+(0.99773 ms)** versus 127 taps. Elsewhere the original 73 / 72 / 69 remain. The factors and eco pre-warp
+stay 16 / 8 / 4 and 17.3 kHz. Only the measured 44,100 Hz exception is certified; nearby nonstandard and
+lower rates keep historical geometry without an aliasing claim.
 
-The full Python/C++ evidence, octave-headroom limit derivation, pre-warp and ADAA experiments, short M1 CPU
-comparisons, criteria and limitations are in [the #96 report](../dk/RESULTS.md#441-khz-aliasing-96).
-`../dk/results_issue96_shipped.json` runs the actual core, including the full reference validation and offset
-sweep. Both backends use `dk.aliasing.limits_for_rate(fs)` for acceptance; the C++ core does not embed aliasing
-test limits. The original 48 kHz `LIMIT_DBC` and its guard/baseline are retained.
+The engine fills an atomic target-latency cache in its constructor and non-RT `prepare()`, and the active
+stage retains its existing latency query. VST3 pre-activation latency/tail queries derive geometry from
+`processSetup.sampleRate`, since the engine has not yet prepared that rate. Its dry ring already has room.
+The first half-band owns the long capacity; later branches and tap arrays have only their 23-tap capacity.
+Processing remains allocation-free and uses the same arithmetic/order as before the refactor.
 
-Fixed resampler storage grows from 27,496 / 45,376 bytes per mono / stereo stage to 44,136 / 75,328 bytes on
-this M1 build, also at other host rates. Processing remains allocation-free; larger storage is allocated with
-the instance, outside processing. These sizes are from the short comparative harness, not a new official benchmark.
+`../dk/results_issue96_shipped.json` measures actual Python/C++ full reference and offset sweeps.
+`results_issue96_refactor.json` records bit-identical output before/after the storage refactor and object sizes.
+`results_issue96_review_cost.json` repeats a short M1 CPU comparison for 127 / previous 231 / shipped 215.
+Both validators use `dk.aliasing.limits_for_rate(fs)`; test limits are not embedded in the realtime core.
+The original 48 kHz limits, guard and baseline remain unchanged.
 
 ## Limitations
 
 - FIR resampler only; `filt="iir"` stays Python-only.
-- os ∈ {2, 4, 8, 16} (fixed buffers). The committed vectors remain at 48 kHz; the CLI accepts optional `fs=HZ`.
+- os ∈ {2, 4, 8, 16} (fixed buffers). The committed resampler vectors cover 48 and 44.1 kHz; the CLI accepts optional `fs=HZ`.
   `prepare()` / `process()` are tested at 44.1 / 48 / 88.2 / 96 / 176.4 / 192 kHz with the fixed quality factors.
   All pass the reference criteria; 44.1 kHz uses the #96 FIR and separate aliasing budget described above.
   Other positive rates are accepted by `prepare()` but unvalidated.
