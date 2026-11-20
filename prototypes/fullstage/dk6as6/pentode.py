@@ -5,12 +5,27 @@ published model). Parameters: prototypes/fit6as6/results/fit_results.json, read 
 the same-model ngspice subckt (spice6as6/run_refs.py) and the fit always use one parameter set:
   DUAL_CONTROL = fit_results["dual_control"]["params"]   issue #55, KR = 0.2737, XA = 0.5743 (the stage's default)
   REFIT_51     = fit_results["refit_51"]["params"]       issue #51, no KR / XA (KR = 0, XA = 1): comparison only
-No g1 or g3 grid current (none in any sheet): Ig1 = Ig3 = 0. The cathode current is Ip + Ig2.
+g1 grid current (#112): OPTIONAL and UNVALIDATED for the 6AS6 (no 6AS6 / 5725 sheet gives positive-g1 or grid-current
+curves; prototypes/research/6as6-datasheets.md). grid() / GRID below: Dempwolf & Zoelzer's 12AX7 grid law (DAFx-11,
+eq. (11), https://www.dafx.de/paper-archive/2011/Papers/76_e.pdf), borrowed, not measured on a 6AS6:
+  Ig1 = Gg (softplus(Cg Vg1k) / Cg)^XI,  taken out of the cathode current BEFORE the plate / screen split:
+  Ip = (Ik - Ig1) f,  Ig2 = (Ik - Ig1) (1 - f),  so the cathode current stays Ik = Ip + Ig2 + Ig1 (the fit's Ik).
+  XI, Cg: the 12AX7 RSD-1 values (Table 1; dk/triode.DZ_12AX7_RSD1), i.e. the 12AX7's shape of onset.
+  Gg = hardness x PERVEANCE_RATIO x the RSD-1 Gg. PERVEANCE_RATIO = (2 / KG1) / G = 1.281: the 6AS6 fit's cathode
+  coefficient (Ik0 = (2 / KG1) E1^EX, A/V^1.49) over the RSD-1 one (Ik = G E^1.26, A/V^1.26), compared at E = 1 V
+  (where the different exponents drop out), on the ASSUMPTION that grid current scales with cathode emission at the
+  12AX7's geometry. That is our guess, to be replaced by a measurement; "hardness" (0 = no grid current, 1 = this
+  guess) is the control for it, not a fitted value. DZ's constant Ig0 (8.025e-8 A, "due to stability reasons") is
+  left out: it is not a current law, and through the 1.07 MOhm grid circuit it would shift the grid DC by -86 mV.
+  No g3 current (Ig3 = 0): no mode needs one (#111; dk6as6/RESULTS.md, "Modes").
+Without grid current (hardness 0, the stage's GRID_OFF) the cathode current is Ip + Ig2 and currents() is the whole law.
 
 currents() is a scalar (math module) transcription of model6as6._f with the analytic Jacobian, written for the
 per-sample Newton solve (numpy on scalars is ~10x slower). dk6as6/tests/test_pentode.py checks it against
 model6as6.dual_ip_ig2 (relative 1e-12) and the Jacobian against central differences, for both parameter sets.
 Port order: v = (Vg1k, Vg2k, Vg3k, Vak) (circuit.NLV), i = (Ip, Ig2) (circuit.NLI); J = d i / d v, 2x4.
+currents_grid() is the law with g1 current: i = (Ip, Ig2, Ig1) (circuit.NLI + NLI_G1), J 3x4; reference_grid() its
+numpy reference (model6as6.dual_ip_ig2 for Ik and f, and DZ's eq. (11) in numpy).
 """
 import json
 import math
@@ -21,6 +36,8 @@ FIT6AS6 = os.path.normpath(os.path.join(HERE, "..", "..", "fit6as6"))
 FIT_RESULTS = os.path.join(FIT6AS6, "results", "fit_results.json")
 sys.path.insert(0, FIT6AS6)
 import model6as6  # noqa: E402  (the fit's own equations: reference for the tests, VA0)
+sys.path.insert(0, os.path.dirname(HERE))
+from dk.triode import DZ_12AX7_RSD1  # noqa: E402  (Dempwolf & Zoelzer Table 1, RSD-1: the 12AX7 stage's parameters)
 
 _FIT = json.load(open(FIT_RESULTS))
 DUAL_CONTROL = _FIT["dual_control"]["params"]
@@ -28,6 +45,22 @@ REFIT_51 = _FIT["refit_51"]["params"]
 VA0 = model6as6.VA0
 VG2_FLOOR = 1e-3     # V, model6as6.koren_e1: Vg2 floored at 1 mV
 VA_FLOOR = 1e-3      # V, model6as6.plate_term: Va floored at 1 mV in the power (XA != 1)
+# g1 grid current (#112, module docstring): ratio of the fitted cathode coefficients, 6AS6 (2 / KG1) over 12AX7 RSD-1 G
+PERVEANCE_RATIO = (2.0 / DUAL_CONTROL["KG1"]) / DZ_12AX7_RSD1["G"]
+HARDNESS = 1.0       # the default grid hardness (our choice, #112: model the grid current rather than leave it out)
+
+
+def grid(hardness=HARDNESS, p=DUAL_CONTROL):
+    """The g1 grid-current parameters at `hardness` (0 = none): XI and CG from DZ RSD-1, GG = hardness x the cathode-
+    coefficient ratio of the valve parameter set p to RSD-1 x the RSD-1 Gg. UNVALIDATED: no 6AS6 grid-current data."""
+    if not hardness >= 0.0:
+        raise ValueError(f"grid hardness {hardness} must be >= 0")
+    ratio = (2.0 / p["KG1"]) / DZ_12AX7_RSD1["G"]
+    return dict(GG=hardness * ratio * DZ_12AX7_RSD1["Gg"], XI=DZ_12AX7_RSD1["xi"], CG=DZ_12AX7_RSD1["Cg"],
+                hardness=hardness)
+
+
+GRID = grid()
 
 
 def softplus(x):
@@ -96,3 +129,51 @@ def reference(vg1, vg2, vg3, va, p=DUAL_CONTROL):
     """(Ip, Ig2) from fit6as6's own model6as6.dual_ip_ig2 (numpy), what currents() must reproduce."""
     ip, ig2 = model6as6.dual_ip_ig2(vg1, vg2, vg3, va, p)
     return float(ip), float(ig2)
+
+
+def grid_current(vg1, g=GRID):
+    """(Ig1, dIg1/dVg1k): Ig1 = GG (softplus(CG Vg1k) / CG)^XI (DZ eq. (11) without Ig0). (0, 0) where softplus
+    underflows (CG Vg1k < -745), where the true value is < 1e-400 A."""
+    zg = g["CG"] * vg1
+    e = math.exp(-abs(zg))
+    sp, sg = (zg + math.log1p(e), 1.0 / (1.0 + e)) if zg >= 0.0 else (math.log1p(e), e / (1.0 + e))
+    s = sp / g["CG"]
+    if s <= 0.0:
+        return 0.0, 0.0
+    pg = s ** g["XI"]
+    return g["GG"] * pg, g["GG"] * g["XI"] * pg / s * sg
+
+
+def currents_grid(vg1, vg2, vg3, va, p=DUAL_CONTROL, g=GRID):
+    """Return (Ip, Ig2, Ig1) and the Jacobian d(Ip, Ig2, Ig1)/d(Vg1k, Vg2k, Vg3k, Vak) as a 3x4 tuple-of-tuples:
+    the fit's cathode current Ik less Ig1, split by the fit's plate share f. With GG = 0 Ip and Ig2 are currents()'."""
+    ip0, ig20, (dip0, dig20) = currents(vg1, vg2, vg3, va, p)
+    ig1, dig1 = grid_current(vg1, g)
+    if ig1 == 0.0 and dig1 == 0.0:
+        return ip0, ig20, 0.0, (dip0, dig20, (0.0, 0.0, 0.0, 0.0))
+    ik = ip0 + ig20
+    # Ik underflows to 0 only in deep cut-off (Vg1k ~ -8 V over Vg2k ~ 0): all of -Ig1 then goes to the plate
+    f, w = (ip0 / ik, ig1 / ik) if ik > 0.0 else (1.0, 0.0)
+    # Ip = Ip0 - f Ig1 with f = Ip0 / Ik:  d Ip = d Ip0 (1 - w (1 - f)) + w f d Ig20 - f d Ig1   (w = Ig1 / Ik)
+    a, b = 1.0 - w * (1.0 - f), w * f
+    p0, p1, p2, p3 = dip0
+    q0, q1, q2, q3 = dig20
+    dip = (a * p0 + b * q0 - f * dig1, a * p1 + b * q1, a * p2 + b * q2, a * p3 + b * q3)
+    dig2 = (p0 + q0 - dig1 - dip[0], p1 + q1 - dip[1], p2 + q2 - dip[2], p3 + q3 - dip[3])
+    return ip0 - f * ig1, ig20 - (1.0 - f) * ig1, ig1, (dip, dig2, (dig1, 0.0, 0.0, 0.0))
+
+
+def currents_grid_only(vg1, vg2, vg3, va, p=DUAL_CONTROL, g=GRID):
+    """(Ip, Ig2, Ig1) without the Jacobian, for line-search trials."""
+    return currents_grid(vg1, vg2, vg3, va, p, g)[:3]
+
+
+def reference_grid(vg1, vg2, vg3, va, p=DUAL_CONTROL, g=GRID):
+    """(Ip, Ig2, Ig1) in numpy from model6as6.dual_ip_ig2 (Ik = Ip + Ig2, f = Ip / Ik) and DZ eq. (11):
+    what currents_grid() must reproduce."""
+    import numpy as np
+    ip0, ig20 = model6as6.dual_ip_ig2(vg1, vg2, vg3, va, p)
+    ik = ip0 + ig20
+    ig1 = g["GG"] * (np.logaddexp(0.0, g["CG"] * vg1) / g["CG"]) ** g["XI"]
+    f = ip0 / ik if ik > 0.0 else 1.0       # Ik underflows to 0 only in deep cut-off (currents_grid's convention)
+    return float((ik - ig1) * f), float((ik - ig1) * (1.0 - f)), float(ig1)

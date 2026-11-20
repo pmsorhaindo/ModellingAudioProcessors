@@ -41,7 +41,7 @@ def fundamental_db(y, m):
 def measure(fs, drive, f, bias=BIAS_MA, window=WINDOW_S, settle=SETTLE_S):
     n, n0 = int(round(window * fs)), int(round(settle * fs))
     m = tone_bin(f, n, fs)
-    st = stage.Stage(fs, bias=bias)
+    st = stage.Stage(fs, bias=bias, grid_hardness=0.0)   # the #110 record (P1: Ig1 < 1e-15 A, #112)
     L = st.latency_samples
     x = drive * np.sin(2 * np.pi * m * np.arange(n0 + n + L) / n)
     yi = st.process_internal(st.rs.up(x))["out"]

@@ -25,8 +25,9 @@ from dk6as6.stage import cathode_resistor, BIAS_MA  # noqa: E402 -- after the sy
 from spice6as6 import run_refs as R  # noqa: E402 -- after the sys.path setup
 
 VALUES = circuit.VALUES
-CASES = R.cases(list(R.PARAMS) + [f"dual/{m}" for m in R.MODE_BIASES if m != "P1"])   # every committed reference:
-RK = {(m, md, b): cathode_resistor(b, R.PARAMS[m], mode=md) for m, md, b in CASES}    # (model, mode, bias mA)
+CASES = R.cases(list(R.PARAMS) + [f"dual/{m}" for m in R.MODE_BIASES if m != "P1"]   # every committed reference:
+                + [f"dualg/{m}" for m in R.GRID_BIASES if m != "P1"])                  # (model, mode, bias mA)
+RK = {(m, md, b): cathode_resistor(b, R.PARAMS[m], mode=md, grid_hardness=R.HARDNESS[m]) for m, md, b in CASES}
 
 
 def with_rk(model, bias=BIAS_MA, values=VALUES, mode="P1"):
@@ -182,6 +183,11 @@ def test_committed_references_were_made_with_these_settings(model, mode, bias):
     assert gen["params"] == R.PARAMS[model]
     assert gen["bias_ma"] == bias and gen["rk"] == pytest.approx(RK[model, mode, bias], rel=1e-9)
     assert gen.get("mode", "P1") == ref.get("mode", "P1") == mode
+    if R.HARDNESS[model]:   # #112: the grid law the reference ran, and the split runs' pieces
+        assert gen["grid"] == pentode.grid(R.HARDNESS[model], R.PARAMS[model])
+        assert gen["split"] == R.split_analyses() + ["burst"] and "ig1" in ref["op"]
+    else:
+        assert "grid" not in gen and "ig1" not in ref["op"]
 
 
 VALUE_KEYS = [k for k in VALUES if k not in {"CG3"} | {c[0] for c in circuit.VALVE_CAPS}] + ["Rk"]
@@ -257,12 +263,12 @@ def _bsources(model, mode="P1"):
 
 
 def _eval(expr, vg1, vg2, vg3, va):
-    env = dict(log=math.log, exp=math.exp, atan=math.atan, max=max,
+    env = dict(log=math.log, exp=math.exp, atan=math.atan, max=max, abs=abs,
                pwr=lambda x, y: math.copysign(abs(x) ** y, x), vg1=vg1, vg2=vg2, vg3=vg3, vp=va)
     return eval(expr, {"__builtins__": {}}, env)
 
 
-@pytest.mark.parametrize("model, mode", R.SUBCKTS)
+@pytest.mark.parametrize("model, mode", [c for c in R.SUBCKTS if not R.HARDNESS[c[0]]])
 def test_subckt_is_the_dk_valve_law(model, mode):
     """The B-sources, evaluated in Python, give pentode.currents (= model6as6.dual_ip_ig2) with the same parameters,
     over the stage's range and beyond (cut-off to positive grid; Va from the knee to HT). Agreement is 1e-12 relative
@@ -278,6 +284,62 @@ def test_subckt_is_the_dk_valve_law(model, mode):
         rel = 1e-12 + (2e-16 / math.exp(x) if x < 0 else 0.0)
         assert _eval(b["BP"][2], *v) == pytest.approx(ip, rel=rel, abs=1e-25), v
         assert _eval(b["BG2"][2], *v) == pytest.approx(ig2, rel=10 * rel, abs=1e-25), v
+
+
+@pytest.mark.parametrize("mode", ["P1", "T"])
+def test_grid_subckt_is_the_dk_valve_law_with_grid_current(mode):
+    """#112: the dualg subckt's three B-sources, evaluated in Python, give pentode.currents_grid (Ip, Ig2, Ig1) at the
+    DK stage's default hardness. Ip and Ig2 are (Ik - Ig1) x share, so as in test_pentode their error is relative to
+    the sum of the magnitudes; Ig1 relative to itself, except where SPICE's ln(1 + exp(-|x|)) (no log1p) loses
+    ~1e-16 / exp(x) relative (deep cut-off, where Ig1 < 1e-22 A; abs 1e-25 A, as test_subckt_is_the_dk_valve_law)."""
+    b = _bsources("dualg", mode)
+    assert set(b) == {"BP", "BG2", "BG1"} and b["BG1"][:2] == ("G1", "K")
+    g = pentode.grid(R.HARDNESS["dualg"])
+    assert g == pentode.GRID
+    for v in itertools.product([-8.0, -3.3, -1.0, -0.3, 0.0, 0.3, 3.0], [60.0, 116.7, 140.0], [-8.0, -3.3, 0.0, 3.0],
+                               [0.3, 20.0, 181.7, 300.0]):
+        ip, ig2, ig1, _ = pentode.currents_grid(*v, pentode.DUAL_CONTROL, g)
+        ip0, ig20, _ = pentode.currents(*v)
+        f = ip0 / (ip0 + ig20)
+        x = pentode.DUAL_CONTROL["KP"] * (1.0 / pentode.DUAL_CONTROL["MU"] + v[0] / v[1])
+        rel = 1e-12 + (2e-16 / math.exp(x) if x < 0 else 0.0)
+        xg = g["CG"] * v[0]
+        relg = 1e-12 + (2e-16 / math.exp(xg) if xg < 0 else 0.0)
+        assert abs(_eval(b["BG1"][2], *v) - ig1) <= relg * ig1 + 1e-25, v
+        assert abs(_eval(b["BP"][2], *v) - ip) <= rel * (abs(ip0) + f * ig1) + 1e-25, v
+        assert abs(_eval(b["BG2"][2], *v) - ig2) <= 10 * rel * (abs(ig20) + (1 - f) * ig1) + 1e-25, v
+
+
+def test_grid_subckts_leave_the_111_ones_alone():
+    """#112 changes the P1 / T subckts only as new files: the dual ones (Ig1 = 0) have no Bg1 and are generated exactly
+    as before (test_committed_files_are_generated_and_current), so every dual reference stays reproducible."""
+    for mode in ("P1", "T"):
+        assert set(_bsources("dual", mode)) == {"BP", "BG2"}
+        assert R.models("dualg", mode)[0] != R.models("dual", mode)[0]
+    assert R.HARDNESS == {"dual": 0.0, "r51": 0.0, "dualg": pentode.HARDNESS}
+
+
+@pytest.mark.parametrize("model, mode", [("dual", "P1"), ("dualg", "T")])
+def test_split_main_is_the_same_analyses(model, mode):
+    """#112: run(split=True) runs 'main' as split_analyses(). Every piece is the main netlist above .control (the
+    sine pieces with their amplitude in Vin's SIN instead of the first one, which 'main' then alters per amplitude);
+    'opac' is main's .op / .ac; each sine piece is one of main's tran + wrdata, written to the same file."""
+    def unnamed(txt):       # the header names the analysis; everything else must match
+        return re.sub(r"^(\* GENERATED by spice6as6/run_refs.py \([^,]+(?:, \w+)?), [\w:.]+,", r"\1, <analysis>,", txt)
+    main = R.netlist(model, "main", BIAS_MA, mode=mode)
+    head, ctl = unnamed(main).split(".control\n")
+    pieces = {a: unnamed(R.netlist(model, a, BIAS_MA, mode=mode)) for a in R.split_analyses()}
+    assert R.split_analyses() == ["opac"] + [f"sine:{a}" for a in R12.AMPS]
+    assert pieces["opac"].split(".control\n")[0] == head
+    assert pieces["opac"].split(".control\n")[1].split("\n.endc")[0] == ctl.split("foreach")[0].rstrip("\n")
+    for a in R12.AMPS:
+        h, c = pieces[f"sine:{a}"].split(".control\n")
+        assert h == head.replace(f"SIN(0 {R12.AMPS[0]} 1000)", f"SIN(0 {a} 1000)")
+        tran = next(ln for ln in ctl.splitlines() if ln.strip().startswith("tran"))
+        assert c.splitlines()[:2] == [tran.strip(),
+                                      f"wrdata out/{R.case(model, BIAS_MA, mode)}_sine_{a}.txt v(out) v(g) v(k)"]
+    with pytest.raises(ValueError):
+        R.netlist(model, "sine:3", BIAS_MA, mode=mode)
 
 
 def test_failed_analysis_stops_the_run(tmp_path, monkeypatch):

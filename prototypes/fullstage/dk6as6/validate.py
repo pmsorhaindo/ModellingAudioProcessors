@@ -10,6 +10,9 @@ end, and what is left is a ~0.07 % coupling-cap tail that ngspice's own trace do
 window (recovery_tau_s = nan; dk6as6/RESULTS.md). The shift and trajectory criteria are unchanged.
 run(model="r51") checks the DK stage with the #51 parameters against reference_r51_0.45mA.json the same way (for
 dk6as6/compare_fits.py; informational).
+Grid current (#112): model "dual" is the stage at grid_hardness=0 (Ig1 = 0, the #111 law); model "dualg" is the stage's
+default, with the UNVALIDATED g1 grid current (pentode.grid at pentode.HARDNESS), against reference_dualg_*.json, which
+run the same law (run_refs.HARDNESS). Same criteria, same signals.
 bias: the target cathode current in mA (dk6as6/stage.py); references exist at spice6as6/run_refs.BIASES.
 mode: the Distortion switch (#111, dk6as6/circuit.MODES); T and P2 references exist at run_refs.MODE_BIASES[mode].
 Where the reference is not the same law: ngspice clamps a B-source exp() argument at SPICE_EXP_CAP, so the subckt's
@@ -21,9 +24,12 @@ reported but not compared, and that criterion reads None ("not compared"), so th
 never "passed". Settings outside stage.SUPPORTED_MA are run as experimental and marked "supported": False; the
 command fails if any supported setting does not pass.
 Aliasing: dk6as6/aliasing.py.
-Run: python -m dk6as6.validate [P1] [T] [P2]   (from prototypes/fullstage; every mode if none given). Writes, per mode,
-dk6as6/results.json (P1) / results_<mode>.json: per reference bias, "standard" and "hq" against (ii), and for P1 at
-the default bias "plain_4x": the same run at 4x without pre-warp, for information only (no 4x setting).
+Run: python -m dk6as6.validate [P1] [T] [P2] [--grid] [--workers N]   (from prototypes/fullstage; every mode if none
+given; --grid: model "dualg", the modes with grid references, run_refs.GRID_BIASES). Writes, per mode,
+dk6as6/results.json (P1) / results_<mode>.json (dual), results_grid.json / results_grid_<mode>.json (dualg): per
+reference bias, "standard" and
+"hq" against (ii), and for P1 dual at the default bias "plain_4x": the same run at 4x without pre-warp, for information
+only (no 4x setting).
 """
 import json
 import os
@@ -39,10 +45,10 @@ from dk.validate import CRIT, aligned  # noqa: E402 -- after the sys.path setup
 from dk6as6.stage import Stage, QUALITY, BIAS_MA  # noqa: E402 -- after the sys.path setup
 from dk6as6 import linear, pentode  # noqa: E402 -- after the sys.path setup
 from dk6as6.circuit import MODE  # noqa: E402 -- after the sys.path setup
-from spice6as6.run_refs import BIASES, MODE_BIASES, ref_file  # noqa: E402 -- after the sys.path setup
+from spice6as6.run_refs import MODE_BIASES, GRID_BIASES, HARDNESS, ref_file, biases_of  # noqa: E402,F401
 
 FS = 48000.0
-PARAMS = {"dual": pentode.DUAL_CONTROL, "r51": pentode.REFIT_51}
+PARAMS = {"dual": pentode.DUAL_CONTROL, "r51": pentode.REFIT_51, "dualg": pentode.DUAL_CONTROL}
 OP_KEYS = ("va", "vk", "ia", "ig2", "ik", "vgk")
 SPICE_EXP_CAP = 227.9559242   # ngspice 41 B-source exp() argument limit: ln(1 + exp(300)) evaluates to 227.9559
 
@@ -58,8 +64,14 @@ def ref(model, bias=BIAS_MA, mode=MODE):
     return json.load(open(ref_file(model, bias, mode)))
 
 
-def results_file(mode=MODE):
-    return os.path.join(HERE, "results.json" if mode == "P1" else f"results_{mode}.json")
+def results_file(mode=MODE, model="dual"):
+    g = "_grid" if model == "dualg" else ""
+    return os.path.join(HERE, f"results{g}.json" if mode == "P1" else f"results{g}_{mode}.json")
+
+
+def stage(model="dual", **kw):
+    """The DK stage of `model`: its valve parameters and grid hardness (run_refs.HARDNESS), experimental allowed."""
+    return Stage(FS, pentode=PARAMS[model], grid_hardness=HARDNESS[model], experimental=True, **kw)
 
 
 def small_signal(stage, f):
@@ -91,7 +103,7 @@ def sines(quality="standard", filt="fir", model="dual", T=0.5, amps=AMPS, bias=B
     out, times, its = {}, {}, {}
     n = int(T * FS)
     for a in amps:
-        s = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model], mode=mode, experimental=True)
+        s = stage(model, bias=bias, quality=quality, filt=filt, mode=mode)
         t = np.arange(n + s.latency_samples) / FS
         t0 = time.perf_counter()
         r = aligned(s, float(a) * np.sin(2 * np.pi * 1000 * t), record=("out", "vgk", "vg2k"))
@@ -106,7 +118,7 @@ def sines(quality="standard", filt="fir", model="dual", T=0.5, amps=AMPS, bias=B
 
 def burst(quality="standard", filt="fir", model="dual", bias=BIAS_MA, mode=MODE):
     """The 4 V 1 kHz tone burst (10-30 ms, 120 ms) through Stage.process: (burst_metrics of Vgk, iteration stats)."""
-    s = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model], mode=mode, experimental=True)
+    s = stage(model, bias=bias, quality=quality, filt=filt, mode=mode)
     nb = int(0.12 * FS)
     tb = np.arange(nb + s.latency_samples) / FS
     xb = 4 * np.sin(2 * np.pi * 1000 * tb) * ((tb > 10e-3) & (tb < 30e-3))
@@ -126,7 +138,10 @@ def tail_tau(burst, t0=31e-3, t1=118e-3):
     sample: that sample straddles the burst's end)."""
     t, v = np.array(burst["traj_t"]), np.array(burst["traj_vgk"]) - burst["rest_vgk"]
     m = (t >= t0) & (t <= t1)
-    return float(-1.0 / np.polyfit(t[m], np.log(v[m]), 1)[0])
+    sgn = np.sign(np.mean(v[m]))       # above rest (no grid current: the coupling-cap tail) or below (grid blocking)
+    if not np.all(sgn * v[m] > 0):
+        return float("nan")            # the tail crosses rest: no single decay constant
+    return float(-1.0 / np.polyfit(t[m], np.log(sgn * v[m]), 1)[0])
 
 
 def harm_dev(sine, r):
@@ -149,9 +164,11 @@ def harm_dev(sine, r):
 
 
 def run(T=0.5, quality="standard", filt="fir", model="dual", bias=BIAS_MA, mode=MODE):
-    st = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model], mode=mode, experimental=True)
+    st = stage(model, bias=bias, quality=quality, filt=filt, mode=mode)
     out = dict(criteria=CRIT, fs_base=FS, quality=quality, oversampling=st.os, prewarp_hz=st.prewarp_hz, filter=filt,
                model=model, params=PARAMS[model], bias_ma=bias, rk=st.rk)
+    if st.grid is not None:
+        out["grid"] = st.grid
     if mode != "P1":
         out["mode"] = mode
     out["resampler"] = dict(latency_samples=st.latency_samples, latency_ms=st.rs.latency_ms,
@@ -226,12 +243,25 @@ def summary(res):
     return "\n".join(lines)
 
 
-def main(mode=MODE):
-    biases = BIASES["dual"] if mode == "P1" else MODE_BIASES[mode]
-    res = {f"{b:g}": {q: run(quality=q, bias=b, mode=mode) for q in QUALITY} for b in biases}
-    if mode == "P1":
-        res[f"{BIAS_MA:g}"]["plain_4x"] = run(quality=(4, None))
-    json.dump(res, open(results_file(mode), "w"), indent=1, default=float)
+def _run(a):
+    q, b, mode, model = a
+    return run(quality=q, bias=b, mode=mode, model=model)
+
+
+def main(mode=MODE, model="dual", workers=1):
+    jobs = [(q, b, mode, model) for b in biases_of(model, mode) for q in QUALITY]
+    if mode == "P1" and model == "dual":
+        jobs.append(((4, None), BIAS_MA, mode, model))
+    if workers > 1:
+        from concurrent.futures import ProcessPoolExecutor
+        with ProcessPoolExecutor(workers) as ex:
+            out = list(ex.map(_run, jobs))
+    else:
+        out = [_run(j) for j in jobs]
+    res = {}
+    for (q, b, _, _), r in zip(jobs, out):
+        res.setdefault(f"{b:g}", {})["plain_4x" if isinstance(q, tuple) else q] = r
+    json.dump(res, open(results_file(mode, model), "w"), indent=1, default=float)
     for b, rb in res.items():
         for q, r in rb.items():
             print(f"== {mode}, {b} mA, {q}: {r['oversampling']}x, Rk {r['rk']:.6g} ohm, resampler {r['resampler']}")
@@ -240,7 +270,14 @@ def main(mode=MODE):
 
 
 if __name__ == "__main__":
-    st = {m: main(m) for m in (sys.argv[1:] or MODE_BIASES)}
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("modes", nargs="*")
+    ap.add_argument("--grid", action="store_true", help='model "dualg": the default stage, with grid current (#112)')
+    ap.add_argument("--workers", type=int, default=1, help="processes (CPU time per run is then not one-core time)")
+    a = ap.parse_args()
+    st = {m: main(m, "dualg" if a.grid else "dual", a.workers)
+          for m in (a.modes or list(GRID_BIASES if a.grid else MODE_BIASES))}
     print(json.dumps(st))
     # Every supported setting must pass; unsupported (experimental) ones are recorded, never counted as passes.
     bad = {m: {b: v for b, v in sm.items() if any(s != "passed" and ok for s, ok in v.values())}

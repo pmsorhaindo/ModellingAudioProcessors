@@ -1,10 +1,11 @@
-"""6AS6 DK stage tests (#26, #102, #110, #111). Pass criteria are dk/validate.CRIT, unchanged, tested against
+"""6AS6 DK stage tests (#26, #102, #110, #111, #112). Pass criteria are dk/validate.CRIT, unchanged, tested against
 reference (ii):
-ngspice running the same fit6as6 dual_control equations and parameters (#55) on the same netlist
-(spice6as6/reference_dual_<bias>mA.json), so a failure here is a METHOD error, not a valve-model difference. The
-default quality (standard 8x) is tested at every reference bias (spice6as6/run_refs.BIASES["dual"]: 0.1, 0.25, 0.45,
-0.6 mA) and hq 16x at the range's ends; the T and P2 modes (#111) at standard at MODE_CASES; `python -m
-dk6as6.validate` runs every quality at every bias of every mode (results[_<mode>].json).
+ngspice running the same fit6as6 dual_control equations and parameters (#55) on the same netlist, with the stage's
+default g1 grid current (#112; model "dualg", spice6as6/reference_dualg_*.json) or without it (grid_hardness=0, model
+"dual", reference_dual_*.json), so a failure here is a METHOD error, not a valve-model difference. The default stage
+(dualg) at standard 8x is tested at every P1 reference bias (0.1, 0.25, 0.45, 0.6 mA), at hq 16x at the range's ends
+and in T at the top of its envelope; the no-grid stage at standard at the default bias; `python -m dk6as6.validate
+[--grid]` runs every quality at every bias of every mode (results[_grid][_<mode>].json).
 Run from prototypes/fullstage:  python -m pytest -q dk6as6/tests
 """
 import os
@@ -15,13 +16,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 import json
 import warnings
 from dk6as6.stage import (Stage, QUALITY, BIAS_MA, cathode_resistor, operating_point, OperatingPointError, knob_bias,
-                           bias_knob, bias_point, SUPPORTED_MA, supported, UnsupportedSettingError, ExperimentalWarning,
-                           OutOfLawWarning)
+                           bias_knob, bias_point, SUPPORTED_MA, SUPPORTED_MA_NO_GRID, envelope, supported,
+                           UnsupportedSettingError, ExperimentalWarning, OutOfLawWarning)
 from dk6as6 import envelope as E
+from dk6as6.pentode import HARDNESS
 from dk.validate import aligned
 from dk6as6 import validate as V, circuit, linear
 from spice.run_refs import AMPS
-from spice6as6.run_refs import BIASES, MODE_BIASES
+from spice6as6.run_refs import BIASES, MODE_BIASES, GRID_BIASES
 
 C = V.CRIT
 
@@ -29,20 +31,21 @@ C = V.CRIT
 pytestmark = pytest.mark.filterwarnings("ignore::dk6as6.stage.ExperimentalWarning")
 
 
-# CI time (the fullstage job must stay well inside its timeout): standard at every P1 bias plus hq at the ends; T (#111)
-# at standard at 0.25 mA, its highest reference inside the supported envelope (0.1-0.3 mA; the 0.35 mA reference just
-# above it brackets the top). P2 is experimental only (stage.SUPPORTED_MA): its known 0.6 mA burst failure is tested
-# below. Every mode at every bias, standard and hq, is in results[_<mode>].json (python -m dk6as6.validate), checked by
+# CI time (the fullstage job must stay well inside its timeout): the default stage (dualg) at standard at every P1 grid
+# reference bias plus hq at the ends, T (#111) at standard at the top of its supported envelope; the no-grid stage
+# (dual) at standard at 0.6 mA, P1's top (test_p1_grid_current_is_negligible ties it to the default stage). P2 is
+# experimental only (stage.SUPPORTED_MA): its known 0.6 mA burst failure is tested below. Every mode at every bias,
+# standard and hq, is in results[_grid][_<mode>].json (python -m dk6as6.validate [--grid]), checked by
 # test_committed_validation_every_supported_setting_passes.
-CASES = ([("P1", "standard", b) for b in BIASES["dual"]]
-         + [("P1", "hq", b) for b in (BIASES["dual"][0], BIASES["dual"][-1])]
-         + [("T", "standard", 0.25)])
+CASES = ([("P1", "standard", b, "dualg") for b in GRID_BIASES["P1"]]
+         + [("P1", "hq", b, "dualg") for b in (GRID_BIASES["P1"][0], GRID_BIASES["P1"][-1])]
+         + [("T", "standard", SUPPORTED_MA["T"][1], "dualg"), ("P1", "standard", 0.6, "dual")])
 
 
 @pytest.fixture(scope="module", params=CASES, ids=str)
 def res(request):
-    m, q, b = request.param
-    return V.run(quality=q, bias=b, mode=m)
+    m, q, b, model = request.param
+    return V.run(quality=q, bias=b, mode=m, model=model)
 
 
 def mode_of(res):
@@ -78,7 +81,8 @@ def test_cathode_resistor_matches_the_102_research(bias, rk_k):
 def test_operating_point_hits_the_target_cathode_current(bias, mode):
     st = Stage(V.FS, bias=bias, mode=mode, experimental=True)
     d, n = st.dc, st.dc["nodes"]
-    assert abs(d["ik"] / (bias * 1e-3) - 1) < 1e-3
+    assert abs(d["ik"] / (bias * 1e-3) - 1) < 1e-3 and d["ik"] == d["ip"] + d["ig2"] + d["ig1"]
+    assert n["gl"] - n["g"] == pytest.approx(circuit.VALUES["Rgs"] * d["ig1"], rel=1e-6, abs=1e-15)   # Ig1 in Rgs
     assert n["k"] == pytest.approx(st.rk * d["ik"], rel=1e-12)   # unbypassed Rk carries all of Ik
     if mode == "P1":                                             # g3 on the cathode, g2 at EC2
         assert d["vg3k"] == 0.0 and n["g2"] == circuit.VALUES["EC2"]
@@ -87,14 +91,19 @@ def test_operating_point_hits_the_target_cathode_current(bias, mode):
     else:                                                        # T: g2 = g3, tied to the plate through Rstrap
         assert d["vg3k"] == d["vg2k"]
         assert n["a"] - n["g2"] == pytest.approx(circuit.VALUES["Rstrap"] * d["ig2"], rel=1e-9)
-        assert circuit.VALUES["HT"] - n["a"] == pytest.approx(circuit.VALUES["Ra"] * d["ik"], rel=1e-9)
+        assert circuit.VALUES["HT"] - n["a"] == pytest.approx(circuit.VALUES["Ra"] * (d["ip"] + d["ig2"]), rel=1e-9)
 
 
-@pytest.mark.parametrize("mode, bias", [(m, b) for m in MODE_BIASES for b in MODE_BIASES[m]])
-def test_ngspice_reference_hits_the_target_cathode_current(mode, bias):
-    r = V.ref("dual", bias, mode)
+REFS = ([("dual", m, b) for m in MODE_BIASES for b in MODE_BIASES[m]]
+        + [("dualg", m, b) for m in GRID_BIASES for b in GRID_BIASES[m]])
+
+
+@pytest.mark.parametrize("model, mode, bias", REFS)
+def test_ngspice_reference_hits_the_target_cathode_current(model, mode, bias):
+    r = V.ref(model, bias, mode)
     assert abs(r["op"]["ik"] / (bias * 1e-3) - 1) < 1e-3
     assert r.get("mode", "P1") == mode
+    assert ("ig1" in r["op"]) == (model == "dualg")
 
 
 @pytest.mark.parametrize("bias, rk_k", [(0.1, 80), (0.6, 1.6)])
@@ -108,69 +117,136 @@ def test_unknown_mode_raises():
         Stage(V.FS, mode="P3")
 
 
-@pytest.mark.parametrize("mode, bias", [("T", 0.35), ("T", BIAS_MA), ("T", 0.6), ("P2", 0.25), ("P2", BIAS_MA),
-                                        ("P1", 0.05), ("P1", 0.7)])
-def test_unsupported_settings_need_an_explicit_opt_in(mode, bias):
-    """#111 review: outside stage.SUPPORTED_MA the Stage raises; experimental=True runs it with a warning and records
-    it (Stage.supported False)."""
+@pytest.mark.parametrize("mode, bias, hardness", [
+    ("P2", 0.25, HARDNESS), ("P2", BIAS_MA, HARDNESS), ("P1", 0.05, HARDNESS), ("P1", 0.7, HARDNESS),
+    ("T", 0.55, HARDNESS), ("T", 0.6, HARDNESS),
+    ("T", 0.35, 0.0), ("T", BIAS_MA, 0.0), ("T", 0.6, 0.0), ("P2", 0.25, 0.0),
+    ("P1", BIAS_MA, 0.5), ("T", 0.25, 2.0)])
+def test_unsupported_settings_need_an_explicit_opt_in(mode, bias, hardness):
+    """#111 review: outside the supported envelope of its grid hardness (stage.envelope) the Stage raises;
+    experimental=True runs it with a warning and records it (Stage.supported False). Only the default hardness and 0
+    are validated, so any other is experimental at every setting (#112)."""
     with pytest.raises(UnsupportedSettingError):
-        Stage(V.FS, bias=bias, mode=mode)
+        Stage(V.FS, bias=bias, mode=mode, grid_hardness=hardness)
     with pytest.warns(ExperimentalWarning):
-        st = Stage(V.FS, bias=bias, mode=mode, experimental=True)
+        st = Stage(V.FS, bias=bias, mode=mode, experimental=True, grid_hardness=hardness)
     assert st.supported is False
 
 
 def test_supported_envelope():
-    assert SUPPORTED_MA == {"P1": (0.1, 0.6), "T": (0.1, 0.3)} and "P2" not in SUPPORTED_MA
-    for mode, b in [("P1", 0.1), ("P1", BIAS_MA), ("P1", 0.6), ("T", 0.1), ("T", 0.25), ("T", 0.3)]:
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            assert Stage(V.FS, bias=b, mode=mode).supported and supported(mode, b)
+    """With the default grid current (#112) P1 is supported over the documented 0.1-0.6 mA and T to 0.5 mA (above, its
+    2 V aliasing fails the gate); without it (hardness 0, the #111 stage) T only to 0.3 mA; P2 and other hardnesses
+    nowhere."""
+    assert SUPPORTED_MA == {"P1": (0.1, 0.6), "T": (0.1, 0.5)} and "P2" not in SUPPORTED_MA
+    assert SUPPORTED_MA_NO_GRID == {"P1": (0.1, 0.6), "T": (0.1, 0.3)}
+    assert envelope() is envelope(HARDNESS) is SUPPORTED_MA and envelope(0.0) is SUPPORTED_MA_NO_GRID
+    assert envelope(0.5) == {} and not supported("P1", BIAS_MA, 0.5)
+    for gh, env in ((HARDNESS, SUPPORTED_MA), (0.0, SUPPORTED_MA_NO_GRID)):
+        for mode, (lo, hi) in env.items():
+            for b in (lo, hi):
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error")
+                    assert Stage(V.FS, bias=b, mode=mode, grid_hardness=gh).supported and supported(mode, b, gh)
 
 
 @pytest.mark.parametrize("quality", QUALITY)
-@pytest.mark.parametrize("mode, bias, f, phase", [(m, b, f, ph) for m, ends in SUPPORTED_MA.items() for b in ends
-                                                  for f, ph in ((100, "cos"), (20, "cos"), (18000, "sin"))])
-def test_supported_envelope_stays_in_the_law(mode, bias, f, phase, quality):
+@pytest.mark.parametrize("mode, bias, f, phase, hardness", [
+    (m, b, f, ph, gh) for gh in (HARDNESS, 0.0) for m, ends in envelope(gh).items() for b in ends
+    for f, ph in ((100, "cos"), (20, "cos"), (18000, "sin"))])
+def test_supported_envelope_stays_in_the_law(mode, bias, f, phase, hardness, quality):
     """At both ends of each supported range, 8 V peak tones from silence (envelope.py's worst stimuli: the step onset
-    at 100 Hz and 20 Hz, the slope onset at 18 kHz) keep g1 negative and the plate above the cathode on the
-    interpolated internal-rate voltages; the runtime guard counts nothing and warns nothing."""
+    at 100 Hz and 20 Hz, the slope onset at 18 kHz) stay in the law in force on the interpolated internal-rate voltages
+    (envelope.in_law): without grid current g1 negative and the plate above the cathode; with it (#112) the plate above
+    the cathode, Ip + Ig2 >= 0 and Newton converged (g1 may go positive: the grid law models it). The runtime guard
+    counts nothing and warns nothing."""
     with warnings.catch_warnings():
         warnings.simplefilter("error", OutOfLawWarning)
-        r = E.excursion(mode, bias, quality, f, phase)
-    assert r["vg1k_max"] <= 0.0 and r["vak_min"] >= 0.0 and r["out_of_law"] == 0, r
+        r = E.excursion(mode, bias, quality, f, phase, hardness)
+    assert E.in_law(r) and r["out_of_law"] == 0, r
 
 
 @pytest.mark.parametrize("quality", QUALITY)
-def test_tone_onset_from_silence_at_the_top_of_t(quality):
+@pytest.mark.parametrize("hardness", [HARDNESS, 0.0])
+def test_tone_onset_from_silence_at_the_top_of_t(quality, hardness):
     """The PR #121 re-review reproduction: an 8 V peak, zero-phase 18 kHz sine from silence through Stage.process.
-    The interpolator overshoots (8.63 V); at T's supported top g1 must still stay negative."""
-    st = Stage(48000, mode="T", bias=SUPPORTED_MA["T"][1], quality=quality)
+    The interpolator overshoots (8.63 V); at T's supported top (of each hardness) the runtime guard sees nothing; without
+    grid current g1 stays negative."""
+    st = Stage(48000, mode="T", bias=envelope(hardness)["T"][1], quality=quality, grid_hardness=hardness)
     x = 8 * np.sin(2 * np.pi * 18000 * np.arange(480) / 48000)
     with warnings.catch_warnings():
         warnings.simplefilter("error", OutOfLawWarning)
         r = st.process(x, record=("vgk",))["_internal"]
-    assert max(r["vgk"]) <= 0.0 and st.supported and st.out_of_law == 0
+    assert st.supported and st.out_of_law == 0 and (hardness or max(r["vgk"]) <= 0.0)
 
 
 @pytest.mark.parametrize("quality", QUALITY)
 def test_t_leaves_the_law_just_above_its_envelope(quality):
-    """Why T stops at 0.3 mA: at 0.35 mA an 8 V step onset at 100 Hz takes g1 positive (+0.30 V at hq), and the
-    runtime guard sees it: Stage.out_of_law counts the samples and OutOfLawWarning is raised."""
-    st = Stage(48000.0, bias=0.35, mode="T", quality=quality, experimental=True)
+    """Why T stops at 0.3 mA without grid current: at 0.35 mA an 8 V step onset at 100 Hz takes g1 positive (+0.30 V at
+    hq), and the runtime guard sees it: Stage.out_of_law counts the samples and OutOfLawWarning is raised."""
+    st = Stage(48000.0, bias=0.35, mode="T", quality=quality, experimental=True, grid_hardness=0.0)
     with pytest.warns(OutOfLawWarning):
         r = st.process(E.stimulus(100, "cos", st.latency_samples), record=("vgk",))["_internal"]
     assert max(r["vgk"]) > 0.0 and st.out_of_law > 0 and not st.supported
 
 
+@pytest.mark.parametrize("quality", QUALITY)
+def test_grid_current_keeps_that_onset_in_the_law(quality):
+    """#112: the same T 0.35 mA / 8 V / 100 Hz step onset with the default grid current: g1 still goes positive, by
+    less, but the grid law models that; the plate stays above the cathode, Ip + Ig2 > 0, and the guard counts nothing."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", OutOfLawWarning)
+        r = E.excursion("T", 0.35, quality, 100, "cos", HARDNESS)
+    assert r["vg1k_max"] > 0.0 and E.in_law(r) and r["out_of_law"] == 0, r
+
+
 def test_envelope_record_is_the_supported_range():
-    """envelope.json (python -m dk6as6.envelope): both ends of every supported range are in the law over the whole
-    stimulus class; T's top is the highest scanned T bias that is, and the next one (0.35 mA) is not."""
+    """envelope.json (no grid current, #111) and envelope_grid.json (#112): both ends of every supported range are in
+    the law over the whole stimulus class. Without grid current T's top is the highest scanned T bias that is, and the
+    next one (0.35 mA) is not; with it every scanned T bias up to T's top is."""
+    for fn, gh in ((E.JSON, 0.0), (E.JSON_GRID, HARDNESS)):
+        s = json.load(open(fn))["summary"]
+        for m, ends in envelope(gh).items():
+            assert all(s[m][f"{b:g}"]["in_law"] for b in ends), (fn, m)
+        assert all(w["in_law"] for b, w in s["T"].items() if float(b) <= envelope(gh)["T"][1] + 1e-9), fn
     s = json.load(open(E.JSON))["summary"]
-    for m, ends in SUPPORTED_MA.items():
-        assert all(s[m][f"{b:g}"]["in_law"] for b in ends), m
     t_in = [float(b) for b, w in s["T"].items() if w["in_law"]]
-    assert max(t_in) == SUPPORTED_MA["T"][1] and not s["T"]["0.35"]["in_law"]
+    assert max(t_in) == SUPPORTED_MA_NO_GRID["T"][1] and not s["T"]["0.35"]["in_law"]
+
+
+def _swing_8v(mode, bias, hardness=HARDNESS, f0=1000.0):
+    """(max Vg1k, min Vak, min Ip + Ig2, exp-capped) over the last 20 cycles of a 30 ms, 8 V peak sine at f0 (1 kHz)
+    (standard 8x), at `hardness`."""
+    st = Stage(V.FS, bias=bias, mode=mode, experimental=True, grid_hardness=hardness)
+    t = np.arange(int(0.03 * V.FS) + st.latency_samples) / V.FS
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", OutOfLawWarning)
+        r = aligned(st, 8.0 * np.sin(2 * np.pi * f0 * t), record=("out", "vgk", "vg2k", "a", "k", "ipk"))["_internal"]
+    keep = slice(len(r["a"]) - int(20 * st.fs / 1000), None)
+    return (float(r["vgk"][keep].max()), float((r["a"] - r["k"])[keep].min()), float(r["ipk"][keep].min()),
+            V.exp_capped(st, r))
+
+
+def test_p1_grid_current_is_negligible():
+    """P1 at 0.6 mA (the top of its envelope, the least cathode feedback) with and without grid current, an 8 V 1 kHz
+    sine: g1 stays below -3 V, Ig1 < 1e-20 A, and the outputs agree to rounding (1e-12 relative). So the dual
+    reference at 0.6 mA (which passes, results.json) is the dualg reference too, to far below ngspice's abstol of
+    1e-14 A: run_refs.BIASES["dualg"] stops at 0.45 mA (RESULTS.md, "Grid current (#112)")."""
+    r = {}
+    for gh in (HARDNESS, 0.0):
+        st = Stage(V.FS, bias=0.6, grid_hardness=gh)
+        t = np.arange(int(0.03 * V.FS) + st.latency_samples) / V.FS
+        r[gh] = aligned(st, 8.0 * np.sin(2 * np.pi * 1000 * t), record=("out", "vgk", "ig1"))
+    g = r[HARDNESS]["_internal"]
+    assert g["vgk"].max() < -3.0 and g["ig1"].max() < 1e-20
+    y0, y1 = r[0.0]["out"], r[HARDNESS]["out"]
+    assert np.max(np.abs(y1 - y0)) < 1e-12 * np.max(np.abs(y0))
+
+
+def test_grid_current_keeps_t_in_the_law_where_it_was_not():
+    """#112: the same T 0.4 mA / 8 V with the default grid current: g1 clamped below +0.05 V, the plate above the
+    cathode (> 10 V), Ip + Ig2 > 0."""
+    g1, vak, ipk, capped = _swing_8v("T", 0.4)
+    assert g1 < 0.05 and vak > 10.0 and ipk > 0.0 and not capped, (g1, vak, ipk)
 
 
 def test_status_never_counts_a_non_pass():
@@ -181,19 +257,21 @@ def test_status_never_counts_a_non_pass():
     assert V.status(dict(passed=dict(ok, harmonics=None, burst=False))) == "failed"
 
 
-@pytest.mark.parametrize("mode", list(MODE_BIASES))
-def test_committed_validation_every_supported_setting_passes(mode):
-    """results[_<mode>].json: every supported setting passes every criterion; every other one is marked unsupported
-    and reported as whatever it is (T 0.45 / 0.6 mA inconclusive, P2 0.6 mA failed), never as a pass."""
-    res = json.load(open(V.results_file(mode)))
-    assert set(res) == {f"{b:g}" for b in MODE_BIASES[mode]}
+@pytest.mark.parametrize("model, mode", [("dual", m) for m in MODE_BIASES] + [("dualg", m) for m in GRID_BIASES])
+def test_committed_validation_every_supported_setting_passes(model, mode):
+    """results[_grid][_<mode>].json: every supported setting (of that model's grid hardness) passes every criterion;
+    every other one is marked unsupported and reported as whatever it is (no grid: T 0.45 / 0.6 mA inconclusive, P2
+    0.6 mA failed), never as a pass."""
+    res = json.load(open(V.results_file(mode, model)))
+    gh = V.HARDNESS[model]
+    assert set(res) == {f"{b:g}" for b in V.biases_of(model, mode)}
     for b, rb in res.items():
         for q in QUALITY:
             r = rb[q]
-            assert r.get("supported", True) == supported(mode, float(b)), (mode, b, q)
-            if supported(mode, float(b)):
-                assert V.status(r) == "passed", (mode, b, q, r["passed"])
-    if mode == "T":
+            assert r.get("supported", True) == supported(mode, float(b), gh), (model, mode, b, q)
+            if supported(mode, float(b), gh):
+                assert V.status(r) == "passed", (model, mode, b, q, r["passed"])
+    if mode == "T" and model == "dual":
         assert {V.status(res[b]["standard"]) for b in ("0.45", "0.6")} == {"inconclusive"}
     if mode == "P2":
         assert V.status(res["0.6"]["standard"]) == "failed" and res["0.6"]["standard"]["passed"]["burst"] is False
@@ -282,7 +360,7 @@ def test_bias_outside_the_knob_range_raises(bias):
 def test_bias_point_is_the_meter_reading_of_the_stage(bias):
     """bias_point() reports the stage's own DC point: Ik on target, Vk = Rk Ik (all of Ik in the rheostat)."""
     m, st = bias_point(bias), Stage(V.FS, bias=bias)
-    assert m["rk"] == st.rk and m["ik"] == m["ip"] + m["ig2"]
+    assert m["rk"] == st.rk and m["ik"] == m["ip"] + m["ig2"] + m["ig1"]
     assert (m["vk"], m["va"], m["ip"], m["ig2"]) == (st.dc["nodes"]["k"], st.dc["nodes"]["a"], st.dc["ip"],
                                                      st.dc["ig2"])
     assert m["ik"] == pytest.approx(bias * 1e-3, rel=1e-9)
@@ -294,11 +372,12 @@ def test_bias_is_fixed_for_the_run():
         Stage(V.FS).swap_bias(0.25)
 
 
-@pytest.mark.parametrize("mode, bias", [(m, b) for m in MODE_BIASES for b in MODE_BIASES[m]])
-def test_analog_response_is_what_ngspice_computes(mode, bias):
-    """circuit.analog_response at the DK op point reproduces reference (ii)'s .ac (to its 7-decimal rounding)."""
-    st = Stage(V.FS, bias=bias, mode=mode, experimental=True)
-    r = V.ref("dual", bias, mode)
+@pytest.mark.parametrize("model, mode, bias", REFS)
+def test_analog_response_is_what_ngspice_computes(model, mode, bias):
+    """circuit.analog_response at the DK op point reproduces reference (ii)'s .ac (to its 7-decimal rounding), with
+    and without the g1 grid current (its small-signal conductance at rest is part of the 3x4 Jacobian)."""
+    st = V.stage(model, bias=bias, mode=mode)
+    r = V.ref(model, bias, mode)
     f = np.array(r["ac"]["f"])
     db = 20 * np.log10(np.abs(linear.analog_response(st, f)))
     assert np.max(np.abs(db - np.array(r["ac"]["db"]))) < 1e-5
@@ -341,11 +420,11 @@ def test_newton_always_converges(res):
 
 @pytest.mark.parametrize("q", V.OP_KEYS)
 def test_operating_point_within_0p1pct(res, q):
-    assert res["vs"]["dual"]["op_rel"][q] < C["op_rel"]
+    assert res["vs"][res["model"]]["op_rel"][q] < C["op_rel"]
 
 
 def test_small_signal_within_0p1dB_20Hz_20kHz(res):
-    o = res["vs"]["dual"]
+    o = res["vs"][res["model"]]
     print(f"{res['quality']}: worst {o['ac_maxdev_db_chain']:.5f} dB at {o['ac_worst_f_chain']:.0f} Hz")
     assert o["ac_maxdev_db_stage"] < C["ac_db"]
     assert o["ac_maxdev_db_chain"] < C["ac_db"]
@@ -353,7 +432,7 @@ def test_small_signal_within_0p1dB_20Hz_20kHz(res):
 
 @pytest.mark.parametrize("amp", AMPS)
 def test_harmonics_H2_H5_within_0p1dB_above_m90dBc(res, amp):
-    rows = res["vs"]["dual"]["harm"][amp]
+    rows = res["vs"][res["model"]]["harm"][amp]
     if rows.get("spice_exp_capped"):   # the reference is not the same law there (validate.SPICE_EXP_CAP)
         assert mode_of(res) == "T", "only T's positive-g1 / zero-screen region reaches ngspice's exp() cap"
         pytest.skip(f"{mode_of(res)} {res['bias_ma']} mA, {amp} V: the DK run passes ngspice's B-source exp() cap, so "
@@ -368,7 +447,7 @@ def test_harmonics_H2_H5_within_0p1dB_above_m90dBc(res, amp):
 
 def test_burst_bias_shift_and_recovery(res):
     """Recovery tau only where the reference defines one (validate.py: none without a bypass cap or grid current)."""
-    b = res["vs"]["dual"]["burst"]
+    b = res["vs"][res["model"]]["burst"]
     if b.get("spice_exp_capped"):
         assert mode_of(res) == "T"
         pytest.skip("the 4 V burst passes ngspice's B-source exp() cap: the reference is not the same law")

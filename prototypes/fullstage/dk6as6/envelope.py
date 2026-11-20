@@ -13,7 +13,11 @@ hq 16x. Tones below 200 Hz run 0.4 s (the 0.1 s coupling caps settle), the rest 
 Signals outside the class (larger, or adversarial inter-sample peaks) are not covered by the derivation; the Stage's
 runtime guard (Stage.out_of_law, OutOfLawWarning) counts every internal sample outside the law, whatever the input.
 
-Run: python -m dk6as6.envelope [--workers N]   (from prototypes/fullstage) -> dk6as6/envelope.json (~10 min, 8 cores)
+With grid current (#112; --grid, the default stage's pentode.HARDNESS -> envelope_grid.json, SCAN_GRID): g1 positive is
+modelled (by the unvalidated grid law), so "in the law" is the grid law's: the plate never below the cathode, Ip + Ig2
+never negative (Ik >= Ig1) and Newton converged on every sample. envelope.json stays the no-grid (#111) record.
+Run: python -m dk6as6.envelope [--grid] [--workers N]   (from prototypes/fullstage) -> dk6as6/envelope[_grid].json
+     (~10 min, 8 cores)
 """
 import argparse
 import json
@@ -24,14 +28,17 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from dk6as6.stage import Stage, QUALITY, ExperimentalWarning, OutOfLawWarning  # noqa: E402 -- after the sys.path setup
+from dk6as6.stage import Stage, QUALITY, ExperimentalWarning, OutOfLawWarning, NonConvergenceWarning  # noqa: E402
+from dk6as6.pentode import HARDNESS  # noqa: E402 -- after the sys.path setup
 
 FS = 48000.0
 DRIVE_V = 8.0
 FREQS = (20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 15000, 18000, 20000)   # Hz
 PHASES = ("sin", "cos")
 SCAN = {"P1": (0.1, 0.6), "T": (0.1, 0.25, 0.3, 0.35)}   # mA: P1's range ends; T's candidates around its top end
+SCAN_GRID = {"P1": (0.1, 0.6), "T": (0.1, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6)}   # with grid current (#112)
 JSON = os.path.join(HERE, "envelope.json")
+JSON_GRID = os.path.join(HERE, "envelope_grid.json")
 
 
 def stimulus(f, phase, latency, fs=FS):
@@ -42,19 +49,31 @@ def stimulus(f, phase, latency, fs=FS):
     return np.r_[np.zeros(int(0.005 * fs)), x, np.zeros(int(0.02 * fs) + latency)]
 
 
-def excursion(mode, bias, quality, f, phase):
-    """(max Vg1k, min Vak) over the whole run at the internal rate, and the guard's count."""
+def excursion(mode, bias, quality, f, phase, grid_hardness=0.0):
+    """(max Vg1k, min Vak, min Ip + Ig2) over the whole run at the internal rate, the guard's count and Newton's
+    unconverged samples, at grid_hardness (0: the #111 law, the default here so envelope.json stays reproducible)."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", ExperimentalWarning)
         warnings.simplefilter("ignore", OutOfLawWarning)
-        st = Stage(FS, bias=bias, mode=mode, quality=quality, experimental=True)
-        r = st.process(stimulus(f, phase, st.latency_samples), record=("vgk", "a", "k"))["_internal"]
+        warnings.simplefilter("ignore", NonConvergenceWarning)
+        st = Stage(FS, bias=bias, mode=mode, quality=quality, experimental=True, grid_hardness=grid_hardness)
+        r = st.process(stimulus(f, phase, st.latency_samples), record=("vgk", "a", "k", "ipk"))["_internal"]
     return dict(mode=mode, bias_ma=bias, quality=quality, f_hz=f, phase=phase, vg1k_max=float(r["vgk"].max()),
-                vak_min=float((r["a"] - r["k"]).min()), out_of_law=st.out_of_law)
+                vak_min=float((r["a"] - r["k"]).min()), out_of_law=st.out_of_law,
+                **({} if not grid_hardness else dict(grid_hardness=grid_hardness, ipk_min=float(r["ipk"].min()),
+                                                     nonconverged=st.nonconv)))
 
 
 def _job(a):
     return excursion(*a)
+
+
+def in_law(r):
+    """The law in force for the row: without grid current g1 <= 0 and Vak >= 0; with it Vak >= 0, Ip + Ig2 >= 0 and
+    Newton converged (g1 > 0 is modelled)."""
+    if r.get("grid_hardness"):
+        return r["vak_min"] >= 0.0 and r["ipk_min"] >= 0.0 and r["nonconverged"] == 0
+    return r["vg1k_max"] <= 0.0 and r["vak_min"] >= 0.0
 
 
 def summary(rows):
@@ -67,22 +86,26 @@ def summary(rows):
     for m in out:
         for b, w in out[m].items():
             rr = [r for r in rows if r["mode"] == m and r["bias_ma"] == b]
-            out[m][b] = dict(w, vak_min=min(r["vak_min"] for r in rr),
-                             in_law=all(r["vg1k_max"] <= 0.0 and r["vak_min"] >= 0.0 for r in rr))
+            out[m][b] = dict(w, vak_min=min(r["vak_min"] for r in rr), in_law=all(in_law(r) for r in rr),
+                             **({} if "ipk_min" not in w else dict(ipk_min=min(r["ipk_min"] for r in rr),
+                                                                   nonconverged=sum(r["nonconverged"] for r in rr))))
     return out
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--workers", type=int, default=os.cpu_count())
+    ap.add_argument("--grid", action="store_true", help="with the default grid current (#112) -> envelope_grid.json")
     a = ap.parse_args()
-    jobs = [(m, b, q, f, ph) for m, bs in SCAN.items() for b in bs for q in QUALITY for f in FREQS for ph in PHASES]
+    gh, scan, fn = (HARDNESS, SCAN_GRID, JSON_GRID) if a.grid else (0.0, SCAN, JSON)
+    jobs = [(m, b, q, f, ph, gh) for m, bs in scan.items() for b in bs for q in QUALITY for f in FREQS for ph in PHASES]
     with ProcessPoolExecutor(a.workers) as ex:
         rows = list(ex.map(_job, jobs))
     s = summary(rows)
     json.dump(dict(drive_v=DRIVE_V, freqs_hz=FREQS, phases=PHASES, rows=rows,
-                   summary={m: {f"{b:g}": w for b, w in v.items()} for m, v in s.items()}), open(JSON, "w"), indent=1)
+                   summary={m: {f"{b:g}": w for b, w in v.items()} for m, v in s.items()}), open(fn, "w"), indent=1)
     for m, v in s.items():
         for b, w in sorted(v.items()):
             print(f"{m} {b:g} mA: in law {w['in_law']}; worst Vg1k {w['vg1k_max']:+.4f} V ({w['quality']}, "
-                  f"{w['f_hz']} Hz, {w['phase']}); min Vak {w['vak_min']:.1f} V")
+                  f"{w['f_hz']} Hz, {w['phase']}); min Vak {w['vak_min']:.1f} V"
+                  + (f"; min Ip+Ig2 {w['ipk_min']:.3g} A; unconverged {w['nonconverged']}" if "ipk_min" in w else ""))

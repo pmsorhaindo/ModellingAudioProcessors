@@ -333,6 +333,10 @@ Super 15 PK / SQ positions are out of scope (no sourced reason to include one wa
 meter reading.
 
 ### Supported envelope (`stage.SUPPORTED_MA`; PR #121 review)
+> **Since #112 this section describes the stage without grid current (`grid_hardness=0`,
+> `stage.SUPPORTED_MA_NO_GRID`).** The default stage models g1 grid current, and with it T is supported over the whole
+> 0.1–0.6 mA ("Grid current (#112)", at the end).
+
 `Stage` accepts a mode / bias only inside the supported envelope and raises `UnsupportedSettingError` outside it;
 `experimental=True` runs any setting with an `ExperimentalWarning` (`Stage.supported` records which). A setting is
 supported only where all three hold:
@@ -665,10 +669,12 @@ the regression baselines at T 0.3 mA / 8 V and P2 0.25 mA / 8 V, and the gate on
   in the audio band.
 
 ### For Michael
-1. **T is supported only to 0.3 mA.** Above it an 8 V step onset takes g1 positive, and from 0.4 mA a steady 8 V drive
+1. **T is supported only to 0.3 mA without grid current.** Above it an 8 V step onset takes g1 positive, and from 0.4 mA a steady 8 V drive
    also drives the plate below the cathode (−55 dBc aliasing). Making 0.3–0.6 mA usable in T needs a positive-g1 /
    grid-current treatment (#112) or a screen-voltage condition in the #55 law (no data for either). The Bias knob in
    T (knob 1 to 4.87) is a panel question (#115). The runtime guard flags any excursion in the meantime.
+   *#112 adopted the borrowed g1 grid-current model (unvalidated, labelled); with it, the default, T is supported
+   to 0.5 mA: "Grid current (#112)" below.*
 2. **P2 is experimental only:** our hypothesis, the fit's weakest region (the #51 parameters remove its doubling at
    2 V; refit #123), its doubling not confined to the documented 0.15–0.2 mA and its distortion growing with current
    against the manuals, its 2 V aliasing above the gate (the resampler's stopband; not fixed by hq), and its 0.6 mA
@@ -682,3 +688,188 @@ the regression baselines at T 0.3 mA / 8 V and P2 0.25 mA / 8 V, and the gate on
    neither has a sourced value.
 7. **#119's LPF** (`dk6as6/lpf.py`, `RESULTS-lpf.md`) forwards `mode=` to this Stage, but its measured evidence is P1
    only; T / P2 through the filter are not measured.
+
+## Grid current (#112)
+**Decision: the stage models g1 grid current by default, with an explicitly unvalidated law and a "grid hardness"
+control** (`Stage(grid_hardness=)`, `pentode.HARDNESS` = 1; 0 is the #111 stage bit for bit: the same 2-port
+circuit and solver, `results.json` reproduced exactly). Everything above this section is grid hardness 0 unless it
+says otherwise. Basis: Michael asked for accuracy first, and for #112 to lean toward modelling grid current. A real
+6AS6 draws g1 current as g1 nears the cathode. Ig1 = 0 is a known error wherever g1 gets there, and in T above
+0.35 mA it made the stage unphysical (g1 to +1.56 V, the plate to −746 V; "Modes", above).
+
+### The law (`dk6as6/pentode.py`: `grid()`, `grid_current()`, `currents_grid()`)
+- `Ig1 = Gg · (softplus(Cg·Vg1k)/Cg)^ξ`: Dempwolf & Zölzer, *A physically-motivated triode model for circuit
+  simulations*, DAFx-11, eq. (11) (https://www.dafx.de/paper-archive/2011/Papers/76_e.pdf; the equation and Table 1
+  were re-read from the paper for #112). It is C∞ (softplus), so Newton sees continuous Jacobians and needs no
+  junction limiting.
+- **ξ = 1.314, Cg = 9.901 /V: DZ's 12AX7 RSD-1 values** (Table 1; `dk/triode.DZ_12AX7_RSD1`, imported), i.e. the
+  12AX7's shape of onset. **Borrowed, not 6AS6 data.**
+- **Gg = hardness × 1.2808 × 6.177e-4 = 7.912e-4 A/V^ξ** at hardness 1. **1.2808 = `pentode.PERVEANCE_RATIO`, the
+  ratio of the two fitted cathode coefficients:** the 6AS6 fit's 2/KG1 = 2.872e-3 A/V^1.49 (#55 `dual_control`, where
+  Ik0 = (2/KG1)·E1^EX) over RSD-1's G = 2.242e-3 A/V^1.26. They are compared at 1 V of effective control voltage,
+  where the different exponents drop out. **Assumption (ours): grid current scales with cathode emission at the
+  12AX7's grid geometry.** It is a guess to replace with a measurement. Hardness is the control for that guess, not a
+  fitted value.
+- **No 6AS6 grid-current data exists to check it.** No reviewed 6AS6 / 5725 sheet has positive-g1 curves
+  (`research/6as6-datasheets.md`). Mullard M8196 pp. D1–D3, re-read for #112, give only reverse grid current
+  (≤ 0.1 µA at Vg1 = −2 V, Rg1 = 100 kΩ; ≤ 1 µA at Vh = 7.5 V, Vg1 = −10 V) and no forward spot value.
+- **DZ's Ig0 (8.025e-8 A, "added due to stability reasons") is left out.** It is a constant, not a current law, and
+  through the 1.07 MΩ grid circuit it would move the grid DC by −86 mV at cut-off.
+- **Where it enters: out of the fit's cathode current, before the plate/screen split**, as recommended in
+  `research/grid-current.md`: Ip = (Ik − Ig1)·f, Ig2 = (Ik − Ig1)·(1 − f), with Ik and the share f the #55 law's.
+  The cathode current is unchanged (Ik = Ip + Ig2 + Ig1, tested), and Ig1 depends on Vg1k only, as DZ measured for
+  the 12AX7 ("only small dependency on the anode voltage").
+- Values (Vg1k → Ig1): −1 V 87 pA, −0.5 V 58 nA, −0.16 V 4.3 µA, 0 V 24.0 µA, +0.5 V 0.32 mA, +1 V 0.79 mA, +2 V
+  1.97 mA. With the 68k stopper, 24 µA at Vg1k = 0 is already a 1.6 V drop, so the grid clamps within ~0.1–0.2 V
+  of the cathode.
+- **The law's limit, kept visible rather than patched:** where the screen is near the cathode and g1 slightly
+  negative, the Koren-form Ik falls below DZ's sub-zero grid tail, so Ik − Ig1 < 0 (negative plate and screen
+  current). DZ state the same kind of limit for their triode ("V_g > 0 and small anode voltages, say V_a < 20 V, the
+  results are obviously not correct"). A smooth clamp would be a new, invented law, so there is none. Instead the
+  supported envelope requires Ip, Ig2 ≥ 0 (next section).
+- **Tests** (`dk6as6/tests/test_pentode.py`): `currents_grid` against `reference_grid` (model6as6.dual_ip_ig2 for Ik
+  and f, DZ eq. (11) in numpy) to 1e-12. Ip and Ig2 are differences, so, as `dk/tests/test_triode.py`'s Ia = Ik − Ig,
+  their error is taken relative to the sum of magnitudes. Also tested: the Jacobian against central differences;
+  cathode-current conservation; and hardness 0 equal to `currents()` exactly. Ig3 stays 0: no v1 mode needs it (#111).
+
+### DK and ngspice
+- **DK:** a third valve current port g → k (`circuit.nli(grid=True)`), so K is 4×3, and a 3×3 Newton step
+  (`solver.solve_grid`; Cramer, J's g1 row is (dIg1/dVg1k, 0, 0, 0)). TOL_V / TOL_F / MAX_IT / LS_MAX and the
+  non-convergence contract are unchanged. With hardness 0 the stage builds the #111 2-port circuit and calls the #111
+  `solve()`: P1 / T / P2 outputs are bit-identical (checked against `results.json`'s 2 V and 8 V harmonics).
+- **ngspice:** model `dualg` (`spice6as6/run_refs.py`) is a new subckt, `models/6as6_dualg{,_cg3k}.inc`, with
+  `Bg1 G1 K` (softplus written overflow-free as max(x,0)+ln(1+exp(−|x|))) and Bp / Bg2 carrying (Ik − Ig1)·share.
+  **The `dual` subckts and every #111 reference are unchanged** (regenerated byte-identical; tested). The operating
+  point also writes ig1 = (v(gl) − v(g))/Rgs. `test_grid_subckt_is_the_dk_valve_law_with_grid_current` evaluates the
+  three B-sources in Python against `currents_grid`.
+- **Static Ig–Vgk sweep** (`python -m dk6as6.grid static` → `grid.json` "static"; ngspice `.dc` of the dualg subckt,
+  Vg1k −3…+2 V in 50 mV, at (Vg2k, Vg3k, Vak) = (120, 0, 150) V and (50, 50, 50) V): DK and ngspice agree on Ig1, Ip
+  and Ig2 to within 2.5 % of ngspice's own Newton tolerance on source currents (reltol·|I| + abstol). In plain
+  numbers: Ig1 to 1.0e-8 relative where it is above 1e-15 A, and Ip / Ig2 to ≤ 1.5e-8 of Ik.
+
+### What it does to the envelope (`python -m dk6as6.grid envelope` → `grid.json` "envelope"; DK, standard 8×)
+**P1: nothing measurable.** Its unbypassed Rk (7–53 kΩ) keeps g1 at or below −3.28 V on every signal up to 8 V peak,
+1 kHz or any onset to 19 kHz, so Ig1 ≤ 1.2e-23 A. With grid current on, P1's outputs differ from the #111 stage only
+by rounding (the CI cases below, and P1's references).
+
+**T: the grid current is what keeps T physical above 0.35 mA.** Here are the highest Vg1k, the lowest Vak and the THD
+over the last 100 cycles of a 0.5 s, 1 kHz sine, with grid current (compare "Modes", "T at high current and drive"
+above, without it):
+
+| T, bias | 2 V | 4 V | 6 V | 8 V |
+|---|---|---|---|---|
+| 0.1 mA | −7.57 V, 159 V, 0.5 % | −7.14 V, 154 V, 1.0 % | −6.74 V, 148 V, 1.6 % | −6.34 V, 142 V, 2.5 % |
+| 0.25 mA | −4.60 V, 114 V, 0.8 % | −3.85 V, 100 V, 1.7 % | −3.13 V, 86 V, 2.8 % | −2.44 V, 72 V, 4.2 % |
+| 0.35 mA | −2.93 V, 82 V, 1.2 % | −1.96 V, 61 V, 2.5 % | −1.04 V, 40 V, 4.0 % | −0.25 V, 19 V, 6.0 % |
+| 0.4 mA | −2.15 V, 65 V, 1.5 % | −1.07 V, 40 V, 3.1 % | −0.22 V, 18 V, 4.8 % | −0.08 V, 15 V, 7.3 % |
+| 0.45 mA | −1.40 V, 48 V, 1.9 % | −0.29 V, 20 V, 3.8 % | −0.10 V, 15 V, 5.4 % | −0.04 V, 14 V, 10.0 % |
+| 0.5 mA | −0.67 V, 30 V, 2.6 % | −0.13 V, 16 V, 3.9 % | −0.05 V, 14 V, 6.8 % | −0.01 V, 13 V, 13.3 % |
+| 0.6 mA | −0.15 V, 16 V, 4.1 % | −0.06 V, 14 V, 6.4 % | −0.02 V, 13 V, 10.2 % | +0.02 V, 12 V, 19.4 % |
+
+(All 10 currents 0.1–0.6 mA are in `grid.json`; up to 0.3 mA Ig1 < 3e-12 A and nothing changes.) Without grid current
+the same 0.6 mA / 8 V point reached g1 = +1.56 V, the plate −746 V and 40.4 % THD. With it, g1 is clamped at
+≤ +0.02 V, the plate stays ≥ 12 V above the cathode and Ip + Ig2 ≥ 0.88 µA. Newton: 0 non-converged, at most 4
+iterations.
+
+**Tone onsets** (PR #121's review case: an 8 V zero-phase sine from silence, 30 ms, at 1037 / 5037 / 10037 / 15037 /
+18037 / 19037 Hz, standard and hq, at every supported current of P1 and T): **every one stays in the law** (plate above
+the cathode, Ip + Ig2 > 0). The review's T 0.35 mA / 18 kHz case, which took g1 to +0.0797 V without grid current,
+now peaks at −0.129 V (standard and hq). The worst onset of all, T 0.6 mA at 18 kHz, takes g1 to +0.20 V, the plate
+down to 6.8 V and Ip + Ig2 down to 0.95 µA. Newton converges on every sample, but **T's onsets at 0.35–0.6 mA take up
+to 15 iterations at standard (up to 11 at hq)**, against at most 6 in P1 and on any 1 kHz signal: the grid current
+switching on within a few samples at 15–19 kHz. That cost is a real-time budget item for the C++ port (#104), not a
+correctness issue (MAX_IT = 50).
+
+**Fidelity caveat for T above ~0.35 mA at high drive.** The plate swings down to 7–20 V while g1 is near or just above
+0 V. That is below the #55 fit's lowest plate voltage (Eb 20 V), it uses the Koren law's extrapolation to Ec1 ≥ 0
+(the fit has Ec1 ≤ 0), and it is the corner where DZ say their own law is "obviously not correct" for a triode
+(Vg > 0, Va < 20 V). It is in the law as defined here (plate above the cathode, Ip, Ig2 ≥ 0), as T 0.35 mA without grid
+current was (Vak ≥ 16.8 V) when #111 supported it, but **it is model extrapolation, not data**.
+
+**Where T's envelope ends: steady state across the band** (`python -m dk6as6.grid hf` → `grid.json` "hf"; T at
+0.35–0.6 mA every 50 µA, 4 / 6 / 8 V peak, tones 1037–19037 Hz every 2 kHz, 0.4 s from silence). The 1 kHz and onset
+checks above are not enough. Before the fix below, T at 0.5–0.6 mA lost Newton on single samples of a *steady* 6–8 V
+tone at 13–19 kHz (0.5 mA / 8 V at 13 and 19 kHz, 0.55 mA / 8 V at 17 kHz, 0.6 mA / 6 V at 19 kHz and 8 V at 15–19 kHz):
+1–12 samples per 0.4 s hit MAX_IT and returned an iterate with the plate at ~0 V and Ip + Ig2 slightly negative. **That
+was Newton, not the circuit.** At the failing sample of T 0.6 mA / 8 V / 15 kHz the same equations have a root with
+every current positive (plate 11.7 V), which Newton finds in 6–7 iterations from zero current or from the previous
+sample's currents. Only the linear-extrapolation warm start led it into the Ik < Ig1 region, where it stalled.
+**Fix (`Stage.process_internal`, grid path only):** if a sample does not converge, restart from the previous sample's
+currents, then from the operating point; the iterations are summed. A sample that converges first time is unchanged,
+so every 1 kHz result and the hardness-0 stage are bit-identical. With it, **every T setting 0.35–0.6 mA at 4 / 6 /
+8 V and every tone stays in the law with no unconverged sample**. At 0.6 mA / 8 V the plate stays ≥ 6.9 V above the
+cathode and Ip + Ig2 ≥ 0.47 µA. **Cost:** a rescued sample takes 55–57 iterations (the failed 50, then 5–7). This
+happens on a few samples per 0.4 s, only at T ≥ 0.5 mA with a steady 6–8 V tone above 13 kHz. It is a worst-case
+real-time item for the C++ port (#104), not an accuracy one.
+
+### Validation against the same-model ngspice references (`dk/validate.CRIT` unchanged; `results_grid[_T].json`)
+References `spice6as6/reference_dualg_{0.1,0.25,0.45}mA.json` (P1) and `reference_dualg_T_{0.1,0.25,0.35,0.45,0.6}mA.json`
+(T): ngspice 41 (the conda-forge osx-64 build under Rosetta, as #118 / #120 / #121), `spice/run_refs.SOLVER` unchanged,
+the netlists generated as before with the dualg subckt. **Run with `run_refs.py --split 6`**: 'main' as six ngspice
+calls (.op/.ac, one per sine, the burst), the same analyses (`test_split_main_is_the_same_analyses`). This was needed
+to keep each call bounded. The machine was shared with other sessions' jobs at load averages of 100–400, so each
+ngspice got ~15–22 % of a core, and a sine took 50–62 min of wall clock against #111's 15–35. Two earlier attempts
+(one ngspice call per 'main', then split under a 1 h cap) were stopped by hand after ~25 min, once the CPU rate showed
+they could not finish under 1 h. The runs that made the references used a 3 h `NGSPICE_TIMEOUT_S` cap per call; the
+longest call took 61.5 min. **P1 0.6 mA has no dualg reference** (below). `python -m dk6as6.validate --grid` → `results_grid.json`
+(P1) and `results_grid_T.json`.
+
+| criterion (limit) | P1 0.1 | P1 0.25 | P1 0.45 | T 0.1 | T 0.25 | T 0.35 | T 0.45 | T 0.6 |
+|---|---|---|---|---|---|---|---|---|
+| op point, worst rel. (< 0.001) | 7.6e-10 | 1.2e-9 | 1.4e-9 | 1.8e-9 | 1.1e-9 | 2.8e-9 | 1.5e-9 | 6.8e-9 |
+| small signal, stage / chain (< 0.1 dB) | 0.00000 / 0.00081 | 0.00005 / 0.00084 | 0.00007 / 0.00085 | 0.00010 / 0.00076 | 0.00005 / 0.00084 | 0.00012 / 0.00088 | 0.00019 / 0.00092 | 0.00035 / 0.00101 |
+| H2–H5 worst tested (< 0.1 dB) | 0.00214 (H4, 2 V) | 0.00069 (H4, 2 V) | 0.00297 (H4, 2 V) | 0.00050 (H5, 8 V) | 0.00040 (H4, 8 V) | 0.00055 (H5, 8 V) | 0.00382 (H4, 2 V) | 0.00275 (H2, 2 V; 13 tested) |
+| burst shift / trajectory (< 0.5 % / 0.5 %) | 0.058 % / 0.0065 % | 0.056 % / 0.0063 % | 0.056 % / 0.0062 % | 0.067 % / 0.0075 % | 0.069 % / 0.0076 % | 0.069 % / 0.0077 % | 0.069 % / 0.0076 % | 0.036 % / 0.0039 % |
+| recovery τ (< 1 %, where the reference has one) | none | none | none | none | none | none | **0.0018 %** (89.0 ms) | **0.0019 %** (89.0 ms) |
+| Newton non-converged / max it. | 0 / 3 | 0 / 3 | 0 / 3 | 0 / 3 | 0 / 3 | 0 / 3 | 0 / 4 | 0 / 4 |
+| status | **passed** | **passed** | **passed** | **passed** | **passed** | **passed** | **passed** | **passed** |
+
+(Standard 8×; **hq 16× passes every criterion at every one of these currents too**, with the same figures to ±0.00003 dB
+and τ to 0.0004 %.) Above 0.35 mA the T comparison is complete for the first time. Without grid current T 0.45 / 0.6 mA
+were "inconclusive": ngspice's exp() cap made the reference a different law there. With grid current g1 never gets
+far enough positive for the cap (no case is `spice_exp_capped`), and every harmonic and the burst are compared.
+
+**P1 0.6 mA, the top of P1's envelope, is validated by equivalence rather than by a dualg reference.** On every
+validate.py signal P1 at 0.6 mA draws Ig1 ≤ 1.2e-23 A (g1 ≤ −3.28 V). That is nine orders below ngspice's abstol (1e-14
+A), so the dualg circuit there is the dual one, and the dual 0.6 mA reference passes (`results.json`).
+`test_p1_grid_current_is_negligible` checks the DK side: grid on and off agree to 1e-12 relative at 0.6 mA / 8 V
+(measured 5e-15). A dualg run would repeat #120's ~2 CPU-hour burst, ngspice chattering through that operating
+point's silent start.
+
+### What the grid current changes (`grid.json` "tables"; DK standard, ngspice agreeing to the digits shown)
+**4 V, 1 kHz burst (10–30 ms): grid DC (cycle-mean Vgk), V.** "No grid" is the #111 stage. **Raw shift and
+trajectory are given beside CRIT's τ (#124).** CRIT's τ starts on the 30.5 ms sample, which straddles the burst's end,
+so it is shown but not relied on. The tail fit is a log-linear fit over 31–118 ms.
+
+| T, bias | | rest | shift (min − rest) | at 30 / 35 / 50 / 119 ms | CRIT τ (ngspice) | tail-fit τ |
+|---|---|---|---|---|---|---|
+| 0.35 mA | no grid | −3.9416 | −0.682 | −4.624 / −3.940 / −3.941 / −3.941 | none | 111.9 ms |
+| 0.35 mA | grid | −3.9416 | −0.682 | −4.624 / −3.940 / −3.941 / −3.941 | none | 111.9 ms |
+| 0.45 mA | no grid | −2.6527 | −0.843 | −3.496 / −2.651 / −2.651 / −2.652 | none | 109.1 ms |
+| 0.45 mA | grid | −2.6527 | **−0.855** | −3.508 / **−2.662 / −2.661 / −2.657** | 89.0 ms | 107.1 ms |
+| 0.6 mA | no grid (ngspice; DK not comparable: exp cap) | −0.9488 | −1.102 | −2.051 / −0.950 / −0.950 / −0.949 | 89.0 ms | 106.0 ms |
+| 0.6 mA | grid | −0.9488 | **−2.189** | −3.138 / **−1.969 / −1.830 / −1.401** | 89.0 ms | 102.5 ms |
+
+**This is the blocking the issue asked for.** Without grid current the grid DC only follows the unbypassed cathode
+during the burst and returns with its end (to < 2 mV at 35 ms). With it, at 0.45 mA the burst's positive peaks charge
+Cin through the grid, leaving the grid 9–10 mV low at 35–50 ms and 4 mV low at 119 ms. At 0.6 mA it is 1.02 V low at
+35 ms and still 0.45 V low at 119 ms, recovering with the Cin / grid-leak time constant (tail fit ~0.1 s; Cin 100 nF
+into Rg 1 MΩ). The shift itself doubles (−2.19 V against −1.10 V). In P1 (every current) and T up to 0.35 mA the 4 V
+burst draws no grid current (Ig1 < 1e-11 A), so the burst is the #111 one to the printed digits (P1 0.1 / 0.25 /
+0.45 mA shifts −0.213 / −0.235 / −0.257 V, as above).
+
+**THD vs drive (1 kHz, validate.py's amplitudes), % — with grid current / without:**
+
+| bias | 0.05 V | 0.5 V | 2 V | 8 V |
+|---|---|---|---|---|
+| P1 0.1 / 0.25 / 0.45 mA | identical (0.0118 / 0.0016 / 0.0446) | identical (0.119 / 0.0177 / 0.446) | identical (0.512 / 0.147 / 1.746) | identical (7.435 / 8.170 / 8.903) |
+| T 0.1 / 0.25 mA | identical | identical | identical | identical (2.463 / 4.162) |
+| T 0.35 mA | 0.0296 / 0.0296 | 0.297 / 0.297 | 1.201 / 1.201 | **5.991 / 6.103** (H3 −40.8 vs −43.6, H5 −52.5 vs −63.8 dBc) |
+| T 0.45 mA | 0.0469 / 0.0469 | 0.470 / 0.470 | 1.916 / 1.916 | **10.03 / 20.24** (no-grid DK; ngspice 12.33, exp-capped: neither is physical) |
+| T 0.6 mA | **0.1202 / 0.1221** | **1.098 / 1.226** (H4 −68.0 vs −97.6 dBc) | **4.085 / 16.40** (ngspice 7.86, capped) | **19.36 / 40.35** (ngspice 29.46, capped) |
+
+("Identical": to ≤ 5e-7 dB on any harmonic, the largest on harmonics at the −150 dBc floor.) The grid current matters
+where g1 gets within ~1 V of the cathode: T at ≥ 0.35 mA. There it **halves the 8 V distortion of the no-grid law at
+0.45–0.6 mA** (which drove g1 to +0.7…+1.6 V and the plate below the cathode). At T 0.6 mA, where g1 rests at −0.95 V,
+the grid current's exponential onset also **adds H4/H5 at moderate drive** (0.5 V: H4 −68.0 dBc against −97.6, H5
+−74.8 against −117.6). That is a prediction of the borrowed DZ shape, the part of this law least supported by 6AS6 data.
