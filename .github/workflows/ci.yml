@@ -22,7 +22,8 @@ jobs:
   test:
     name: test (${{ matrix.prototype }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # fullstage took ~10 of 15 min in #120; #111 adds the T / P2 validation and aliasing cases (~3 min)
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:

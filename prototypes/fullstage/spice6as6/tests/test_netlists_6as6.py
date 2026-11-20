@@ -1,9 +1,10 @@
-"""Generated 6AS6 ngspice netlists and valve subckts vs dk6as6/circuit.VALUES, spice/run_refs.SOLVER and the fit
-(#26, #102). No ngspice needed. Uses the 12AX7 netlist test's small SPICE parser (spice/tests/test_netlists.py), not
-the generator. Checks every component value (Rk: the one the DK stage solves for the reference's bias) and the topology
-against circuit.netlist(), the screen source and the P1 wiring (g3 on the cathode), the .options and tran steps, the
-committed GENERATED files and references, and that the subckts' B-source expressions, evaluated here, ARE the DK
-stage's valve law (dk6as6/pentode.py = fit6as6 model6as6.dual_ip_ig2) with the same parameters.
+"""Generated 6AS6 ngspice netlists and valve subckts vs dk6as6/circuit.VALUES, circuit.MODES, spice/run_refs.SOLVER
+and the fit (#26, #102, #111). No ngspice needed. Uses the 12AX7 netlist test's small SPICE parser
+(spice/tests/test_netlists.py), not the generator. Checks every component value (Rk: the one the DK stage solves for the
+reference's bias) and the topology against circuit.netlist(), the screen source or strap and each mode's wiring (P1 g3
+on the cathode, T g2 + g3 strapped to the plate, P2 g3 on ground), the .options and tran steps, the committed GENERATED
+files and references, and that the subckts' B-source expressions, evaluated here, ARE the DK stage's valve law
+(dk6as6/pentode.py = fit6as6 model6as6.dual_ip_ig2) with the same parameters.
 Run from prototypes/fullstage:  python -m pytest -q spice6as6/tests
 """
 import itertools
@@ -12,6 +13,7 @@ import math
 import os
 import re
 import sys
+import numpy as np
 import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
@@ -22,26 +24,30 @@ from dk6as6.stage import cathode_resistor, BIAS_MA  # noqa: E402 -- after the sy
 from spice6as6 import run_refs as R  # noqa: E402 -- after the sys.path setup
 
 VALUES = circuit.VALUES
-PIN_NODES = circuit.PINS                                      # subckt pin -> stage node
-CASES = R.cases(R.PARAMS)                                     # every committed reference: (model, bias mA)
-RK = {(m, b): cathode_resistor(b, R.PARAMS[m]) for m, b in CASES}
+CASES = R.cases(list(R.PARAMS) + [f"dual/{m}" for m in R.MODE_BIASES if m != "P1"])   # every committed reference:
+RK = {(m, md, b): cathode_resistor(b, R.PARAMS[m], mode=md) for m, md, b in CASES}    # (model, mode, bias mA)
 
 
-def with_rk(model, bias=BIAS_MA, values=VALUES):
-    return dict(values, Rk=RK[model, bias])
+def with_rk(model, bias=BIAS_MA, values=VALUES, mode="P1"):
+    return dict(values, Rk=RK[model, mode, bias])
 
 
-def check(text, model, analysis, values, solver=R12.SOLVER):
-    """All divergences of netlist `text` from `values` (circuit.VALUES plus Rk) / `solver` (empty list = consistent)."""
+def check(text, model, analysis, values, solver=R12.SOLVER, mode="P1"):
+    """All divergences of netlist `text` from `values` (circuit.VALUES plus Rk) / `solver` / circuit.MODES[mode]
+    (empty list = consistent)."""
     err = []
     p = parse(text)
     el = p["elements"]
-    inc, sub = R.MODELS[model]
+    inc, sub = R.models(model, mode)
     if p["includes"] != [inc.split(None, 1)[1]]:
         err.append(f"includes {p['includes']} != {inc}")
-    if el.get("XV1") != list(R.PINS) + [sub]:
-        err.append(f"XV1 {el.get('XV1')} != {list(R.PINS) + [sub]}")
-    for name, n, key in (("VHT", "ht", "HT"), ("VG2", "g2", "EC2")):
+    want_pins = [circuit.MODES[mode]["pins"][q] or "0" for q in R.SUBCKT_PINS]
+    if el.get("XV1") != want_pins + [sub]:
+        err.append(f"XV1 {el.get('XV1')} != {want_pins + [sub]}")
+    stiff = circuit.MODES[mode]["screen"] == "EC2"
+    if not stiff and "VG2" in el:
+        err.append(f"a screen supply VG2 in {mode}, whose screen is strapped to the plate")
+    for name, n, key in (("VHT", "ht", "HT"),) + ((("VG2", "g2", "EC2"),) if stiff else ()):
         t = el.get(name, [])
         if (t[:3] != [n, "0", "DC"] or len(t) != 4
                 or not (num(t[3]) == values[key] == 0 or close(num(t[3]), values[key]))):
@@ -53,17 +59,21 @@ def check(text, model, analysis, values, solver=R12.SOLVER):
             err.append(f"element {name} is not a circuit.VALUES key or Rk")
         elif len(tok) != 3 or not close(num(tok[2]), values[key]):
             err.append(f"{name} = {tok[2:]} != VALUES[{key!r}] = {values[key]:g}")
-    missing = {k.upper() for k in circuit.PASSIVES + ("Rk",)} - set(passives) - {"HT"}
+    want_passives = circuit.PASSIVES + ("Rk",) + (() if stiff else ("Rstrap",))
+    missing = {k.upper() for k in want_passives} - set(passives) - {"HT"}
     if missing:
         err.append(f"VALUES keys missing from the netlist: {sorted(missing)}")
-    R_, Cs, U, _, _, _ = circuit.netlist(values["Rk"], v=values)
-    n_valve = len(circuit.valve_caps(values))                   # netlist() lists the valve's caps last
+    extra = set(passives) - {k.upper() for k in want_passives}
+    if extra:
+        err.append(f"elements not in {mode}'s netlist: {sorted(extra)}")
+    R_, Cs, U, _, _, _ = circuit.netlist(values["Rk"], v=values, mode=mode)
+    n_valve = len(circuit.valve_caps(values, mode))             # netlist() lists the valve's caps last
     want = edges((kind, p_, q, val) for kind, es in (("R", R_), ("C", Cs[:len(Cs) - n_valve])) for p_, q, val in es)
     have = edges((name[0], node(t[0]), node(t[1]), num(t[2])) for name, t in passives.items() if len(t) == 3)
     for e in sorted(set(want) | set(have)):
         if e not in have or e not in want or not close(have[e], want[e]):
             err.append(f"{e[0]} between {e[1]}: netlist {have.get(e)} != circuit.netlist() {want.get(e)}")
-    if U != ["src", "ht", "g2"]:
+    if U != ["src", "ht"] + (["g2"] if stiff else []):
         err.append(f"circuit.netlist() sources {U} changed; update this test")
     vin = "VIN" if analysis == "main" else "BIN"
     if el.get(vin, [])[:2] != ["src", "0"]:
@@ -96,86 +106,132 @@ def check(text, model, analysis, values, solver=R12.SOLVER):
 # --- the generated netlists -------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("analysis", R.ANALYSES)
-@pytest.mark.parametrize("model, bias", CASES)
-def test_generated_netlist_matches_values_and_solver(model, bias, analysis):
-    assert check(R.netlist(model, analysis, bias), model, analysis, with_rk(model, bias)) == []
+@pytest.mark.parametrize("model, mode, bias", CASES)
+def test_generated_netlist_matches_values_and_solver(model, mode, bias, analysis):
+    assert check(R.netlist(model, analysis, bias, mode=mode), model, analysis, with_rk(model, bias, mode=mode),
+                 mode=mode) == []
 
 
 def test_p1_wiring_suppressor_on_cathode():
     """P1: g3 on the cathode in both descriptions; no g3 source; the Vg3k row of the DK incidence is zero."""
-    assert R.PINS == ("a", "g2", "k", "g", "k") and circuit.PINS["G3"] == circuit.PINS["K"] == "k"
+    pins = circuit.MODES["P1"]["pins"]
+    assert R.PINS == R.pins("P1") == ("a", "g2", "k", "g", "k") and pins["G3"] == pins["K"] == "k"
     assert "g3" not in circuit.NODES and "EC3" not in VALUES
     assert parse(R.netlist("dual", "main", BIAS_MA))["elements"]["XV1"][:5] == ["a", "g2", "k", "g", "k"]
-    m = circuit.build(48000.0 * 8, RK["dual", BIAS_MA])
+    m = circuit.build(48000.0 * 8, RK["dual", "P1", BIAS_MA])
     assert not m["G"][2].any() and not m["H"][2].any() and not m["K"][2].any()
 
 
-def test_committed_files_are_generated_and_current():
-    txt = open(R.NETLIST_FILE).read()
+def test_t_wiring_screen_and_suppressor_strapped_to_the_plate():
+    """T: g2 and g3 on one node, tied to the plate by Rstrap; no screen supply (u = vin, HT); in the DK incidence
+    Vg3k is Vg2k."""
+    el = parse(R.netlist("dual", "main", BIAS_MA, mode="T"))["elements"]
+    assert el["XV1"][:5] == ["a", "g2", "g2", "g", "k"] and "VG2" not in el
+    assert el["RSTRAP"][:2] == ["g2", "a"] and close(num(el["RSTRAP"][2]), VALUES["Rstrap"])
+    assert VALUES["Rstrap"] == 100.0                    # the #102 table's stopper
+    m = circuit.build(48000.0 * 8, RK["dual", "T", BIAS_MA], mode="T")
+    assert m["H"].shape == (4, 2)
+    for k in "GHK":
+        assert np.array_equal(m[k][2], m[k][1]), k
+
+
+def test_p2_wiring_suppressor_on_ground():
+    """P2 (our hypothesis): g3 on ground, the screen at EC2; in the DK incidence Vg3k = -Vk."""
+    el = parse(R.netlist("dual", "main", BIAS_MA, mode="P2"))["elements"]
+    assert el["XV1"][:5] == ["a", "g2", "0", "g", "k"] and el["VG2"][:2] == ["g2", "0"] and "RSTRAP" not in el
+    nv = circuit._inc(circuit.nlv("P2"))
+    assert nv[2].tolist() == [-1.0 if n == "k" else 0.0 for n in circuit.NODES]
+
+
+@pytest.mark.parametrize("mode", R.NETLIST_MODES)
+def test_committed_files_are_generated_and_current(mode):
+    fn = R.netlist_file(mode)
+    txt = open(fn).read()
     assert txt.startswith("* GENERATED by spice6as6/run_refs.py")
-    assert txt == R.netlist("dual", "main", BIAS_MA), (
-        "spice6as6/stage_6as6.cir is stale: python spice6as6/run_refs.py --write-netlist")
-    assert check(txt, "dual", "main", with_rk("dual")) == []
-    for m in R.MODELS:
-        assert open(R.model_file(m)).read() == R.subckt(m), f"{R.model_file(m)} is stale"
+    assert txt == R.netlist("dual", "main", BIAS_MA, mode=mode), (
+        f"{fn} is stale: python spice6as6/run_refs.py --write-netlist")
+    assert check(txt, "dual", "main", with_rk("dual", mode=mode), mode=mode) == []
+    for m, md in R.SUBCKTS:
+        assert open(R.model_file(m, md)).read() == R.subckt(m, mode=md), f"{R.model_file(m, md)} is stale"
 
 
 def test_spiceinit():
     assert R.spiceinit() == f"set ngbehavior={R12.NGBEHAVIOR}"
 
 
-@pytest.mark.parametrize("model, bias", CASES)
-def test_committed_references_were_made_with_these_settings(model, bias):
-    gen = json.load(open(R.ref_file(model, bias)))["generator"]
+@pytest.mark.parametrize("model, mode, bias", CASES)
+def test_committed_references_were_made_with_these_settings(model, mode, bias):
+    ref = json.load(open(R.ref_file(model, bias, mode)))
+    gen = ref["generator"]
     assert gen["solver"] == R12.SOLVER and gen["sine"] == R12.SINE and gen["burst"] == R12.BURST
     assert gen["ac"] == dict(R12.AC_GRID, edges_hz=list(R12.AC_EDGES_HZ))
     assert gen["spiceinit"] == R.spiceinit()
     assert gen["params"] == R.PARAMS[model]
-    assert gen["bias_ma"] == bias and gen["rk"] == pytest.approx(RK[model, bias], rel=1e-9)
+    assert gen["bias_ma"] == bias and gen["rk"] == pytest.approx(RK[model, mode, bias], rel=1e-9)
+    assert gen.get("mode", "P1") == ref.get("mode", "P1") == mode
 
 
-@pytest.mark.parametrize("key", [k for k in VALUES if k not in {c[0] for c in circuit.VALVE_CAPS}] + ["Rk"])
+VALUE_KEYS = [k for k in VALUES if k not in {"CG3"} | {c[0] for c in circuit.VALVE_CAPS}] + ["Rk"]
+
+
+@pytest.mark.parametrize("key", VALUE_KEYS)
 def test_check_catches_changed_value(key):
-    v = with_rk("dual")
+    mode = "T" if key == "Rstrap" else "P1"             # Rstrap is only in T's netlist
+    v = with_rk("dual", mode=mode)
     bad = dict(v, **{key: v[key] * 1.01})
-    txt = R.netlist("dual", "main", BIAS_MA, values=bad, rk=bad["Rk"])
-    assert any(key in e or "VHT" in e or "VG2" in e for e in check(txt, "dual", "main", v))
+    txt = R.netlist("dual", "main", BIAS_MA, values=bad, rk=bad["Rk"], mode=mode)
+    assert any(key.upper() in e.upper() or "VHT" in e or "VG2" in e for e in check(txt, "dual", "main", v, mode=mode))
 
 
-@pytest.mark.parametrize("old, new", [("Rk  k 0 9872.89", "Rk  k 0 9972.89"), ("VG2 g2 0 DC 120", "VG2 g2 0 DC 150"),
-                                      ("XV1 a g2 k g k", "XV1 a g2 0 g k"), ("XV1 a g2 k g k", "XV1 a k g2 g k"),
-                                      ("reltol=1e-06", "reltol=1e-04"), ("Rl  out 0 1Meg\n", ""),
-                                      ("Rk  k 0", "Ck  k 0 22u\nRk  k 0")])
-def test_check_catches_hand_edit(old, new):
-    txt = R.netlist("dual", "main", BIAS_MA)
+@pytest.mark.parametrize("mode, old, new", [
+    ("P1", "Rk  k 0 9872.89", "Rk  k 0 9972.89"), ("P1", "VG2 g2 0 DC 120", "VG2 g2 0 DC 150"),
+    ("P1", "XV1 a g2 k g k", "XV1 a g2 0 g k"), ("P1", "XV1 a g2 k g k", "XV1 a k g2 g k"),
+    ("P1", "reltol=1e-06", "reltol=1e-04"), ("P1", "Rl  out 0 1Meg\n", ""), ("P1", "Rk  k 0", "Ck  k 0 22u\nRk  k 0"),
+    ("T", "Rstrap g2 a 100\n", ""), ("T", "Rstrap g2 a 100", "Rstrap g2 a 1k"),
+    ("T", "XV1 a g2 g2 g k", "XV1 a g2 k g k"),
+    ("T", "VHT ht 0 DC 200\n", "VHT ht 0 DC 200\nVG2 g2 0 DC 120\n"), ("T", "_CG3K", ""),
+    ("P2", "XV1 a g2 0 g k", "XV1 a g2 k g k"), ("P2", "VG2 g2 0 DC 120\n", ""), ("P2", "dual_cg3k.inc", "dual.inc")])
+def test_check_catches_hand_edit(mode, old, new):
+    txt = R.netlist("dual", "main", BIAS_MA, mode=mode)
     assert old in txt
-    assert check(txt.replace(old, new), "dual", "main", with_rk("dual"))
+    assert check(txt.replace(old, new), "dual", "main", with_rk("dual", mode=mode), mode=mode)
 
 
 # --- the valve subckts: the GE capacitances, and the DK stage's valve law ---------------------------------
 
-def _subckt_text(model):
-    return open(R.model_file(model)).read()
-
-
-@pytest.mark.parametrize("model", list(R.MODELS))
-def test_subckt_caps_are_circuit_values(model):
-    """The subckt's capacitors are circuit.VALVE_CAPS (pins and values), and circuit.netlist() has the same set mapped
-    to the stage's nodes."""
-    pins, _, caps = subckt(_subckt_text(model), R.SUBCKT[model])
+@pytest.mark.parametrize("model, mode", R.SUBCKTS + [("dual", "P2")])
+def test_subckt_caps_are_circuit_values(model, mode):
+    """The subckt's capacitors are circuit.valve_cap_pins(mode) (pins and values; CG3 g3 -> g2 in P1, g3 -> k in T
+    and P2), and circuit.netlist() has the same set mapped to the stage's nodes."""
+    pins, _, caps = subckt(_subckt_text(model, mode), R.models(model, mode)[1])
     assert pins == ["P", "G2", "G3", "G1", "K"]
     have = {(a, b): c for a, b, c in caps}
-    assert len(have) == len(caps) == len(circuit.VALVE_CAPS)
-    for k, a, b in circuit.VALVE_CAPS:
+    cap_pins = circuit.valve_cap_pins(mode)
+    assert len(have) == len(caps) == len(cap_pins) == 5
+    assert ("CG3", "G3", "G2" if mode == "P1" else "K") in cap_pins
+    for k, a, b in cap_pins:
         assert close(have[a, b], VALUES[k]), k
-    dk = circuit.netlist(RK["dual", BIAS_MA])[1][-len(circuit.VALVE_CAPS):]
-    assert dk == [(PIN_NODES[a], PIN_NODES[b], VALUES[k]) for k, a, b in circuit.VALVE_CAPS]
+    pin_nodes = circuit.MODES[mode]["pins"]
+    dk = circuit.netlist(RK["dual", mode, BIAS_MA], mode=mode)[1][-len(cap_pins):]
+    def unordered(caps):            # (sorted node pair, C); P1 has two caps g1-k (CG1K, CG1G3), so a list
+        return sorted((tuple(sorted(n or "0" for n in (p, q))), c) for p, q, c in caps)
+    assert unordered(dk) == unordered((pin_nodes[a], pin_nodes[b], VALUES[k]) for k, a, b in cap_pins)
 
 
-def _bsources(model):
+def test_no_capacitor_shorted_by_a_mode():
+    """No valve capacitance has both ends on one node in any mode (CG3 is placed per mode for this, circuit.py)."""
+    for mode in circuit.MODES:
+        assert all(p != q for p, q, _ in circuit.valve_caps(mode=mode)), mode
+
+
+def _subckt_text(model, mode="P1"):
+    return open(R.model_file(model, mode)).read()
+
+
+def _bsources(model, mode="P1"):
     """{name: (pin+, pin-, python expression of the subckt pins' voltages)} of the subckt's B-sources."""
     out = {}
-    for ln in lines(_subckt_text(model), title=False):
+    for ln in lines(_subckt_text(model, mode), title=False):
         if ln[0].upper() == "B":
             name, a, b, rest = ln.split(None, 3)
             assert rest.startswith("I=")
@@ -193,13 +249,13 @@ def _eval(expr, vg1, vg2, vg3, va):
     return eval(expr, {"__builtins__": {}}, env)
 
 
-@pytest.mark.parametrize("model", list(R.MODELS))
-def test_subckt_is_the_dk_valve_law(model):
+@pytest.mark.parametrize("model, mode", R.SUBCKTS)
+def test_subckt_is_the_dk_valve_law(model, mode):
     """The B-sources, evaluated in Python, give pentode.currents (= model6as6.dual_ip_ig2) with the same parameters,
     over the stage's range and beyond (cut-off to positive grid; Va from the knee to HT). Agreement is 1e-12 relative
     except in deep cut-off: the SPICE form ln(1+exp(x)) (emit_spice.py; no log1p in ngspice) loses ~1e-16/exp(x)
     relative there, e.g. 4e-10 at Vg1k = -8 V, Vg2k = 60 V (Ik ~ 1e-13 A), which this test allows for."""
-    b = _bsources(model)
+    b = _bsources(model, mode)
     assert set(b) == {"BP", "BG2"} and b["BP"][:2] == ("P", "K") and b["BG2"][:2] == ("G2", "K")
     p = R.PARAMS[model]
     for v in itertools.product([-8.0, -3.3, 0.0, 3.0], [60.0, 116.7, 140.0], [-8.0, -3.3, 0.0, 3.0],

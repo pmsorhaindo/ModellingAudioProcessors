@@ -1,8 +1,10 @@
-"""6AS6 DK stage tests (#26, #102). Pass criteria are dk/validate.CRIT, unchanged, tested against reference (ii):
+"""6AS6 DK stage tests (#26, #102, #110, #111). Pass criteria are dk/validate.CRIT, unchanged, tested against
+reference (ii):
 ngspice running the same fit6as6 dual_control equations and parameters (#55) on the same netlist
 (spice6as6/reference_dual_<bias>mA.json), so a failure here is a METHOD error, not a valve-model difference. The
 default quality (standard 8x) is tested at every reference bias (spice6as6/run_refs.BIASES["dual"]: 0.1, 0.25, 0.45,
-0.6 mA) and hq 16x at the range's ends; `python -m dk6as6.validate` runs every quality at every bias (results.json).
+0.6 mA) and hq 16x at the range's ends; the T and P2 modes (#111) at standard at MODE_CASES; `python -m
+dk6as6.validate` runs every quality at every bias of every mode (results[_<mode>].json).
 Run from prototypes/fullstage:  python -m pytest -q dk6as6/tests
 """
 import os
@@ -14,19 +16,26 @@ from dk6as6.stage import (Stage, QUALITY, BIAS_MA, cathode_resistor, operating_p
                            bias_knob, bias_point)
 from dk6as6 import validate as V, circuit, linear
 from spice.run_refs import AMPS
-from spice6as6.run_refs import BIASES
+from spice6as6.run_refs import BIASES, MODE_BIASES
 
 C = V.CRIT
 
 
 # CI time: the fullstage job is ~12 of its 15 minutes; standard at every bias plus hq at the ends keeps it inside.
-CASES = [("standard", b) for b in BIASES["dual"]] + [("hq", b) for b in (BIASES["dual"][0], BIASES["dual"][-1])]
+# The T / P2 modes (#111): standard at 0.25 mA and the default 0.45 mA (the rest in results_<mode>.json).
+CASES = ([("P1", "standard", b) for b in BIASES["dual"]]
+         + [("P1", "hq", b) for b in (BIASES["dual"][0], BIASES["dual"][-1])]
+         + [(m, "standard", b) for m in ("T", "P2") for b in (0.25, BIAS_MA)])
 
 
 @pytest.fixture(scope="module", params=CASES, ids=str)
 def res(request):
-    q, b = request.param
-    return V.run(quality=q, bias=b)
+    m, q, b = request.param
+    return V.run(quality=q, bias=b, mode=m)
+
+
+def mode_of(res):
+    return res.get("mode", "P1")
 
 
 def test_criteria_are_the_12ax7_stages():
@@ -41,7 +50,9 @@ def test_values_are_the_102_table():
     the two test-bench values kept from the 12AX7 stage (Rs, Rgs). No bypass capacitor; Rk is solved per bias."""
     assert circuit.VALUES == dict(HT=200.0, Ra=270e3, Rg=1e6, Rl=1e6, Cin=100e-9, Cout=100e-9, EC2=120.0,
                                   Rs=1e3, Rgs=68e3,
-                                  CG1K=4e-12, CG3=3.4e-12, CPK=3e-12, CG1P=0.02e-12, CG1G3=0.15e-12)
+                                  CG1K=4e-12, CG3=3.4e-12, CPK=3e-12, CG1P=0.02e-12, CG1G3=0.15e-12,
+                                  Rstrap=100.0)                           # T's g2/g3 -> plate stopper (#102)
+    assert circuit.MODE == "P1" and set(circuit.MODES) == {"P1", "T", "P2"}
     assert BIAS_MA == 0.45 and BIASES["dual"] == (0.1, 0.25, 0.45, 0.6)
 
 
@@ -51,17 +62,39 @@ def test_cathode_resistor_matches_the_102_research(bias, rk_k):
     assert round(cathode_resistor(bias) / 1e3, 1) == rk_k
 
 
+@pytest.mark.parametrize("mode", list(circuit.MODES))
 @pytest.mark.parametrize("bias", [0.1, 0.25, 0.45, 0.6])
-def test_operating_point_hits_the_target_cathode_current(bias):
-    st = Stage(V.FS, bias=bias)
-    assert abs(st.dc["ik"] / (bias * 1e-3) - 1) < 1e-3
-    assert st.dc["vg3k"] == 0.0                               # P1: g3 on the cathode
-    assert st.dc["nodes"]["k"] == pytest.approx(st.rk * st.dc["ik"], rel=1e-12)   # unbypassed Rk carries all of Ik
+def test_operating_point_hits_the_target_cathode_current(bias, mode):
+    st = Stage(V.FS, bias=bias, mode=mode)
+    d, n = st.dc, st.dc["nodes"]
+    assert abs(d["ik"] / (bias * 1e-3) - 1) < 1e-3
+    assert n["k"] == pytest.approx(st.rk * d["ik"], rel=1e-12)   # unbypassed Rk carries all of Ik
+    if mode == "P1":                                             # g3 on the cathode, g2 at EC2
+        assert d["vg3k"] == 0.0 and n["g2"] == circuit.VALUES["EC2"]
+    elif mode == "P2":                                           # g3 on ground, g2 at EC2
+        assert d["vg3k"] == pytest.approx(-n["k"], rel=1e-12) and n["g2"] == circuit.VALUES["EC2"]
+    else:                                                        # T: g2 = g3, tied to the plate through Rstrap
+        assert d["vg3k"] == d["vg2k"]
+        assert n["a"] - n["g2"] == pytest.approx(circuit.VALUES["Rstrap"] * d["ig2"], rel=1e-9)
+        assert circuit.VALUES["HT"] - n["a"] == pytest.approx(circuit.VALUES["Ra"] * d["ik"], rel=1e-9)
 
 
-@pytest.mark.parametrize("bias", BIASES["dual"])
-def test_ngspice_reference_hits_the_target_cathode_current(bias):
-    assert abs(V.ref("dual", bias)["op"]["ik"] / (bias * 1e-3) - 1) < 1e-3
+@pytest.mark.parametrize("mode, bias", [(m, b) for m in MODE_BIASES for b in MODE_BIASES[m]])
+def test_ngspice_reference_hits_the_target_cathode_current(mode, bias):
+    r = V.ref("dual", bias, mode)
+    assert abs(r["op"]["ik"] / (bias * 1e-3) - 1) < 1e-3
+    assert r.get("mode", "P1") == mode
+
+
+@pytest.mark.parametrize("bias, rk_k", [(0.1, 80), (0.6, 1.6)])
+def test_t_cathode_resistor_matches_the_102_research(bias, rk_k):
+    """The #102 research's T rheostat range, "80k down to 1.6k", to its 2 digits."""
+    assert float(f"{cathode_resistor(bias, mode='T') / 1e3:.2g}") == rk_k
+
+
+def test_unknown_mode_raises():
+    with pytest.raises(ValueError):
+        Stage(V.FS, mode="P3")
 
 
 @pytest.mark.parametrize("bias", [0.001, 5.0])
@@ -126,22 +159,45 @@ def test_bias_is_fixed_for_the_run():
         Stage(V.FS).swap_bias(0.25)
 
 
-@pytest.mark.parametrize("bias", BIASES["dual"])
-def test_analog_response_is_what_ngspice_computes(bias):
+@pytest.mark.parametrize("mode, bias", [(m, b) for m in MODE_BIASES for b in MODE_BIASES[m]])
+def test_analog_response_is_what_ngspice_computes(mode, bias):
     """circuit.analog_response at the DK op point reproduces reference (ii)'s .ac (to its 7-decimal rounding)."""
-    st = Stage(V.FS, bias=bias)
-    r = V.ref("dual", bias)
+    st = Stage(V.FS, bias=bias, mode=mode)
+    r = V.ref("dual", bias, mode)
     f = np.array(r["ac"]["f"])
     db = 20 * np.log10(np.abs(linear.analog_response(st, f)))
     assert np.max(np.abs(db - np.array(r["ac"]["db"]))) < 1e-5
 
 
+@pytest.mark.parametrize("mode", list(circuit.MODES))
 @pytest.mark.parametrize("bias", [0.1, BIAS_MA, 0.6])
 @pytest.mark.parametrize("quality", QUALITY)
-def test_silence_has_no_startup_thump(quality, bias):
-    s = Stage(48000.0, bias=bias, quality=quality)
+def test_silence_has_no_startup_thump(quality, bias, mode):
+    s = Stage(48000.0, bias=bias, quality=quality, mode=mode)
     y = s.process(np.zeros(4800))["out"]
     assert np.max(np.abs(y)) < 1e-6          # volts at the output, first 100 ms of silence
+
+
+@pytest.mark.parametrize("bias", [0.1, 0.25, BIAS_MA, 0.6])
+def test_p2_is_quieter_and_inverted(bias):
+    """P2's documented "quieter" output (UA, SOS) and, in this model, opposite polarity to P1 / T: the plate current
+    follows g3 (on ground, so driven by -Vk) more than g1. Small-signal at 1 kHz."""
+    h = {m: linear.analog_response(Stage(V.FS, bias=bias, mode=m), [1000.0])[0] for m in circuit.MODES}
+    assert 20 * np.log10(abs(h["P1"]) / abs(h["P2"])) > 14.0
+    assert h["P1"].real < 0 and h["T"].real < 0 < h["P2"].real
+
+
+def test_mode_harmonic_character(res):
+    """The manuals' character of each mode where this model shows it: T even-dominant at every drive inside the valve
+    law (H2 over 10 dB above H3, "even harmonics"; validate.exp_capped marks the drives outside it); P2 frequency
+    doubling (H2 >= H1) at 2 V. P1's "odd harmonics" holds only in a narrow band and is not asserted (dk6as6/RESULTS.md,
+    Modes)."""
+    m = mode_of(res)
+    h = {a: res["sine"][a]["H_dBc"] for a in AMPS if not res["sine"][a].get("spice_exp_capped")}   # in the law
+    if m == "T":
+        assert all(v[1] > v[2] + 10 for v in h.values()), h
+    elif m == "P2":
+        assert h["2"][1] >= 0.0, h
 
 
 def test_newton_always_converges(res):
@@ -164,6 +220,10 @@ def test_small_signal_within_0p1dB_20Hz_20kHz(res):
 @pytest.mark.parametrize("amp", AMPS)
 def test_harmonics_H2_H5_within_0p1dB_above_m90dBc(res, amp):
     rows = res["vs"]["dual"]["harm"][amp]
+    if rows.get("spice_exp_capped"):   # the reference is not the same law there (validate.SPICE_EXP_CAP)
+        assert mode_of(res) == "T", "only T's positive-g1 / zero-screen region reaches ngspice's exp() cap"
+        pytest.skip(f"{mode_of(res)} {res['bias_ma']} mA, {amp} V: the DK run passes ngspice's B-source exp() cap, so "
+                    "the reference is not the same law (outside the valve law too: RESULTS.md, Modes)")
     tested = {k: v for k, v in rows.items() if isinstance(v, dict) and v["tested"]}
     if not tested:   # 0.25 mA at 0.05 V: H2 -95.9 dBc, the stage is that linear (RESULTS.md)
         pytest.skip(f"every reference H2-H5 is below {C['harm_floor_dbc']} dBc at {res['bias_ma']} mA, {amp} V: "
@@ -175,6 +235,9 @@ def test_harmonics_H2_H5_within_0p1dB_above_m90dBc(res, amp):
 def test_burst_bias_shift_and_recovery(res):
     """Recovery tau only where the reference defines one (validate.py: none without a bypass cap or grid current)."""
     b = res["vs"]["dual"]["burst"]
+    if b.get("spice_exp_capped"):
+        assert mode_of(res) == "T"
+        pytest.skip("the 4 V burst passes ngspice's B-source exp() cap: the reference is not the same law")
     assert b["min_rel"] < C["burst_min_rel"]
     assert b["traj_rel"] < C["burst_traj_rel"]
     if b["tau_tested"]:

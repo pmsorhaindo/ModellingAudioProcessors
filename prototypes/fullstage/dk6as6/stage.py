@@ -13,7 +13,10 @@ latency, the resampler and iteration_stats()):
                   its circuit, and a 6AS6 one would need its own minimax derivation and validation.
   filt          : resampler, "fir" (default) or "iir" (dk/resample.py)
   pentode       : valve parameter set (default pentode.DUAL_CONTROL, issue #55; pentode.REFIT_51 for comparison)
-Screen: an ideal source at EC2 = 120 V; suppressor on the cathode (P1). circuit.py has the values.
+  mode          : the Distortion switch (#111), circuit.MODES: "P1" (default; g3 on the cathode, screen at the stiff
+                  EC2 = 120 V), "T" (g2 + g3 strapped to the plate) or "P2" (g3 to ground, our hypothesis). Fixed
+                  for the run (smooth switching is #115). Rk is solved for the target current in each mode.
+circuit.py has the values and the wiring.
 """
 import warnings
 import numpy as np
@@ -35,11 +38,12 @@ __all__ = ["Stage", "QUALITY", "BIAS_MA", "BIAS_RANGE_MA", "KNOB", "knob_bias", 
            "cathode_resistor", "operating_point", "OperatingPointError", "NonConvergenceWarning"]
 
 
-def operating_point(rk, par=DUAL_CONTROL, newton=tuple(NEWTON.values())):
-    """DC operating point with cathode resistor rk: capacitors open, the stage's Newton solver from zero valve current,
-    source-stepping all supplies (HT, EC2) in 10 steps as the 12AX7 stage does on HT."""
-    m0 = circuit.build(1.0, rk, dc=True)
-    u = np.r_[0.0, circuit.sources()]
+def operating_point(rk, par=DUAL_CONTROL, newton=tuple(NEWTON.values()), mode=circuit.MODE):
+    """DC operating point with cathode resistor rk, wired as `mode`: capacitors open, the stage's Newton solver from
+    zero valve current, source-stepping all supplies (HT, and EC2 where there is one) in 10 steps as the 12AX7 stage
+    does on HT."""
+    m0 = circuit.build(1.0, rk, dc=True, mode=mode)
+    u = np.r_[0.0, circuit.sources(mode=mode)]
     p = m0["H"] @ u
     K0 = m0["K"].tolist()
     i0 = i1 = 0.0
@@ -49,7 +53,7 @@ def operating_point(rk, par=DUAL_CONTROL, newton=tuple(NEWTON.values())):
             raise OperatingPointError(
                 f"DC operating point did not converge at source step {k}/10 (supplies x {s:.1f}): "
                 f"{it} Newton iterations (max_it, tol_v, tol_f = {newton}), best iterate v={v}, "
-                f"Ip={i0:.6g} A, Ig2={i1:.6g} A, Rk={rk:.6g} ohm")
+                f"Ip={i0:.6g} A, Ig2={i1:.6g} A, Rk={rk:.6g} ohm, mode {mode}")
     inl = np.array([i0, i1])
     w = m0["Si"] @ (m0["Nup"].T @ u - m0["Nip"].T @ inl)
     nodes = dict(zip(circuit.NODES, w[:len(circuit.NODES)]))
@@ -57,16 +61,16 @@ def operating_point(rk, par=DUAL_CONTROL, newton=tuple(NEWTON.values())):
                 nodes=nodes, w=w, rk=rk)
 
 
-def cathode_resistor(bias_ma=BIAS_MA, par=DUAL_CONTROL, newton=tuple(NEWTON.values())):
-    """The cathode resistor (ohms) whose DC operating point draws bias_ma mA of cathode current (Ip + Ig2): Brent's
-    method on log10(Rk) over RK_LOG10 (Ik falls monotonically with Rk). Raises OperatingPointError outside the
+def cathode_resistor(bias_ma=BIAS_MA, par=DUAL_CONTROL, newton=tuple(NEWTON.values()), mode=circuit.MODE):
+    """The cathode resistor (ohms) whose DC operating point in `mode` draws bias_ma mA of cathode current (Ip + Ig2):
+    Brent's method on log10(Rk) over RK_LOG10 (Ik falls monotonically with Rk). Raises OperatingPointError outside the
     bracket. Converged to 1e-13 in log10(Rk), i.e. Ik to ~1e-12 relative."""
     ik = bias_ma * 1e-3
     def err(lg):
-        return operating_point(10.0 ** lg, par, newton)["ik"] / ik - 1.0
+        return operating_point(10.0 ** lg, par, newton, mode)["ik"] / ik - 1.0
     lo, hi = RK_LOG10
     if not err(lo) > 0.0 > err(hi):
-        raise OperatingPointError(f"bias {bias_ma} mA is outside what Rk = 10^{lo}..10^{hi} ohm can set")
+        raise OperatingPointError(f"bias {bias_ma} mA is outside what Rk = 10^{lo}..10^{hi} ohm can set in {mode}")
     return 10.0 ** brentq(err, lo, hi, xtol=1e-13, rtol=4 * np.finfo(float).eps)
 
 
@@ -98,18 +102,21 @@ def bias_knob(bias_ma):
     return lo + (hi - lo) * np.log(bias_ma / a) / np.log(b / a)
 
 
-def bias_point(bias_ma=BIAS_MA, par=DUAL_CONTROL, newton=tuple(NEWTON.values())):
-    """What a bias meter needs for a setting: the DC operating point at the Rk that sets bias_ma mA. Returns the solved
-    rheostat rk (ohm), the cathode voltage vk = Rk * Ik (V, positive: the "positive voltage on its cathode" the
-    manuals describe), the plate voltage va (V), ip, ig2 and ik = ip + ig2 (A)."""
-    dc = operating_point(cathode_resistor(bias_ma, par, newton), par, newton)
+def bias_point(bias_ma=BIAS_MA, par=DUAL_CONTROL, newton=tuple(NEWTON.values()), mode=circuit.MODE):
+    """What a bias meter needs for a setting: the DC operating point at the Rk that sets bias_ma mA in `mode`. Returns
+    the solved rheostat rk (ohm), the cathode voltage vk = Rk * Ik (V, positive: the "positive voltage on its cathode"
+    the manuals describe), the plate voltage va (V), ip, ig2 and ik = ip + ig2 (A)."""
+    dc = operating_point(cathode_resistor(bias_ma, par, newton, mode), par, newton, mode)
     return dict(bias_ma=bias_ma, rk=float(dc["rk"]), vk=float(dc["nodes"]["k"]), va=float(dc["nodes"]["a"]),
                 ip=float(dc["ip"]), ig2=float(dc["ig2"]), ik=float(dc["ik"]))
 
 
 class Stage(_Stage12AX7):
     def __init__(self, fs, bias=BIAS_MA, drive=1.0, output=1.0, pentode=DUAL_CONTROL, quality="standard", filt="fir",
-                 newton=None):
+                 newton=None, mode=circuit.MODE):
+        if mode not in circuit.MODES:
+            raise ValueError(f"unknown mode {mode!r}, expected one of {sorted(circuit.MODES)}")
+        self.mode = mode
         nw = dict(NEWTON)
         if set(newton or {}) - set(nw):
             raise TypeError(f"unknown newton option(s) {sorted(set(newton) - set(nw))}, expected {sorted(nw)}")
@@ -120,17 +127,17 @@ class Stage(_Stage12AX7):
         self.rs = Resampler(fs, self.os, filt)
         self.fs = fs * self.os
         self.drive, self.output, self.bias, self.par = drive, output, bias, pentode
-        self.rk = cathode_resistor(bias, pentode, self.newton)
-        self.m = circuit.build(self.fs, self.rk, prewarp_hz=self.prewarp_hz)
+        self.rk = cathode_resistor(bias, pentode, self.newton, mode)
+        self.m = circuit.build(self.fs, self.rk, prewarp_hz=self.prewarp_hz, mode=mode)
         self.K = self.m["K"].tolist()
-        self.supplies = circuit.sources()
+        self.supplies = circuit.sources(mode=mode)
         self.dc = self.operating_point()
         self.reset()
 
     def operating_point(self):
-        """The DC operating point at this stage's Rk, valve parameters and Newton settings (module operating_point();
-        overrides dk.stage.Stage's, which solves the 12AX7 circuit)."""
-        return operating_point(self.rk, self.par, self.newton)
+        """The DC operating point at this stage's Rk, valve parameters, Newton settings and mode (module
+        operating_point(); overrides dk.stage.Stage's, which solves the 12AX7 circuit)."""
+        return operating_point(self.rk, self.par, self.newton, self.mode)
 
     def swap_bias(self, bias):
         raise NotImplementedError("the 6AS6 stage's Rk is fixed for the run; live bias changes are #115")
@@ -158,7 +165,7 @@ class Stage(_Stage12AX7):
 
     def process_internal(self, vin, record=("out",)):
         """Run the stage at the internal rate on an input already at self.fs. Returns dict of signals
-        ('vgk' = Vg1k). Non-convergence handling as dk/stage.Stage.process_internal (#7)."""
+        ('vgk' = Vg1k, 'vg2k' = Vg2k). Non-convergence handling as dk/stage.Stage.process_internal (#7)."""
         m = self.m
         A, C, D, F, G = (m[k] for k in "ACDFG")
         B0, E0, H0 = m["B"][:, 0], m["E"][:, 0], m["H"][:, 0]
@@ -185,6 +192,8 @@ class Stage(_Stage12AX7):
                     rec[nm][n] = y[j]
             if "vgk" in rec:
                 rec["vgk"][n] = v[0]
+            if "vg2k" in rec:
+                rec["vg2k"][n] = v[1]
             x = A @ x + B0 * s + C @ inl
         self.x, self.i, self.i_prev = x, [i0, i1], [q0, q1]
         self.iters.append(iters)
