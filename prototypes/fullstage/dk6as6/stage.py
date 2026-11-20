@@ -16,6 +16,8 @@ latency, the resampler and iteration_stats()):
   mode          : the Distortion switch (#111), circuit.MODES: "P1" (default; g3 on the cathode, screen at the stiff
                   EC2 = 120 V), "T" (g2 + g3 strapped to the plate) or "P2" (g3 to ground, our hypothesis). Fixed
                   for the run (smooth switching is #115). Rk is solved for the target current in each mode.
+  experimental  : False (default) accepts only the SUPPORTED envelope and raises UnsupportedSettingError outside it;
+                  True runs any setting with an ExperimentalWarning (Stage.supported records which it is).
 circuit.py has the values and the wiring.
 """
 import warnings
@@ -34,8 +36,37 @@ BIAS_RANGE_MA = (0.6, 0.1)         # target Ik at the knob's two ends, mA (#110;
 KNOB = (1.0, 11.0)                 # the panel's Bias scale (SOS 2003: "calibrated from one to 11")
 RK_LOG10 = (2.7, 6.0)              # cathode_resistor's bracket, log10(Rk / ohm): ~0.5 kOhm to 1 MOhm
 NEWTON = dict(max_it=MAX_IT, tol_v=TOL_V, tol_f=TOL_F)
-__all__ = ["Stage", "QUALITY", "BIAS_MA", "BIAS_RANGE_MA", "KNOB", "knob_bias", "bias_knob", "bias_point",
-           "cathode_resistor", "operating_point", "OperatingPointError", "NonConvergenceWarning"]
+# The supported envelope (#111 review), target cathode current in mA per mode, for 1 kHz drives up to 8 V peak at the
+# grid (validate.py's signals). A mode / bias is supported only where all three hold (dk6as6/RESULTS.md, "Modes"):
+#   in the law   g1 never positive (the valve law has no grid current and no positive-g1 data) and the plate never
+#                below the cathode (test_supported_envelope_stays_in_the_law);
+#   validated    a same-model ngspice reference at each end, passing dk/validate.CRIT (results[_<mode>].json);
+#   aliasing     within the shipped 12AX7 stage's budget for the same setting (aliasing.QUALITY_GATE_DBC).
+# P1 holds all three over the whole documented 0.1-0.6 mA; T only up to 0.35 mA (at 0.4 mA and 8 V g1 goes positive and
+# the strapped plate is driven below the cathode); P2 nowhere (our wiring hypothesis on the fit's weakest g3 region,
+# and its resampler aliasing fails the gate at every current).
+SUPPORTED_MA = {"P1": (0.1, 0.6), "T": (0.1, 0.35)}
+WHY_UNSUPPORTED = {
+    "T": "above 0.35 mA an 8 V drive takes g1 positive and the strapped plate below the cathode (outside the law)",
+    "P2": "P2 (g3 to ground) is our hypothesis on the fit's weakest g3 region, and its aliasing fails the quality gate",
+}
+__all__ = ["Stage", "QUALITY", "BIAS_MA", "BIAS_RANGE_MA", "KNOB", "SUPPORTED_MA", "knob_bias", "bias_knob",
+           "bias_point", "cathode_resistor", "operating_point", "supported", "OperatingPointError",
+           "NonConvergenceWarning", "UnsupportedSettingError", "ExperimentalWarning"]
+
+
+class UnsupportedSettingError(ValueError):
+    """A mode / bias outside SUPPORTED_MA, without experimental=True."""
+
+
+class ExperimentalWarning(UserWarning):
+    """A Stage built outside SUPPORTED_MA with experimental=True."""
+
+
+def supported(mode, bias_ma):
+    """True if `bias_ma` mA in `mode` is inside SUPPORTED_MA (to 1e-9 mA)."""
+    lo, hi = SUPPORTED_MA.get(mode, (np.inf, -np.inf))
+    return lo - 1e-9 <= bias_ma <= hi + 1e-9
 
 
 def operating_point(rk, par=DUAL_CONTROL, newton=tuple(NEWTON.values()), mode=circuit.MODE):
@@ -113,10 +144,17 @@ def bias_point(bias_ma=BIAS_MA, par=DUAL_CONTROL, newton=tuple(NEWTON.values()),
 
 class Stage(_Stage12AX7):
     def __init__(self, fs, bias=BIAS_MA, drive=1.0, output=1.0, pentode=DUAL_CONTROL, quality="standard", filt="fir",
-                 newton=None, mode=circuit.MODE):
+                 newton=None, mode=circuit.MODE, experimental=False):
         if mode not in circuit.MODES:
             raise ValueError(f"unknown mode {mode!r}, expected one of {sorted(circuit.MODES)}")
-        self.mode = mode
+        self.mode, self.supported = mode, supported(mode, bias)
+        if not self.supported:
+            rng = "%g-%g mA" % SUPPORTED_MA[mode] if mode in SUPPORTED_MA else "none"
+            why = (f"{mode} at {bias:g} mA is outside the supported envelope ({mode}: {rng}): "
+                   + WHY_UNSUPPORTED.get(mode, "outside the documented 0.1-0.6 mA"))
+            if not experimental:
+                raise UnsupportedSettingError(why + " (experimental=True runs it anyway)")
+            warnings.warn(why, ExperimentalWarning, stacklevel=2)
         nw = dict(NEWTON)
         if set(newton or {}) - set(nw):
             raise TypeError(f"unknown newton option(s) {sorted(set(newton) - set(nw))}, expected {sorted(nw)}")

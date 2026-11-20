@@ -16,8 +16,10 @@ Where the reference is not the same law: ngspice clamps a B-source exp() argumen
 Koren term ln(1 + exp(KP (1/MU + Vg1k / max(Vg2k, 1 mV)))) stops following the DK law (an exact softplus) once that
 argument passes it, i.e. for Vg1k / Vg2k > ~1.5: a positive g1 over a screen near 0 V. On the validate.py signals this
 happens only in T at high current and drive, where the stage is outside the valve law anyway (dk6as6/RESULTS.md,
-Modes). A sine (or the burst) whose DK run reaches it is marked "spice_exp_capped" and its harmonics (burst metrics)
-are reported but not tested against the reference, as below-floor harmonics are not; nothing else changes.
+Modes). A sine (or the burst) whose DK run reaches it is marked "spice_exp_capped"; its harmonics (burst metrics) are
+reported but not compared, and that criterion reads None ("not compared"), so the case is "inconclusive" (status()),
+never "passed". Settings outside stage.SUPPORTED_MA are run as experimental and marked "supported": False; the
+command fails if any supported setting does not pass.
 Aliasing: dk6as6/aliasing.py.
 Run: python -m dk6as6.validate [P1] [T] [P2]   (from prototypes/fullstage; every mode if none given). Writes, per mode,
 dk6as6/results.json (P1) / results_<mode>.json: per reference bias, "standard" and "hq" against (ii), and for P1 at
@@ -89,7 +91,7 @@ def sines(quality="standard", filt="fir", model="dual", T=0.5, amps=AMPS, bias=B
     out, times, its = {}, {}, {}
     n = int(T * FS)
     for a in amps:
-        s = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model], mode=mode)
+        s = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model], mode=mode, experimental=True)
         t = np.arange(n + s.latency_samples) / FS
         t0 = time.perf_counter()
         r = aligned(s, float(a) * np.sin(2 * np.pi * 1000 * t), record=("out", "vgk", "vg2k"))
@@ -104,7 +106,7 @@ def sines(quality="standard", filt="fir", model="dual", T=0.5, amps=AMPS, bias=B
 
 def burst(quality="standard", filt="fir", model="dual", bias=BIAS_MA, mode=MODE):
     """The 4 V 1 kHz tone burst (10-30 ms, 120 ms) through Stage.process: (burst_metrics of Vgk, iteration stats)."""
-    s = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model], mode=mode)
+    s = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model], mode=mode, experimental=True)
     nb = int(0.12 * FS)
     tb = np.arange(nb + s.latency_samples) / FS
     xb = 4 * np.sin(2 * np.pi * 1000 * tb) * ((tb > 10e-3) & (tb < 30e-3))
@@ -147,7 +149,7 @@ def harm_dev(sine, r):
 
 
 def run(T=0.5, quality="standard", filt="fir", model="dual", bias=BIAS_MA, mode=MODE):
-    st = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model], mode=mode)
+    st = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model], mode=mode, experimental=True)
     out = dict(criteria=CRIT, fs_base=FS, quality=quality, oversampling=st.os, prewarp_hz=st.prewarp_hz, filter=filt,
                model=model, params=PARAMS[model], bias_ma=bias, rk=st.rk)
     if mode != "P1":
@@ -185,17 +187,29 @@ def run(T=0.5, quality="standard", filt="fir", model="dual", bias=BIAS_MA, mode=
                              f"{st.os}x OS, "
                              f"{filt} half-band resampling included); value = seconds of CPU per second of audio",
                       seconds_per_second=times)
-    out["passed"] = dict(
+    harm_ok = all(abs(h["dev_db"]) < CRIT["harm_db"] for a in AMPS for k, h in o["harm"][a].items()
+                  if isinstance(h, dict) and h["tested"])
+    harm_uncompared = any(o["harm"][a].get("spice_exp_capped") and any(
+        isinstance(h, dict) and h["ref_dBc"] > CRIT["harm_floor_dbc"] for h in o["harm"][a].values()) for a in AMPS)
+    burst_ok = (o["burst"]["min_rel"] < CRIT["burst_min_rel"] and o["burst"]["traj_rel"] < CRIT["burst_traj_rel"]
+                and (not o["burst"]["tau_tested"] or o["burst"]["tau_rel"] < CRIT["burst_tau_rel"]))
+    out["passed"] = dict(   # True / False per criterion; None where the reference is not the same law (not compared)
         op=all(v < CRIT["op_rel"] for v in o["op_rel"].values()),
         ac_stage=o["ac_maxdev_db_stage"] < CRIT["ac_db"],
         ac_chain=o["ac_maxdev_db_chain"] < CRIT["ac_db"],
-        harmonics=all(abs(h["dev_db"]) < CRIT["harm_db"] for a in AMPS for k, h in o["harm"][a].items()
-                      if isinstance(h, dict) and h["tested"]),
-        burst=(o["burst"].get("spice_exp_capped", False)
-               or (o["burst"]["min_rel"] < CRIT["burst_min_rel"] and o["burst"]["traj_rel"] < CRIT["burst_traj_rel"]
-                   and (not o["burst"]["tau_tested"] or o["burst"]["tau_rel"] < CRIT["burst_tau_rel"]))),
+        harmonics=False if not harm_ok else (None if harm_uncompared else True),
+        burst=None if o["burst"].get("spice_exp_capped") else burst_ok,
         newton=all(v["converged"] for v in its.values()))
+    if not st.supported:
+        out["supported"] = False
     return out
+
+
+def status(res):
+    """"passed" only if every criterion passed; "failed" if any failed; else "inconclusive" (a criterion not compared,
+    e.g. where ngspice's exp() cap makes the reference a different law). A non-pass is never counted as a pass."""
+    p = res["passed"].values()
+    return "passed" if all(v is True for v in p) else "failed" if any(v is False for v in p) else "inconclusive"
 
 
 def summary(res):
@@ -222,10 +236,14 @@ def main(mode=MODE):
         for q, r in rb.items():
             print(f"== {mode}, {b} mA, {q}: {r['oversampling']}x, Rk {r['rk']:.6g} ohm, resampler {r['resampler']}")
             print(summary(r))
-    return {b: {q: rb[q]["passed"] for q in QUALITY} for b, rb in res.items()}
+    return {b: {q: (status(rb[q]), rb[q].get("supported", True)) for q in QUALITY} for b, rb in res.items()}
 
 
 if __name__ == "__main__":
-    passed = {m: main(m) for m in (sys.argv[1:] or MODE_BIASES)}
-    if not all(all(v.values()) for pm in passed.values() for pb in pm.values() for v in pb.values()):
-        sys.exit("criteria failed: " + str(passed))
+    st = {m: main(m) for m in (sys.argv[1:] or MODE_BIASES)}
+    print(json.dumps(st))
+    # Every supported setting must pass; unsupported (experimental) ones are recorded, never counted as passes.
+    bad = {m: {b: v for b, v in sm.items() if any(s != "passed" and ok for s, ok in v.values())}
+           for m, sm in st.items()}
+    if any(bad.values()):
+        sys.exit("supported settings not passed: " + str(bad))

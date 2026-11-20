@@ -12,20 +12,28 @@ import sys
 import numpy as np
 import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+import json
+import warnings
 from dk6as6.stage import (Stage, QUALITY, BIAS_MA, cathode_resistor, operating_point, OperatingPointError, knob_bias,
-                           bias_knob, bias_point)
+                           bias_knob, bias_point, SUPPORTED_MA, supported, UnsupportedSettingError, ExperimentalWarning)
+from dk.validate import aligned
 from dk6as6 import validate as V, circuit, linear
 from spice.run_refs import AMPS
 from spice6as6.run_refs import BIASES, MODE_BIASES
 
 C = V.CRIT
 
+# Experimental (unsupported) settings are run on purpose here; their ExperimentalWarning is expected.
+pytestmark = pytest.mark.filterwarnings("ignore::dk6as6.stage.ExperimentalWarning")
 
-# CI time: the fullstage job is ~12 of its 15 minutes; standard at every bias plus hq at the ends keeps it inside.
-# The T / P2 modes (#111): standard at 0.25 mA and the default 0.45 mA (the rest in results_<mode>.json).
+
+# CI time (the fullstage job must stay well inside its timeout): standard at every P1 bias plus hq at the ends; T (#111)
+# at standard at the top of its supported envelope (0.35 mA). P2 is experimental only (stage.SUPPORTED_MA): its known
+# 0.6 mA burst failure is tested below. Every mode at every bias, standard and hq, is in results[_<mode>].json
+# (python -m dk6as6.validate), checked by test_committed_validation_every_supported_setting_passes.
 CASES = ([("P1", "standard", b) for b in BIASES["dual"]]
          + [("P1", "hq", b) for b in (BIASES["dual"][0], BIASES["dual"][-1])]
-         + [(m, "standard", b) for m in ("T", "P2") for b in (0.25, BIAS_MA)])
+         + [("T", "standard", SUPPORTED_MA["T"][1])])
 
 
 @pytest.fixture(scope="module", params=CASES, ids=str)
@@ -65,7 +73,7 @@ def test_cathode_resistor_matches_the_102_research(bias, rk_k):
 @pytest.mark.parametrize("mode", list(circuit.MODES))
 @pytest.mark.parametrize("bias", [0.1, 0.25, 0.45, 0.6])
 def test_operating_point_hits_the_target_cathode_current(bias, mode):
-    st = Stage(V.FS, bias=bias, mode=mode)
+    st = Stage(V.FS, bias=bias, mode=mode, experimental=True)
     d, n = st.dc, st.dc["nodes"]
     assert abs(d["ik"] / (bias * 1e-3) - 1) < 1e-3
     assert n["k"] == pytest.approx(st.rk * d["ik"], rel=1e-12)   # unbypassed Rk carries all of Ik
@@ -95,6 +103,108 @@ def test_t_cathode_resistor_matches_the_102_research(bias, rk_k):
 def test_unknown_mode_raises():
     with pytest.raises(ValueError):
         Stage(V.FS, mode="P3")
+
+
+@pytest.mark.parametrize("mode, bias", [("T", 0.4), ("T", BIAS_MA), ("T", 0.6), ("P2", 0.25), ("P2", BIAS_MA),
+                                        ("P1", 0.05), ("P1", 0.7)])
+def test_unsupported_settings_need_an_explicit_opt_in(mode, bias):
+    """#111 review: outside stage.SUPPORTED_MA the Stage raises; experimental=True runs it with a warning and records
+    it (Stage.supported False)."""
+    with pytest.raises(UnsupportedSettingError):
+        Stage(V.FS, bias=bias, mode=mode)
+    with pytest.warns(ExperimentalWarning):
+        st = Stage(V.FS, bias=bias, mode=mode, experimental=True)
+    assert st.supported is False
+
+
+def test_supported_envelope():
+    assert SUPPORTED_MA == {"P1": (0.1, 0.6), "T": (0.1, 0.35)} and "P2" not in SUPPORTED_MA
+    for mode, b in [("P1", 0.1), ("P1", BIAS_MA), ("P1", 0.6), ("T", 0.1), ("T", 0.25), ("T", 0.35)]:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert Stage(V.FS, bias=b, mode=mode).supported and supported(mode, b)
+
+
+def _swing_8v(mode, bias):
+    """(max Vg1k, min Vak, exp-capped) over the last 20 cycles of a 30 ms, 8 V peak 1 kHz sine (standard 8x)."""
+    st = Stage(V.FS, bias=bias, mode=mode, experimental=True)
+    t = np.arange(int(0.03 * V.FS) + st.latency_samples) / V.FS
+    r = aligned(st, 8.0 * np.sin(2 * np.pi * 1000 * t), record=("out", "vgk", "vg2k", "a", "k"))["_internal"]
+    keep = slice(len(r["a"]) - int(20 * st.fs / 1000), None)
+    return float(r["vgk"][keep].max()), float((r["a"] - r["k"])[keep].min()), V.exp_capped(st, r)
+
+
+@pytest.mark.parametrize("mode, bias", [(m, b) for m, ends in SUPPORTED_MA.items() for b in ends])
+def test_supported_envelope_stays_in_the_law(mode, bias):
+    """At both ends of each supported range an 8 V drive (validate.py's largest) keeps g1 negative and the plate above
+    the cathode, and never reaches ngspice's exp() cap."""
+    g1, vak, capped = _swing_8v(mode, bias)
+    assert g1 < 0.0 and vak > 0.0 and not capped, (g1, vak, capped)
+
+
+def test_t_leaves_the_law_just_above_its_envelope():
+    """Why T stops at 0.35 mA: at 0.4 mA an 8 V drive takes g1 positive and the strapped plate below the cathode."""
+    g1, vak, capped = _swing_8v("T", 0.4)
+    assert g1 > 0.0 and vak < 0.0, (g1, vak)
+
+
+def test_status_never_counts_a_non_pass():
+    """validate.status: a criterion that is not compared (None) makes a case inconclusive, never passed."""
+    ok = dict(op=True, ac_stage=True, ac_chain=True, harmonics=True, burst=True, newton=True)
+    assert V.status(dict(passed=ok)) == "passed"
+    assert V.status(dict(passed=dict(ok, burst=None))) == "inconclusive"
+    assert V.status(dict(passed=dict(ok, harmonics=None, burst=False))) == "failed"
+
+
+@pytest.mark.parametrize("mode", list(MODE_BIASES))
+def test_committed_validation_every_supported_setting_passes(mode):
+    """results[_<mode>].json: every supported setting passes every criterion; every other one is marked unsupported
+    and reported as whatever it is (T 0.45 / 0.6 mA inconclusive, P2 0.6 mA failed), never as a pass."""
+    res = json.load(open(V.results_file(mode)))
+    assert set(res) == {f"{b:g}" for b in MODE_BIASES[mode]}
+    for b, rb in res.items():
+        for q in QUALITY:
+            r = rb[q]
+            assert r.get("supported", True) == supported(mode, float(b)), (mode, b, q)
+            if supported(mode, float(b)):
+                assert V.status(r) == "passed", (mode, b, q, r["passed"])
+    if mode == "T":
+        assert {V.status(res[b]["standard"]) for b in ("0.45", "0.6")} == {"inconclusive"}
+    if mode == "P2":
+        assert V.status(res["0.6"]["standard"]) == "failed" and res["0.6"]["standard"]["passed"]["burst"] is False
+
+
+@pytest.fixture(scope="module")
+def p2_06_burst():
+    """The P2 0.6 mA burst against its reference (validate.run's burst comparison, without the sines)."""
+    b, _ = V.burst(bias=0.6, mode="P2")
+    r = V.ref("dual", 0.6, "P2")["burst"]
+    shift = r["min_vgk"] - r["rest_vgk"]
+    tr, rr = np.array(b["traj_vgk"]) - b["rest_vgk"], np.array(r["traj_vgk"]) - r["rest_vgk"]
+    return dict(min_rel=abs((b["min_vgk"] - b["rest_vgk"]) / shift - 1), traj_rel=float(np.sqrt(np.mean((tr - rr) ** 2))
+                / abs(shift)), tau_rel=abs(b["recovery_tau_s"] / r["recovery_tau_s"] - 1),
+                tail_rel=abs(V.tail_tau(b) / V.tail_tau(r) - 1))
+
+
+def test_p2_0p6mA_burst_shift_trajectory_and_tail(p2_06_burst):
+    """P2 0.6 mA (experimental): the burst's shift and trajectory pass CRIT, and the recovery tail's fitted decay
+    constant (31-118 ms) agrees with ngspice to 0.1 %."""
+    b = p2_06_burst
+    assert b["min_rel"] < C["burst_min_rel"] and b["traj_rel"] < C["burst_traj_rel"] and b["tail_rel"] < 1e-3, b
+
+
+@pytest.mark.xfail(strict=True, reason="known failure (#111): P2 0.6 mA recovery tau 52.5 % off against CRIT's 1 %; "
+                   "the metric starts on the 30.5 ms sample, which straddles the burst's end")
+def test_p2_0p6mA_burst_recovery_tau_crit(p2_06_burst):
+    assert p2_06_burst["tau_rel"] < C["burst_tau_rel"], p2_06_burst
+
+
+def test_p2_frequency_doubling():
+    """P2 (experimental): H2 >= H1 at 2 V (the documented frequency doubling; dk6as6/RESULTS.md, Modes)."""
+    st = Stage(V.FS, bias=0.25, mode="P2", experimental=True)
+    t = np.arange(int(0.3 * V.FS) + st.latency_samples) / V.FS
+    h = V.harmonics(aligned(st, 2.0 * np.sin(2 * np.pi * 1000 * t))["out"], V.FS, 1000.0, 100)
+    assert h[1] >= h[0], h[:3]
 
 
 @pytest.mark.parametrize("bias", [0.001, 5.0])
@@ -162,7 +272,7 @@ def test_bias_is_fixed_for_the_run():
 @pytest.mark.parametrize("mode, bias", [(m, b) for m in MODE_BIASES for b in MODE_BIASES[m]])
 def test_analog_response_is_what_ngspice_computes(mode, bias):
     """circuit.analog_response at the DK op point reproduces reference (ii)'s .ac (to its 7-decimal rounding)."""
-    st = Stage(V.FS, bias=bias, mode=mode)
+    st = Stage(V.FS, bias=bias, mode=mode, experimental=True)
     r = V.ref("dual", bias, mode)
     f = np.array(r["ac"]["f"])
     db = 20 * np.log10(np.abs(linear.analog_response(st, f)))
@@ -173,7 +283,7 @@ def test_analog_response_is_what_ngspice_computes(mode, bias):
 @pytest.mark.parametrize("bias", [0.1, BIAS_MA, 0.6])
 @pytest.mark.parametrize("quality", QUALITY)
 def test_silence_has_no_startup_thump(quality, bias, mode):
-    s = Stage(48000.0, bias=bias, quality=quality, mode=mode)
+    s = Stage(48000.0, bias=bias, quality=quality, mode=mode, experimental=True)
     y = s.process(np.zeros(4800))["out"]
     assert np.max(np.abs(y)) < 1e-6          # volts at the output, first 100 ms of silence
 
@@ -182,7 +292,8 @@ def test_silence_has_no_startup_thump(quality, bias, mode):
 def test_p2_is_quieter_and_inverted(bias):
     """P2's documented "quieter" output (UA, SOS) and, in this model, opposite polarity to P1 / T: the plate current
     follows g3 (on ground, so driven by -Vk) more than g1. Small-signal at 1 kHz."""
-    h = {m: linear.analog_response(Stage(V.FS, bias=bias, mode=m), [1000.0])[0] for m in circuit.MODES}
+    h = {m: linear.analog_response(Stage(V.FS, bias=bias, mode=m, experimental=True), [1000.0])[0]
+         for m in circuit.MODES}
     assert 20 * np.log10(abs(h["P1"]) / abs(h["P2"])) > 14.0
     assert h["P1"].real < 0 and h["T"].real < 0 < h["P2"].real
 
@@ -196,8 +307,6 @@ def test_mode_harmonic_character(res):
     h = {a: res["sine"][a]["H_dBc"] for a in AMPS if not res["sine"][a].get("spice_exp_capped")}   # in the law
     if m == "T":
         assert all(v[1] > v[2] + 10 for v in h.values()), h
-    elif m == "P2":
-        assert h["2"][1] >= 0.0, h
 
 
 def test_newton_always_converges(res):
@@ -247,4 +356,4 @@ def test_burst_bias_shift_and_recovery(res):
 
 
 def test_all_passed(res):
-    assert all(res["passed"].values()), res["passed"]
+    assert V.status(res) == "passed" and res.get("supported", True), res["passed"]
