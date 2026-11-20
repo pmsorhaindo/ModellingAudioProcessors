@@ -36,23 +36,27 @@ BIAS_RANGE_MA = (0.6, 0.1)         # target Ik at the knob's two ends, mA (#110;
 KNOB = (1.0, 11.0)                 # the panel's Bias scale (SOS 2003: "calibrated from one to 11")
 RK_LOG10 = (2.7, 6.0)              # cathode_resistor's bracket, log10(Rk / ohm): ~0.5 kOhm to 1 MOhm
 NEWTON = dict(max_it=MAX_IT, tol_v=TOL_V, tol_f=TOL_F)
-# The supported envelope (#111 review), target cathode current in mA per mode, for 1 kHz drives up to 8 V peak at the
-# grid (validate.py's signals). A mode / bias is supported only where all three hold (dk6as6/RESULTS.md, "Modes"):
-#   in the law   g1 never positive (the valve law has no grid current and no positive-g1 data) and the plate never
-#                below the cathode (test_supported_envelope_stays_in_the_law);
-#   validated    a same-model ngspice reference at each end, passing dk/validate.CRIT (results[_<mode>].json);
+# The supported envelope (#111 review), target cathode current in mA per mode. A mode / bias is supported only where
+# all three hold (dk6as6/RESULTS.md, "Supported envelope"):
+#   in the law   for host signals bounded by 8 V peak (tones over 20 Hz-20 kHz from silence, step and slope onsets and
+#                step offsets, standard and hq: dk6as6/envelope.py), g1 never goes positive (the valve law has no grid
+#                current and no positive-g1 data; that is #112) and the plate never goes below the cathode, read on the
+#                interpolated internal-rate voltages (envelope.json);
+#   validated    passing same-model ngspice references (dk/validate.CRIT) at or bracketing each end;
 #   aliasing     within the shipped 12AX7 stage's budget for the same setting (aliasing.QUALITY_GATE_DBC).
-# P1 holds all three over the whole documented 0.1-0.6 mA; T only up to 0.35 mA (at 0.4 mA and 8 V g1 goes positive and
-# the strapped plate is driven below the cathode); P2 nowhere (our wiring hypothesis on the fit's weakest g3 region,
-# and its resampler aliasing fails the gate at every current).
-SUPPORTED_MA = {"P1": (0.1, 0.6), "T": (0.1, 0.35)}
+# P1 holds all three over the whole documented 0.1-0.6 mA; T only to 0.3 mA (at 0.35 mA an 8 V step onset at 100 Hz
+# takes g1 to +0.30 V; its top end lies between the passing 0.25 and 0.35 mA references); P2 nowhere (our wiring
+# hypothesis on the fit's weakest g3 region, #123, and its resampler aliasing fails the gate at every current).
+# Outside the derivation's stimulus class the runtime guard (Stage.out_of_law, OutOfLawWarning) still counts every
+# internal sample with g1 positive or the plate below the cathode.
+SUPPORTED_MA = {"P1": (0.1, 0.6), "T": (0.1, 0.3)}
 WHY_UNSUPPORTED = {
-    "T": "above 0.35 mA an 8 V drive takes g1 positive and the strapped plate below the cathode (outside the law)",
+    "T": "above 0.3 mA an 8 V step onset takes g1 positive (outside the valve law; dk6as6/envelope.py)",
     "P2": "P2 (g3 to ground) is our hypothesis on the fit's weakest g3 region, and its aliasing fails the quality gate",
 }
 __all__ = ["Stage", "QUALITY", "BIAS_MA", "BIAS_RANGE_MA", "KNOB", "SUPPORTED_MA", "knob_bias", "bias_knob",
            "bias_point", "cathode_resistor", "operating_point", "supported", "OperatingPointError",
-           "NonConvergenceWarning", "UnsupportedSettingError", "ExperimentalWarning"]
+           "NonConvergenceWarning", "UnsupportedSettingError", "ExperimentalWarning", "OutOfLawWarning"]
 
 
 class UnsupportedSettingError(ValueError):
@@ -61,6 +65,10 @@ class UnsupportedSettingError(ValueError):
 
 class ExperimentalWarning(UserWarning):
     """A Stage built outside SUPPORTED_MA with experimental=True."""
+
+
+class OutOfLawWarning(UserWarning):
+    """A processed block had internal samples outside the valve law: g1 positive or the plate below the cathode."""
 
 
 def supported(mode, bias_ma):
@@ -199,6 +207,8 @@ class Stage(_Stage12AX7):
         self.iters = []
         self.nonconv = 0
         self.nonconv_block = 0
+        self.out_of_law = 0                     # internal samples with Vg1k > 0 or Vak < 0 (the runtime guard)
+        self.out_of_law_block = 0
         self.rs.reset()
 
     def process_internal(self, vin, record=("out",)):
@@ -213,7 +223,7 @@ class Stage(_Stage12AX7):
         x, (i0, i1), K, par, nw = self.x, self.i, self.K, self.par, self.newton
         q0, q1 = self.i_prev
         iters = np.empty(len(vin), dtype=np.int16)
-        bad = 0
+        bad = law = 0
         for n, s in enumerate(vin):
             p = (G @ x + H0 * s + p_dc).tolist()
             # warm start: linear extrapolation of the last two current solutions (as dk/stage.py does on voltages)
@@ -223,6 +233,8 @@ class Stage(_Stage12AX7):
             iters[n] = it
             if not ok:
                 bad += 1
+            if v[0] > 0.0 or v[3] < 0.0:       # outside the valve law: g1 positive or the plate below the cathode
+                law += 1
             inl = np.array([i0 - idc0, i1 - idc1])     # deviation from the operating point
             if idx:
                 y = D @ x + E0 * s + F @ inl + y_dc
@@ -237,6 +249,12 @@ class Stage(_Stage12AX7):
         self.iters.append(iters)
         self.nonconv += bad
         self.nonconv_block = bad
+        self.out_of_law += law
+        self.out_of_law_block = law
+        if law:
+            warnings.warn(f"{law} of {len(vin)} internal samples outside the valve law (g1 positive or the plate below "
+                          f"the cathode) in {self.mode} at {self.bias:g} mA: the 6AS6 law has no grid current (#112)",
+                          OutOfLawWarning, stacklevel=2)
         if bad:
             warnings.warn(f"Newton did not converge on {bad} of {len(vin)} samples at {self.fs:g} Hz "
                           f"(max_it, tol_v, tol_f = {self.newton}); kept the best finite iterate",

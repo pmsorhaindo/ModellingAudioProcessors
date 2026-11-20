@@ -41,7 +41,7 @@ def dc(mode, bias):
     st = Stage(FS, bias=bias, mode=mode, experimental=True)
     h, h20 = linear.analog_response(st, [1000.0, 20000.0])
     d = st.dc
-    return dict(mode=mode, bias_ma=bias, supported=st.supported, rk=st.rk, va=d["nodes"]["a"], vk=d["nodes"]["k"],
+    return dict(mode=mode, bias_ma=bias, rk=st.rk, va=d["nodes"]["a"], vk=d["nodes"]["k"],
                 vg1k=d["vg1k"],
                 vg2k=d["vg2k"], vg3k=d["vg3k"], vak=d["vak"], ip=d["ip"], ig2=d["ig2"],
                 gain_1k_db=float(20 * np.log10(abs(h))), phase_1k_deg=float(np.degrees(np.angle(h))),

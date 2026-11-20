@@ -4265,7 +4265,8 @@
     "harmonics": true,
     "burst": true,
     "newton": true
-   }
+   },
+   "supported": false
   },
   "standard": {
    "criteria": {
@@ -5119,7 +5120,8 @@
     "harmonics": true,
     "burst": true,
     "newton": true
-   }
+   },
+   "supported": false
   }
  },
  "0.45": {

@@ -21,7 +21,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from dk.aliasing import FS, SWEEP_HZ, DRIVES, WINDOW_S, CI_WINDOW_S, BAND_HZ, MASK_BINS, tone_bin, alias_dbc, collision_order  # noqa: E402,F401,E501
 from dk.aliasing import LIMIT_DBC as LIMIT_DBC_12AX7  # noqa: E402 -- after the sys.path setup
-from dk6as6.stage import Stage, BIAS_MA, supported  # noqa: E402 -- after the sys.path setup
+from dk6as6.stage import Stage, BIAS_MA  # noqa: E402 -- after the sys.path setup
 from dk6as6.circuit import MODES, MODE  # noqa: E402 -- after the sys.path setup
 from spice6as6.run_refs import MODE_BIASES  # noqa: E402 -- after the sys.path setup
 
@@ -53,7 +53,9 @@ LIMIT_DBC_T = {
     (0.1, 8.0): -122.2,           # -125.25
     (0.25, 2.0): -133.5,          # -136.55
     (0.25, 8.0): -118.0,          # -121.08
-    (0.35, 2.0): -130.3,          # -133.35 (resampler floor); 0.35 mA: the top of T's supported envelope
+    (0.3, 2.0): -132.0,           # -135.02 (resampler floor); 0.3 mA: the top of T's supported envelope
+    (0.3, 8.0): -116.6,           # -119.64
+    (0.35, 2.0): -130.3,          # -133.35 (resampler floor)
     (0.35, 8.0): -114.9,          # -117.98
     (BIAS_MA, 2.0): -126.3,       # -129.32
     (BIAS_MA, 8.0): -53.7,        # -56.71 at 18037 Hz: NOT a physical stage (g1 positive, plate driven below the
@@ -77,7 +79,7 @@ LIMIT_DBC = {"P1": LIMIT_DBC_P1, "T": LIMIT_DBC_T, "P2": LIMIT_DBC_P2}   # regre
 # criterion and does not invent one (dk/RESULTS.md, #96 "A"). Supported settings: stage.SUPPORTED_MA.
 QUALITY_GATE_DBC = LIMIT_DBC_12AX7[("standard", "fir")]          # {2.0: -118.3, 8.0: -48.6}
 # The CI check of T and P2 (P1's is in the test): (mode, bias mA, drive V, the sweep's worst tone there)
-CI_CASES_MODES = [("T", 0.35, 8.0, 19037), ("P2", 0.25, 8.0, 19037)]   # T: the top of its supported envelope
+CI_CASES_MODES = [("T", 0.3, 8.0, 19037), ("P2", 0.25, 8.0, 19037)]   # T: the top of its supported envelope
 
 
 def measure(drive, f, bias=BIAS_MA, quality="standard", filt="fir", window=WINDOW_S, settle=SETTLE_S, fs=FS,
@@ -85,13 +87,12 @@ def measure(drive, f, bias=BIAS_MA, quality="standard", filt="fir", window=WINDO
     """dk.aliasing.measure for the 6AS6 stage at `bias` mA, wired as `mode`."""
     n, n0 = int(round(window * fs)), int(round(settle * fs))
     m = tone_bin(f, n, fs)
-    st = Stage(fs, bias=bias, quality=quality, filt=filt, mode=mode, experimental=True)   # records `supported`
+    st = Stage(fs, bias=bias, quality=quality, filt=filt, mode=mode, experimental=True)   # support: stage.supported()
     L = st.latency_samples
     x = drive * np.sin(2 * np.pi * m * np.arange(n0 + n + L) / n)
     y = st.process(x)["out"][n0 + L:n0 + L + n]
     return dict(setting=quality, os=st.os, filt=filt, bias_ma=bias, drive=float(drive), tone=int(f), fs_base=fs,
                 f_hz=m * fs / n, window_s=window, settle_s=settle, **({} if mode == "P1" else dict(mode=mode)),
-                **({} if st.supported else dict(supported=False)),
                 **alias_dbc(y, m, fs, st.os))
 
 
@@ -110,7 +111,7 @@ def output_relative(drive, f, bias=BIAS_MA, mode=MODE, window=WINDOW_S, settle=S
                if BAND_HZ[0] <= k * m * fs / n <= BAND_HZ[1])
     fund = P[m - MASK_BINS:m + MASK_BINS + 1].sum()
     h = float(10 * np.log10(harm / fund))
-    return dict(mode=mode, bias_ma=bias, drive=float(drive), tone=int(f), supported=supported(mode, bias),
+    return dict(mode=mode, bias_ma=bias, drive=float(drive), tone=int(f),
                 total_dbc=a["total_dbc"], harmonics_re_fund_db=h, total_re_output_db=a["total_dbc"] - h)
 
 

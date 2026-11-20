@@ -15,7 +15,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 import json
 import warnings
 from dk6as6.stage import (Stage, QUALITY, BIAS_MA, cathode_resistor, operating_point, OperatingPointError, knob_bias,
-                           bias_knob, bias_point, SUPPORTED_MA, supported, UnsupportedSettingError, ExperimentalWarning)
+                           bias_knob, bias_point, SUPPORTED_MA, supported, UnsupportedSettingError, ExperimentalWarning,
+                           OutOfLawWarning)
+from dk6as6 import envelope as E
 from dk.validate import aligned
 from dk6as6 import validate as V, circuit, linear
 from spice.run_refs import AMPS
@@ -28,12 +30,13 @@ pytestmark = pytest.mark.filterwarnings("ignore::dk6as6.stage.ExperimentalWarnin
 
 
 # CI time (the fullstage job must stay well inside its timeout): standard at every P1 bias plus hq at the ends; T (#111)
-# at standard at the top of its supported envelope (0.35 mA). P2 is experimental only (stage.SUPPORTED_MA): its known
-# 0.6 mA burst failure is tested below. Every mode at every bias, standard and hq, is in results[_<mode>].json
-# (python -m dk6as6.validate), checked by test_committed_validation_every_supported_setting_passes.
+# at standard at 0.25 mA, its highest reference inside the supported envelope (0.1-0.3 mA; the 0.35 mA reference just
+# above it brackets the top). P2 is experimental only (stage.SUPPORTED_MA): its known 0.6 mA burst failure is tested
+# below. Every mode at every bias, standard and hq, is in results[_<mode>].json (python -m dk6as6.validate), checked by
+# test_committed_validation_every_supported_setting_passes.
 CASES = ([("P1", "standard", b) for b in BIASES["dual"]]
          + [("P1", "hq", b) for b in (BIASES["dual"][0], BIASES["dual"][-1])]
-         + [("T", "standard", SUPPORTED_MA["T"][1])])
+         + [("T", "standard", 0.25)])
 
 
 @pytest.fixture(scope="module", params=CASES, ids=str)
@@ -105,7 +108,7 @@ def test_unknown_mode_raises():
         Stage(V.FS, mode="P3")
 
 
-@pytest.mark.parametrize("mode, bias", [("T", 0.4), ("T", BIAS_MA), ("T", 0.6), ("P2", 0.25), ("P2", BIAS_MA),
+@pytest.mark.parametrize("mode, bias", [("T", 0.35), ("T", BIAS_MA), ("T", 0.6), ("P2", 0.25), ("P2", BIAS_MA),
                                         ("P1", 0.05), ("P1", 0.7)])
 def test_unsupported_settings_need_an_explicit_opt_in(mode, bias):
     """#111 review: outside stage.SUPPORTED_MA the Stage raises; experimental=True runs it with a warning and records
@@ -118,34 +121,56 @@ def test_unsupported_settings_need_an_explicit_opt_in(mode, bias):
 
 
 def test_supported_envelope():
-    assert SUPPORTED_MA == {"P1": (0.1, 0.6), "T": (0.1, 0.35)} and "P2" not in SUPPORTED_MA
-    for mode, b in [("P1", 0.1), ("P1", BIAS_MA), ("P1", 0.6), ("T", 0.1), ("T", 0.25), ("T", 0.35)]:
+    assert SUPPORTED_MA == {"P1": (0.1, 0.6), "T": (0.1, 0.3)} and "P2" not in SUPPORTED_MA
+    for mode, b in [("P1", 0.1), ("P1", BIAS_MA), ("P1", 0.6), ("T", 0.1), ("T", 0.25), ("T", 0.3)]:
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             assert Stage(V.FS, bias=b, mode=mode).supported and supported(mode, b)
 
 
-def _swing_8v(mode, bias):
-    """(max Vg1k, min Vak, exp-capped) over the last 20 cycles of a 30 ms, 8 V peak 1 kHz sine (standard 8x)."""
-    st = Stage(V.FS, bias=bias, mode=mode, experimental=True)
-    t = np.arange(int(0.03 * V.FS) + st.latency_samples) / V.FS
-    r = aligned(st, 8.0 * np.sin(2 * np.pi * 1000 * t), record=("out", "vgk", "vg2k", "a", "k"))["_internal"]
-    keep = slice(len(r["a"]) - int(20 * st.fs / 1000), None)
-    return float(r["vgk"][keep].max()), float((r["a"] - r["k"])[keep].min()), V.exp_capped(st, r)
+@pytest.mark.parametrize("quality", QUALITY)
+@pytest.mark.parametrize("mode, bias, f, phase", [(m, b, f, ph) for m, ends in SUPPORTED_MA.items() for b in ends
+                                                  for f, ph in ((100, "cos"), (20, "cos"), (18000, "sin"))])
+def test_supported_envelope_stays_in_the_law(mode, bias, f, phase, quality):
+    """At both ends of each supported range, 8 V peak tones from silence (envelope.py's worst stimuli: the step onset
+    at 100 Hz and 20 Hz, the slope onset at 18 kHz) keep g1 negative and the plate above the cathode on the
+    interpolated internal-rate voltages; the runtime guard counts nothing and warns nothing."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", OutOfLawWarning)
+        r = E.excursion(mode, bias, quality, f, phase)
+    assert r["vg1k_max"] <= 0.0 and r["vak_min"] >= 0.0 and r["out_of_law"] == 0, r
 
 
-@pytest.mark.parametrize("mode, bias", [(m, b) for m, ends in SUPPORTED_MA.items() for b in ends])
-def test_supported_envelope_stays_in_the_law(mode, bias):
-    """At both ends of each supported range an 8 V drive (validate.py's largest) keeps g1 negative and the plate above
-    the cathode, and never reaches ngspice's exp() cap."""
-    g1, vak, capped = _swing_8v(mode, bias)
-    assert g1 < 0.0 and vak > 0.0 and not capped, (g1, vak, capped)
+@pytest.mark.parametrize("quality", QUALITY)
+def test_tone_onset_from_silence_at_the_top_of_t(quality):
+    """The PR #121 re-review reproduction: an 8 V peak, zero-phase 18 kHz sine from silence through Stage.process.
+    The interpolator overshoots (8.63 V); at T's supported top g1 must still stay negative."""
+    st = Stage(48000, mode="T", bias=SUPPORTED_MA["T"][1], quality=quality)
+    x = 8 * np.sin(2 * np.pi * 18000 * np.arange(480) / 48000)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", OutOfLawWarning)
+        r = st.process(x, record=("vgk",))["_internal"]
+    assert max(r["vgk"]) <= 0.0 and st.supported and st.out_of_law == 0
 
 
-def test_t_leaves_the_law_just_above_its_envelope():
-    """Why T stops at 0.35 mA: at 0.4 mA an 8 V drive takes g1 positive and the strapped plate below the cathode."""
-    g1, vak, capped = _swing_8v("T", 0.4)
-    assert g1 > 0.0 and vak < 0.0, (g1, vak)
+@pytest.mark.parametrize("quality", QUALITY)
+def test_t_leaves_the_law_just_above_its_envelope(quality):
+    """Why T stops at 0.3 mA: at 0.35 mA an 8 V step onset at 100 Hz takes g1 positive (+0.30 V at hq), and the
+    runtime guard sees it: Stage.out_of_law counts the samples and OutOfLawWarning is raised."""
+    st = Stage(48000.0, bias=0.35, mode="T", quality=quality, experimental=True)
+    with pytest.warns(OutOfLawWarning):
+        r = st.process(E.stimulus(100, "cos", st.latency_samples), record=("vgk",))["_internal"]
+    assert max(r["vgk"]) > 0.0 and st.out_of_law > 0 and not st.supported
+
+
+def test_envelope_record_is_the_supported_range():
+    """envelope.json (python -m dk6as6.envelope): both ends of every supported range are in the law over the whole
+    stimulus class; T's top is the highest scanned T bias that is, and the next one (0.35 mA) is not."""
+    s = json.load(open(E.JSON))["summary"]
+    for m, ends in SUPPORTED_MA.items():
+        assert all(s[m][f"{b:g}"]["in_law"] for b in ends), m
+    t_in = [float(b) for b, w in s["T"].items() if w["in_law"]]
+    assert max(t_in) == SUPPORTED_MA["T"][1] and not s["T"]["0.35"]["in_law"]
 
 
 def test_status_never_counts_a_non_pass():

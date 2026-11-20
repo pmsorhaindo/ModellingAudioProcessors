@@ -51,7 +51,7 @@ import emit_spice  # noqa: E402  (fit6as6's SPICE expressions)
 PARAMS = {"dual": pentode.DUAL_CONTROL, "r51": pentode.REFIT_51}
 BIASES = {"dual": (0.1, 0.25, 0.45, 0.6), "r51": (0.45,)}   # target cathode currents of the P1 references, mA (#110:
                                                            # the range ends, lowest distortion, default)
-# dual model (#111); T 0.35 mA is the top of its supported envelope (stage.SUPPORTED_MA)
+# dual model (#111); T 0.35 mA brackets the top (0.3 mA) of its supported envelope (stage.SUPPORTED_MA)
 MODE_BIASES = {"P1": BIASES["dual"], "T": (0.1, 0.25, 0.35, 0.45, 0.6), "P2": (0.1, 0.25, 0.45, 0.6)}
 SUBCKT = {"dual": "6AS6_DUAL", "r51": "6AS6_R51"}
 ANALYSES = ["main", "burst"]
