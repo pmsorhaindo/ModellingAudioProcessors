@@ -1,0 +1,57 @@
+name: Notify Stewart on new issue
+
+# GitHub's built-in webhooks can't send an Authorization header, so this workflow POSTs a small
+# JSON summary to a Grok Bot routine webhook (with a Bearer key) when an issue is opened, so
+# Michael's project steward ("Stewart") can triage it onto the Projects board.
+on:
+  issues:
+    types: [opened]
+
+permissions: {}
+
+jobs:
+  notify:
+    name: notify
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: POST issue summary to Stewart webhook
+        env:
+          URL: ${{ secrets.GROK_ISSUE_WEBHOOK_URL }}
+          KEY: ${{ secrets.GROK_ISSUE_WEBHOOK_KEY }}
+          REPO_FULL_NAME: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+        run: |
+          if [ -z "$URL" ] || [ -z "$KEY" ]; then
+            echo "::notice::GROK_ISSUE_WEBHOOK_URL or GROK_ISSUE_WEBHOOK_KEY is not set (e.g. secrets unavailable on a fork); skipping notification."
+            exit 0
+          fi
+
+          BODY=$(jq -n \
+            --arg context "New issue opened on $REPO_FULL_NAME: #$ISSUE_NUMBER $ISSUE_TITLE" \
+            --arg repository "$REPO_FULL_NAME" \
+            --argjson number "$ISSUE_NUMBER" \
+            --arg title "$ISSUE_TITLE" \
+            --arg url "$ISSUE_URL" \
+            --arg author "$ISSUE_AUTHOR" \
+            '{
+              context: $context,
+              event: "issues",
+              action: "opened",
+              repository: $repository,
+              issue: {
+                number: $number,
+                title: $title,
+                url: $url,
+                author: $author
+              }
+            }')
+
+          curl --fail-with-body -sS --max-time 15 --retry 2 \
+            -X POST "$URL" \
+            -H "Authorization: Bearer $KEY" \
+            -H "Content-Type: application/json" \
+            --data "$BODY"
