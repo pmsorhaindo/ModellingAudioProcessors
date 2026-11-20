@@ -69,6 +69,18 @@ def test_cathode_current_falls_with_rk():
     assert all(a > b for a, b in zip(ik, ik[1:]))
 
 
+@pytest.mark.parametrize("bias", [0.25, BIAS_MA])
+def test_operating_point_method_is_the_6as6_solve(bias):
+    """Stage.operating_point() (the dk.stage.Stage API) re-solves this stage's 6AS6 DC point, not the 12AX7's (PR #118
+    review: it fell through to the inherited method and raised AttributeError)."""
+    st = Stage(V.FS, bias=bias)
+    dc = st.operating_point()
+    assert set(dc) == set(st.dc) and dc["rk"] == st.rk
+    for k in ("vg1k", "vg2k", "vg3k", "vak", "ip", "ig2", "ik"):
+        assert dc[k] == st.dc[k], k
+    assert abs(dc["ik"] / (bias * 1e-3) - 1) < 1e-3
+
+
 def test_bias_is_fixed_for_the_run():
     with pytest.raises(NotImplementedError):
         Stage(V.FS).swap_bias(0.25)

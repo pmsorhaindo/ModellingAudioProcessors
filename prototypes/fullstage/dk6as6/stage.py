@@ -84,8 +84,13 @@ class Stage(_Stage12AX7):
         self.m = circuit.build(self.fs, self.rk, prewarp_hz=self.prewarp_hz)
         self.K = self.m["K"].tolist()
         self.supplies = circuit.sources()
-        self.dc = operating_point(self.rk, pentode, self.newton)
+        self.dc = self.operating_point()
         self.reset()
+
+    def operating_point(self):
+        """The DC operating point at this stage's Rk, valve parameters and Newton settings (module operating_point();
+        overrides dk.stage.Stage's, which solves the 12AX7 circuit)."""
+        return operating_point(self.rk, self.par, self.newton)
 
     def swap_bias(self, bias):
         raise NotImplementedError("the 6AS6 stage's Rk is fixed for the run; live bias changes are #110 / #115")

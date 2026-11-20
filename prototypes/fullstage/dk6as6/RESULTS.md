@@ -147,7 +147,7 @@ and compared with the committed JSONs; ngspice 41, as the references. This is th
 |---|---|---|
 | op point (Va, Vk, Ia, Ig2), relative | 0 (identical to the printed digits) | 0 |
 | AC 1 Hz–100 kHz, max | 0 dB | 0 dB |
-| H2–H5 with reference above −90 dBc, max | 6.9e-5 dB (H3, 2 V) | 7.6e-4 dB (H4, 2 V, −74.5 dBc) |
+| H2–H5 with reference above −90 dBc, max | 5.5e-4 dB (H4, 2 V, −79.2 dBc) | 7.6e-4 dB (H4, 2 V, −74.5 dBc) |
 | H2–H5 at −90 to −120 dBc, max | 0.0083 dB (H5, 2 V, −98.0 dBc) | 0.080 dB (H4, 0.5 V, −111.4 dBc) |
 | burst shift / trajectory, relative | 1.3e-6 / 1.3e-7 | 1.2e-6 / 1.7e-7 |
 
