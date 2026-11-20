@@ -217,6 +217,9 @@ def tables():
             key = f"{b:g}"
             row = dict(mode=mode, bias_ma=b, supported=supported(mode, b), supported_no_grid=supported(mode, b, 0.0))
             for m, tag in (("dual", "no_grid"), ("dualg", "grid")):
+                if key not in res[m]:           # T 0.5 mA: a grid reference only (the top of T's grid envelope)
+                    row[tag] = None
+                    continue
                 dk = res[m][key]["standard"]
                 ref = V.ref(m, b, mode)
                 row[tag] = dict(dk=_burst_row(dk["burst"]), spice=_burst_row(ref["burst"]),
@@ -226,6 +229,9 @@ def tables():
             for a in AMPS:
                 tr = dict(mode=mode, bias_ma=b, drive=float(a))
                 for m, tag in (("dual", "no_grid"), ("dualg", "grid")):
+                    if key not in res[m]:
+                        tr[tag] = None
+                        continue
                     dk, ref = res[m][key]["standard"]["sine"][a], V.ref(m, b, mode)["sine"][a]
                     tr[tag] = dict(thd_dk_pct=dk["thd_pct"], thd_spice_pct=ref["thd_pct"], H_dBc_dk=dk["H_dBc"][1:5],
                                    H_dBc_spice=ref["H_dBc"][1:5], H1_dk=dk["H_peak_V"][0],

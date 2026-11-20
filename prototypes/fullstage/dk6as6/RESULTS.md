@@ -1,4 +1,4 @@
-# 6AS6 DK stage — the #102 circuit values, the #110 bias control and the #111 T / P1 / P2 modes, validated against the same-model ngspice references (20 Nov 2026)
+# 6AS6 DK stage — the #102 circuit values, the #110 bias control, the #111 T / P1 / P2 modes and the #112 g1 grid current, validated against the same-model ngspice references (21 Nov 2026)
 
 `python -m dk6as6.validate` → `results.json` (standard 8× and hq 16× at 0.1, 0.25, 0.45 and 0.6 mA; plain 4× at
 0.45 mA for information); `python -m pytest -q dk6as6/tests spice6as6/tests` covers it (standard at all four currents,
@@ -7,6 +7,11 @@ including the starved 0.1 mA, with the 12AX7 stage's criteria (`dk/validate.CRIT
 reference (ii), ngspice running the same valve law. The bias control (#110) is in "Bias control" below; the Distortion switch's T / P1 / P2 wiring (#111) is in
 "Modes (#111)" at the end (everything above it is P1, the default, unchanged by #111). History: #26 validated the same method on placeholder values
 (the 12AX7 stage's passives, HT 300 V, Ra 100k, Rk 1.5k bypassed by 22 µF, g3 at 0 V); those are replaced here.
+
+> **#112: the default stage now models g1 grid current** (an unvalidated, borrowed Dempwolf–Zölzer law with a
+> `grid_hardness` control; "Grid current (#112)" at the end). Every result above "Grid current (#112)" is the stage at
+> `grid_hardness=0`, reproduced bit for bit. With grid current P1 is unchanged to rounding, and T is supported to
+> 0.5 mA instead of 0.3 mA.
 
 ## Circuit values (#102)
 Copied from the #102 research pass
@@ -334,8 +339,8 @@ meter reading.
 
 ### Supported envelope (`stage.SUPPORTED_MA`; PR #121 review)
 > **Since #112 this section describes the stage without grid current (`grid_hardness=0`,
-> `stage.SUPPORTED_MA_NO_GRID`).** The default stage models g1 grid current, and with it T is supported over the whole
-> 0.1–0.6 mA ("Grid current (#112)", at the end).
+> `stage.SUPPORTED_MA_NO_GRID`, `envelope.json`).** The default stage models g1 grid current, and with it T is
+> supported to 0.5 mA, limited by the aliasing gate rather than the law ("Grid current (#112)", at the end).
 
 `Stage` accepts a mode / bias only inside the supported envelope and raises `UnsupportedSettingError` outside it;
 `experimental=True` runs any setting with an `ExperimentalWarning` (`Stage.supported` records which). A setting is
@@ -786,6 +791,34 @@ correctness issue (MAX_IT = 50).
 (Vg > 0, Va < 20 V). It is in the law as defined here (plate above the cathode, Ip, Ig2 ≥ 0), as T 0.35 mA without grid
 current was (Vak ≥ 16.8 V) when #111 supported it, but **it is model extrapolation, not data**.
 
+**#121's stimulus class with grid current** (`python -m dk6as6.envelope --grid` → `envelope_grid.json`: 8 V peak tones
+at 20 Hz–20 kHz from silence, sine-phase slope onsets and cosine-phase step onsets, step offsets, standard and hq, on
+the interpolated internal-rate voltages; in the law = plate above the cathode, Ip + Ig2 ≥ 0, every sample converged):
+**every T current 0.1–0.6 mA is in the law, and so are P1's ends**. The runtime guard counts no sample in any of the
+528 runs.
+
+| T, bias | worst Vg1k (stimulus) | min Vak | min Ip + Ig2 | without grid current (`envelope.json`) |
+|---|---|---|---|---|
+| 0.3 mA | −0.855 V (100 Hz step, hq) | 35.1 V | 37 µA | −0.85 V: in the law |
+| 0.35 mA | **−0.078 V** (20 / 100 Hz step) | 14.5 V | 36 µA | **+0.298 V: out** |
+| 0.4 mA | +0.051 V (20 Hz step) | 11.1 V | 17 µA | out |
+| 0.45 mA | +0.114 V | 9.5 V | 5.3 µA | out |
+| 0.5 mA | +0.156 V | 8.4 V | 1.6 µA | out |
+| 0.55 mA | +0.187 V | 7.6 V | 0.56 µA | out |
+| 0.6 mA | +0.210 V | 6.8 V | 0.22 µA | out |
+
+So with grid current the law no longer limits T: the step onset that ended #121's envelope at 0.3 mA (+0.30 V at
+0.35 mA) is clamped to −0.08 V. **T's top with grid current, 0.5 mA, is set by the aliasing gate** (below). Ip + Ig2
+shrinks toward zero with current (0.22 µA at 0.6 mA). That margin depends on the borrowed grid law, so the guard
+stays on.
+
+**The runtime guard (`Stage.out_of_law`, `OutOfLawWarning`, #121) changes with the law in force.** Without grid
+current (hardness 0) it is #121's, unchanged: g1 positive or the plate below the cathode. With grid current a positive
+g1 is what the grid law models, so it is no longer an excursion. The guard counts the grid law's own limits instead:
+the plate below the cathode, or Ip + Ig2 < 0 (Ik < Ig1, the grid current exceeding the cathode current that feeds
+it). Tested both ways: `test_t_leaves_the_law_just_above_its_envelope` without grid current;
+`test_grid_current_keeps_that_onset_in_the_law` and `test_supported_envelope_stays_in_the_law`, at both hardnesses.
+
 **Where T's envelope ends: steady state across the band** (`python -m dk6as6.grid hf` → `grid.json` "hf"; T at
 0.35–0.6 mA every 50 µA, 4 / 6 / 8 V peak, tones 1037–19037 Hz every 2 kHz, 0.4 s from silence). The 1 kHz and onset
 checks above are not enough. Before the fix below, T at 0.5–0.6 mA lost Newton on single samples of a *steady* 6–8 V
@@ -803,7 +836,7 @@ happens on a few samples per 0.4 s, only at T ≥ 0.5 mA with a steady 6–8 V t
 real-time item for the C++ port (#104), not an accuracy one.
 
 ### Validation against the same-model ngspice references (`dk/validate.CRIT` unchanged; `results_grid[_T].json`)
-References `spice6as6/reference_dualg_{0.1,0.25,0.45}mA.json` (P1) and `reference_dualg_T_{0.1,0.25,0.35,0.45,0.6}mA.json`
+References `spice6as6/reference_dualg_{0.1,0.25,0.45}mA.json` (P1) and `reference_dualg_T_{0.1,0.25,0.35,0.45,0.5,0.6}mA.json`
 (T): ngspice 41 (the conda-forge osx-64 build under Rosetta, as #118 / #120 / #121), `spice/run_refs.SOLVER` unchanged,
 the netlists generated as before with the dualg subckt. **Run with `run_refs.py --split 6`**: 'main' as six ngspice
 calls (.op/.ac, one per sine, the burst), the same analyses (`test_split_main_is_the_same_analyses`). This was needed
@@ -814,15 +847,15 @@ they could not finish under 1 h. The runs that made the references used a 3 h `N
 longest call took 61.5 min. **P1 0.6 mA has no dualg reference** (below). `python -m dk6as6.validate --grid` → `results_grid.json`
 (P1) and `results_grid_T.json`.
 
-| criterion (limit) | P1 0.1 | P1 0.25 | P1 0.45 | T 0.1 | T 0.25 | T 0.35 | T 0.45 | T 0.6 |
-|---|---|---|---|---|---|---|---|---|
-| op point, worst rel. (< 0.001) | 7.6e-10 | 1.2e-9 | 1.4e-9 | 1.8e-9 | 1.1e-9 | 2.8e-9 | 1.5e-9 | 6.8e-9 |
-| small signal, stage / chain (< 0.1 dB) | 0.00000 / 0.00081 | 0.00005 / 0.00084 | 0.00007 / 0.00085 | 0.00010 / 0.00076 | 0.00005 / 0.00084 | 0.00012 / 0.00088 | 0.00019 / 0.00092 | 0.00035 / 0.00101 |
-| H2–H5 worst tested (< 0.1 dB) | 0.00214 (H4, 2 V) | 0.00069 (H4, 2 V) | 0.00297 (H4, 2 V) | 0.00050 (H5, 8 V) | 0.00040 (H4, 8 V) | 0.00055 (H5, 8 V) | 0.00382 (H4, 2 V) | 0.00275 (H2, 2 V; 13 tested) |
-| burst shift / trajectory (< 0.5 % / 0.5 %) | 0.058 % / 0.0065 % | 0.056 % / 0.0063 % | 0.056 % / 0.0062 % | 0.067 % / 0.0075 % | 0.069 % / 0.0076 % | 0.069 % / 0.0077 % | 0.069 % / 0.0076 % | 0.036 % / 0.0039 % |
-| recovery τ (< 1 %, where the reference has one) | none | none | none | none | none | none | **0.0018 %** (89.0 ms) | **0.0019 %** (89.0 ms) |
-| Newton non-converged / max it. | 0 / 3 | 0 / 3 | 0 / 3 | 0 / 3 | 0 / 3 | 0 / 3 | 0 / 4 | 0 / 4 |
-| status | **passed** | **passed** | **passed** | **passed** | **passed** | **passed** | **passed** | **passed** |
+| criterion (limit) | P1 0.1 | P1 0.25 | P1 0.45 | T 0.1 | T 0.25 | T 0.35 | T 0.45 | T 0.5 (T's top) | T 0.6 (unsupported) |
+|---|---|---|---|---|---|---|---|---|---|
+| op point, worst rel. (< 0.001) | 7.6e-10 | 1.2e-9 | 1.4e-9 | 1.8e-9 | 1.1e-9 | 2.8e-9 | 1.5e-9 | 3.2e-9 | 6.8e-9 |
+| small signal, stage / chain (< 0.1 dB) | 0.00000 / 0.00081 | 0.00005 / 0.00084 | 0.00007 / 0.00085 | 0.00010 / 0.00076 | 0.00005 / 0.00084 | 0.00012 / 0.00088 | 0.00019 / 0.00092 | 0.00023 / 0.00094 | 0.00035 / 0.00101 |
+| H2–H5 worst tested (< 0.1 dB) | 0.00214 (H4, 2 V) | 0.00069 (H4, 2 V) | 0.00297 (H4, 2 V) | 0.00050 (H5, 8 V) | 0.00040 (H4, 8 V) | 0.00055 (H5, 8 V) | 0.00382 (H4, 2 V) | 0.00134 (H4, 2 V; 10 tested) | 0.00275 (H2, 2 V; 13 tested) |
+| burst shift / trajectory (< 0.5 % / 0.5 %) | 0.058 % / 0.0065 % | 0.056 % / 0.0063 % | 0.056 % / 0.0062 % | 0.067 % / 0.0075 % | 0.069 % / 0.0076 % | 0.069 % / 0.0077 % | 0.069 % / 0.0076 % | 0.055 % / 0.0061 % | 0.036 % / 0.0039 % |
+| recovery τ (< 1 %, where the reference has one) | none | none | none | none | none | none | **0.0018 %** (89.0 ms) | **0.0002 %** (89.0 ms) | **0.0019 %** (89.0 ms) |
+| Newton non-converged / max it. | 0 / 3 | 0 / 3 | 0 / 3 | 0 / 3 | 0 / 3 | 0 / 3 | 0 / 4 | 0 / 4 | 0 / 4 |
+| status | **passed** | **passed** | **passed** | **passed** | **passed** | **passed** | **passed** | **passed** | **passed**, unsupported (aliasing) |
 
 (Standard 8×; **hq 16× passes every criterion at every one of these currents too**, with the same figures to ±0.00003 dB
 and τ to 0.0004 %.) Above 0.35 mA the T comparison is complete for the first time. Without grid current T 0.45 / 0.6 mA
@@ -847,6 +880,7 @@ so it is shown but not relied on. The tail fit is a log-linear fit over 31–118
 | 0.35 mA | grid | −3.9416 | −0.682 | −4.624 / −3.940 / −3.941 / −3.941 | none | 111.9 ms |
 | 0.45 mA | no grid | −2.6527 | −0.843 | −3.496 / −2.651 / −2.651 / −2.652 | none | 109.1 ms |
 | 0.45 mA | grid | −2.6527 | **−0.855** | −3.508 / **−2.662 / −2.661 / −2.657** | 89.0 ms | 107.1 ms |
+| 0.5 mA | grid (no no-grid reference) | −2.0543 | −1.184 | −3.238 / −2.292 / −2.260 / −2.162 | 89.0 ms | 105.8 ms |
 | 0.6 mA | no grid (ngspice; DK not comparable: exp cap) | −0.9488 | −1.102 | −2.051 / −0.950 / −0.950 / −0.949 | 89.0 ms | 106.0 ms |
 | 0.6 mA | grid | −0.9488 | **−2.189** | −3.138 / **−1.969 / −1.830 / −1.401** | 89.0 ms | 102.5 ms |
 
@@ -866,6 +900,7 @@ burst draws no grid current (Ig1 < 1e-11 A), so the burst is the #111 one to the
 | T 0.1 / 0.25 mA | identical | identical | identical | identical (2.463 / 4.162) |
 | T 0.35 mA | 0.0296 / 0.0296 | 0.297 / 0.297 | 1.201 / 1.201 | **5.991 / 6.103** (H3 −40.8 vs −43.6, H5 −52.5 vs −63.8 dBc) |
 | T 0.45 mA | 0.0469 / 0.0469 | 0.470 / 0.470 | 1.916 / 1.916 | **10.03 / 20.24** (no-grid DK; ngspice 12.33, exp-capped: neither is physical) |
+| T 0.5 mA (grid only) | 0.0618 | 0.619 | 2.554 | 13.25 |
 | T 0.6 mA | **0.1202 / 0.1221** | **1.098 / 1.226** (H4 −68.0 vs −97.6 dBc) | **4.085 / 16.40** (ngspice 7.86, capped) | **19.36 / 40.35** (ngspice 29.46, capped) |
 
 ("Identical": to ≤ 5e-7 dB on any harmonic, the largest on harmonics at the −150 dBc floor.) The grid current matters
@@ -873,3 +908,32 @@ where g1 gets within ~1 V of the cathode: T at ≥ 0.35 mA. There it **halves th
 0.45–0.6 mA** (which drove g1 to +0.7…+1.6 V and the plate below the cathode). At T 0.6 mA, where g1 rests at −0.95 V,
 the grid current's exponential onset also **adds H4/H5 at moderate drive** (0.5 V: H4 −68.0 dBc against −97.6, H5
 −74.8 against −117.6). That is a prediction of the borrowed DZ shape, the part of this law least supported by 6AS6 data.
+
+### Aliasing with grid current (`python -m dk6as6.aliasing --grid` → `aliasing_grid[_T].json`; 8× FIR, 48 kHz)
+`dk/aliasing.py`'s metric, the #121 quality gate unchanged (`aliasing.QUALITY_GATE_DBC`, the shipped 12AX7 stage's
+budget: −118.3 dBc at 2 V, −48.6 dBc at 8 V). Full 19-tone sweeps at T 0.45, 0.5 and 0.6 mA. At the other currents
+only the five top tones (15037–19037 Hz) were swept: every full sweep of this stage so far has had its worst tone
+there. Worst total, dBc:
+
+| | 2 V | 8 V | gate |
+|---|---|---|---|
+| P1 0.1 / 0.25 / 0.45 / 0.6 mA | −140.31 / −147.99 / −130.37 / −123.59 | −112.50 / −107.18 / −100.96 / −98.44 | pass; equal to the no-grid sweep to the 0.01 dB printed |
+| T 0.1 mA | −140.73 | −125.25 | pass (= no grid) |
+| T 0.25 mA | −136.55 | −121.08 | pass (= no grid) |
+| T 0.35 mA | −133.35 | **−95.03** (internal; no grid −117.98) | pass |
+| T 0.45 mA (full) | −129.32 | **−66.14** (internal) | pass |
+| **T 0.5 mA (full; T's top)** | −126.84 | **−63.92** at 17037 Hz (internal) | **pass** |
+| T 0.55 mA | **−109.66** (internal) | −60.33 | **fails at 2 V** |
+| T 0.6 mA (full) | **−87.49** (internal) | −57.26 | **fails at 2 V** |
+
+(Without grid current T 0.45 / 0.6 mA read −56.7 / −54.8 dBc at 8 V, but that stage was not physical.) **The grid
+current costs aliasing, inside the stage, where it switches on.** Its exponential onset (softplus with Cg = 9.9 /V)
+makes high harmonics that 8× oversampling folds back. At 8 V, T 0.35–0.5 mA rises from the resampler floor (−118 to
+−121 dBc) to −64…−95 dBc. That is within the gate's −48.6 dBc, the 12AX7 stage's own budget (that stage also models
+grid current), but it is the largest aliasing of any supported 6AS6 setting. At 2 V it stays at the resampler floor to
+0.5 mA. From 0.55 mA g1 rests within ~1.3 V of the cathode (−0.95 V at 0.6 mA), so a 2 V signal already reaches the
+onset and the internal aliasing passes the gate (−109.7 / −87.5 dBc). **That, not the law, ends T's envelope at
+0.5 mA** (`test_t_above_its_grid_envelope_fails_the_quality_gate`). hq (16×) would lower the internal part; it is not
+measured here, and the gate is defined at standard. The repo has no audibility criterion (#96), and this does not
+invent one. Regression baselines: `aliasing.LIMIT_DBC_GRID` (worst + 3 dB). CI re-measures P1 0.45 / 0.6 mA at 8 V and
+T 0.5 mA at 2 and 8 V (`CI_CASES_GRID`). Every grid sweep record carries Newton's unconverged count: zero everywhere.

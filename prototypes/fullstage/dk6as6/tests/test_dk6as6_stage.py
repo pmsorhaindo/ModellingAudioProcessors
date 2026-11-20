@@ -169,8 +169,8 @@ def test_supported_envelope_stays_in_the_law(mode, bias, f, phase, hardness, qua
 @pytest.mark.parametrize("hardness", [HARDNESS, 0.0])
 def test_tone_onset_from_silence_at_the_top_of_t(quality, hardness):
     """The PR #121 re-review reproduction: an 8 V peak, zero-phase 18 kHz sine from silence through Stage.process.
-    The interpolator overshoots (8.63 V); at T's supported top (of each hardness) the runtime guard sees nothing; without
-    grid current g1 stays negative."""
+    The interpolator overshoots (8.63 V); at T's supported top (of each hardness) the runtime guard sees nothing;
+    without grid current g1 stays negative."""
     st = Stage(48000, mode="T", bias=envelope(hardness)["T"][1], quality=quality, grid_hardness=hardness)
     x = 8 * np.sin(2 * np.pi * 18000 * np.arange(480) / 48000)
     with warnings.catch_warnings():
@@ -191,12 +191,13 @@ def test_t_leaves_the_law_just_above_its_envelope(quality):
 
 @pytest.mark.parametrize("quality", QUALITY)
 def test_grid_current_keeps_that_onset_in_the_law(quality):
-    """#112: the same T 0.35 mA / 8 V / 100 Hz step onset with the default grid current: g1 still goes positive, by
-    less, but the grid law models that; the plate stays above the cathode, Ip + Ig2 > 0, and the guard counts nothing."""
+    """#112: the same T 0.35 mA / 8 V / 100 Hz step onset with the default grid current: the grid current clamps g1, so
+    it stays below the cathode (-0.08 V at worst over envelope.py's class), the plate above it, and the guard counts
+    nothing."""
     with warnings.catch_warnings():
         warnings.simplefilter("error", OutOfLawWarning)
         r = E.excursion("T", 0.35, quality, 100, "cos", HARDNESS)
-    assert r["vg1k_max"] > 0.0 and E.in_law(r) and r["out_of_law"] == 0, r
+    assert r["vg1k_max"] < 0.0 and E.in_law(r) and r["out_of_law"] == 0, r
 
 
 def test_envelope_record_is_the_supported_range():
