@@ -35,4 +35,4 @@ def stage_response(stage, f):
 
 def analog_response(stage, f):
     """Exact analog small-signal response at the stage's operating point (circuit.analog_response)."""
-    return circuit.analog_response(f, jacobian(stage), stage.rk)
+    return circuit.analog_response(f, jacobian(stage), stage.rk, stage.mode)

@@ -11,10 +11,19 @@ window (recovery_tau_s = nan; dk6as6/RESULTS.md). The shift and trajectory crite
 run(model="r51") checks the DK stage with the #51 parameters against reference_r51_0.45mA.json the same way (for
 dk6as6/compare_fits.py; informational).
 bias: the target cathode current in mA (dk6as6/stage.py); references exist at spice6as6/run_refs.BIASES.
+mode: the Distortion switch (#111, dk6as6/circuit.MODES); T and P2 references exist at run_refs.MODE_BIASES[mode].
+Where the reference is not the same law: ngspice clamps a B-source exp() argument at SPICE_EXP_CAP, so the subckt's
+Koren term ln(1 + exp(KP (1/MU + Vg1k / max(Vg2k, 1 mV)))) stops following the DK law (an exact softplus) once that
+argument passes it, i.e. for Vg1k / Vg2k > ~1.5: a positive g1 over a screen near 0 V. On the validate.py signals this
+happens only in T at high current and drive, where the stage is outside the valve law anyway (dk6as6/RESULTS.md,
+Modes). A sine (or the burst) whose DK run reaches it is marked "spice_exp_capped"; its harmonics (burst metrics) are
+reported but not compared, and that criterion reads None ("not compared"), so the case is "inconclusive" (status()),
+never "passed". Settings outside stage.SUPPORTED_MA are run as experimental and marked "supported": False; the
+command fails if any supported setting does not pass.
 Aliasing: dk6as6/aliasing.py.
-Run: python -m dk6as6.validate   (from prototypes/fullstage). Writes dk6as6/results.json: per reference bias,
-"standard" and "hq" against (ii), and at the default bias "plain_4x": the same run at 4x without pre-warp, for
-information only (no 4x setting).
+Run: python -m dk6as6.validate [P1] [T] [P2]   (from prototypes/fullstage; every mode if none given). Writes, per mode,
+dk6as6/results.json (P1) / results_<mode>.json: per reference bias, "standard" and "hq" against (ii), and for P1 at
+the default bias "plain_4x": the same run at 4x without pre-warp, for information only (no 4x setting).
 """
 import json
 import os
@@ -29,15 +38,28 @@ from spice.run_refs import burst_metrics, AMPS  # noqa: E402 -- after the sys.pa
 from dk.validate import CRIT, aligned  # noqa: E402 -- after the sys.path setup
 from dk6as6.stage import Stage, QUALITY, BIAS_MA  # noqa: E402 -- after the sys.path setup
 from dk6as6 import linear, pentode  # noqa: E402 -- after the sys.path setup
-from spice6as6.run_refs import BIASES, ref_file  # noqa: E402 -- after the sys.path setup
+from dk6as6.circuit import MODE  # noqa: E402 -- after the sys.path setup
+from spice6as6.run_refs import BIASES, MODE_BIASES, ref_file  # noqa: E402 -- after the sys.path setup
 
 FS = 48000.0
 PARAMS = {"dual": pentode.DUAL_CONTROL, "r51": pentode.REFIT_51}
 OP_KEYS = ("va", "vk", "ia", "ig2", "ik", "vgk")
+SPICE_EXP_CAP = 227.9559242   # ngspice 41 B-source exp() argument limit: ln(1 + exp(300)) evaluates to 227.9559
 
 
-def ref(model, bias=BIAS_MA):
-    return json.load(open(ref_file(model, bias)))
+def exp_capped(stage, rec):
+    """True if the DK run's Koren softplus argument passed ngspice's exp() cap anywhere (see the module docstring)."""
+    p = stage.par
+    x = p["KP"] * (1.0 / p["MU"] + rec["vgk"] / np.maximum(rec["vg2k"], 1e-3))
+    return bool(np.max(x) > SPICE_EXP_CAP)
+
+
+def ref(model, bias=BIAS_MA, mode=MODE):
+    return json.load(open(ref_file(model, bias, mode)))
+
+
+def results_file(mode=MODE):
+    return os.path.join(HERE, "results.json" if mode == "P1" else f"results_{mode}.json")
 
 
 def small_signal(stage, f):
@@ -64,33 +86,47 @@ def ac_dev(st, r):
     return o
 
 
-def sines(quality="standard", filt="fir", model="dual", T=0.5, amps=AMPS, bias=BIAS_MA):
+def sines(quality="standard", filt="fir", model="dual", T=0.5, amps=AMPS, bias=BIAS_MA, mode=MODE):
     """1 kHz sines through Stage.process: harmonics, iteration stats and CPU per amplitude."""
     out, times, its = {}, {}, {}
     n = int(T * FS)
     for a in amps:
-        s = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model])
+        s = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model], mode=mode, experimental=True)
         t = np.arange(n + s.latency_samples) / FS
         t0 = time.perf_counter()
-        y = aligned(s, float(a) * np.sin(2 * np.pi * 1000 * t))["out"]
+        r = aligned(s, float(a) * np.sin(2 * np.pi * 1000 * t), record=("out", "vgk", "vg2k"))
         times[a] = (time.perf_counter() - t0) / (len(t) / FS)
-        h = harmonics(y, FS, 1000.0, 100)
+        h = harmonics(r["out"], FS, 1000.0, 100)
         out[a] = dict(H_peak_V=h[:5].tolist(), H_dBc=db_rel(h)[:5].tolist(), thd_pct=100 * thd(h))
+        if exp_capped(s, r["_internal"]):
+            out[a]["spice_exp_capped"] = True
         its[a] = s.iteration_stats()
     return out, times, its
 
 
-def burst(quality="standard", filt="fir", model="dual", bias=BIAS_MA):
+def burst(quality="standard", filt="fir", model="dual", bias=BIAS_MA, mode=MODE):
     """The 4 V 1 kHz tone burst (10-30 ms, 120 ms) through Stage.process: (burst_metrics of Vgk, iteration stats)."""
-    s = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model])
+    s = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model], mode=mode, experimental=True)
     nb = int(0.12 * FS)
     tb = np.arange(nb + s.latency_samples) / FS
     xb = 4 * np.sin(2 * np.pi * 1000 * tb) * ((tb > 10e-3) & (tb < 30e-3))
-    rb = aligned(s, xb, record=("out", "vgk"))
+    rb = aligned(s, xb, record=("out", "vgk", "vg2k"))
     vg = rb["_internal"]["vgk"]
     ti = (np.arange(len(vg)) - s.rs.up_delay_internal) / s.fs   # Vgk is seen after the interpolator only
     keep = (ti >= 0) & (ti < nb / FS)
-    return burst_metrics(ti[keep], vg[keep]), s.iteration_stats()
+    m = burst_metrics(ti[keep], vg[keep])
+    if exp_capped(s, rb["_internal"]):
+        m["spice_exp_capped"] = True
+    return m, s.iteration_stats()
+
+
+def tail_tau(burst, t0=31e-3, t1=118e-3):
+    """Decay constant (s) of the burst's recovery tail: a log-linear fit of its 0.5 ms trajectory over t0..t1, after
+    the cycle-mean window has left the burst (informational, beside CRIT's recovery tau, which starts at the 30.5 ms
+    sample: that sample straddles the burst's end)."""
+    t, v = np.array(burst["traj_t"]), np.array(burst["traj_vgk"]) - burst["rest_vgk"]
+    m = (t >= t0) & (t <= t1)
+    return float(-1.0 / np.polyfit(t[m], np.log(v[m]), 1)[0])
 
 
 def harm_dev(sine, r):
@@ -99,9 +135,12 @@ def harm_dev(sine, r):
         rd = np.array(r["sine"][a]["H_dBc"])
         dd = np.array(sine[a]["H_dBc"])
         rows = {}
+        capped = sine[a].get("spice_exp_capped", False)
         for hk in range(1, 5):          # H2..H5
             rows[f"H{hk+1}"] = dict(ref_dBc=float(rd[hk]), dk_dBc=float(dd[hk]), dev_db=float(dd[hk] - rd[hk]),
-                                    tested=bool(rd[hk] > CRIT["harm_floor_dbc"]))
+                                    tested=bool(rd[hk] > CRIT["harm_floor_dbc"]) and not capped)
+        if capped:
+            rows["spice_exp_capped"] = True
         rows["H1_dev_db"] = float(20 * np.log10(sine[a]["H_peak_V"][0] / r["sine"][a]["H_peak_V"][0]))
         rows["thd_ref_pct"] = r["sine"][a]["thd_pct"]
         rows["thd_dk_pct"] = sine[a]["thd_pct"]
@@ -109,24 +148,26 @@ def harm_dev(sine, r):
     return res
 
 
-def run(T=0.5, quality="standard", filt="fir", model="dual", bias=BIAS_MA):
-    st = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model])
+def run(T=0.5, quality="standard", filt="fir", model="dual", bias=BIAS_MA, mode=MODE):
+    st = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model], mode=mode, experimental=True)
     out = dict(criteria=CRIT, fs_base=FS, quality=quality, oversampling=st.os, prewarp_hz=st.prewarp_hz, filter=filt,
                model=model, params=PARAMS[model], bias_ma=bias, rk=st.rk)
+    if mode != "P1":
+        out["mode"] = mode
     out["resampler"] = dict(latency_samples=st.latency_samples, latency_ms=st.rs.latency_ms,
                             macs_up_down=st.resampler_macs)
     dc = st.dc
     out["op"] = dict(va=dc["nodes"]["a"], vk=dc["nodes"]["k"], ia=dc["ip"], ig2=dc["ig2"], ik=dc["ik"], vgk=dc["vgk"],
                      vg=dc["nodes"]["g"], vg2k=dc["vg2k"], vg3k=dc["vg3k"], vak=dc["vak"])
-    r = ref(model, bias)
+    r = ref(model, bias, mode)
     o = dict(op_rel={k: abs(out["op"][k] / r["op"][k] - 1) for k in OP_KEYS})
     o.update(ac_dev(st, r))
     out["ac_gain_1k_db"] = float(small_signal(st, [1000.0])[0][0])
 
-    out["sine"], times, its = sines(quality, filt, model, T, bias=bias)
+    out["sine"], times, its = sines(quality, filt, model, T, bias=bias, mode=mode)
     o["harm"] = harm_dev(out["sine"], r)
 
-    out["burst"], its["burst"] = burst(quality, filt, model, bias)
+    out["burst"], its["burst"] = burst(quality, filt, model, bias, mode)
     rb_ = r["burst"]
     shift_ref = rb_["min_vgk"] - rb_["rest_vgk"]
     tr = np.array(out["burst"]["traj_vgk"]) - out["burst"]["rest_vgk"]
@@ -135,6 +176,9 @@ def run(T=0.5, quality="standard", filt="fir", model="dual", bias=BIAS_MA):
                       tau_rel=abs(out["burst"]["recovery_tau_s"] / rb_["recovery_tau_s"] - 1),
                       traj_rel=float(np.sqrt(np.mean((tr - rr) ** 2)) / abs(shift_ref)),
                       tau_tested=bool(np.isfinite(rb_["recovery_tau_s"])),
+                      **({"spice_exp_capped": True} if out["burst"].get("spice_exp_capped") else {}),
+                      **({"tail_tau_fit_rel": abs(tail_tau(out["burst"]) / tail_tau(rb_) - 1)}
+                         if np.isfinite(rb_["recovery_tau_s"]) else {}),
                       t_min_diff_ms=1e3 * (out["burst"]["t_min"] - rb_["t_min"]),
                       ref=dict(rest=rb_["rest_vgk"], min=rb_["min_vgk"], tau=rb_["recovery_tau_s"]))
     out["vs"] = {model: o}
@@ -143,16 +187,29 @@ def run(T=0.5, quality="standard", filt="fir", model="dual", bias=BIAS_MA):
                              f"{st.os}x OS, "
                              f"{filt} half-band resampling included); value = seconds of CPU per second of audio",
                       seconds_per_second=times)
-    out["passed"] = dict(
+    harm_ok = all(abs(h["dev_db"]) < CRIT["harm_db"] for a in AMPS for k, h in o["harm"][a].items()
+                  if isinstance(h, dict) and h["tested"])
+    harm_uncompared = any(o["harm"][a].get("spice_exp_capped") and any(
+        isinstance(h, dict) and h["ref_dBc"] > CRIT["harm_floor_dbc"] for h in o["harm"][a].values()) for a in AMPS)
+    burst_ok = (o["burst"]["min_rel"] < CRIT["burst_min_rel"] and o["burst"]["traj_rel"] < CRIT["burst_traj_rel"]
+                and (not o["burst"]["tau_tested"] or o["burst"]["tau_rel"] < CRIT["burst_tau_rel"]))
+    out["passed"] = dict(   # True / False per criterion; None where the reference is not the same law (not compared)
         op=all(v < CRIT["op_rel"] for v in o["op_rel"].values()),
         ac_stage=o["ac_maxdev_db_stage"] < CRIT["ac_db"],
         ac_chain=o["ac_maxdev_db_chain"] < CRIT["ac_db"],
-        harmonics=all(abs(h["dev_db"]) < CRIT["harm_db"] for a in AMPS for k, h in o["harm"][a].items()
-                      if isinstance(h, dict) and h["tested"]),
-        burst=(o["burst"]["min_rel"] < CRIT["burst_min_rel"] and o["burst"]["traj_rel"] < CRIT["burst_traj_rel"]
-               and (not o["burst"]["tau_tested"] or o["burst"]["tau_rel"] < CRIT["burst_tau_rel"])),
+        harmonics=False if not harm_ok else (None if harm_uncompared else True),
+        burst=None if o["burst"].get("spice_exp_capped") else burst_ok,
         newton=all(v["converged"] for v in its.values()))
+    if not st.supported:
+        out["supported"] = False
     return out
+
+
+def status(res):
+    """"passed" only if every criterion passed; "failed" if any failed; else "inconclusive" (a criterion not compared,
+    e.g. where ngspice's exp() cap makes the reference a different law). A non-pass is never counted as a pass."""
+    p = res["passed"].values()
+    return "passed" if all(v is True for v in p) else "failed" if any(v is False for v in p) else "inconclusive"
 
 
 def summary(res):
@@ -169,13 +226,24 @@ def summary(res):
     return "\n".join(lines)
 
 
-if __name__ == "__main__":
-    res = {f"{b:g}": {q: run(quality=q, bias=b) for q in QUALITY} for b in BIASES["dual"]}
-    res[f"{BIAS_MA:g}"]["plain_4x"] = run(quality=(4, None))
-    json.dump(res, open(os.path.join(HERE, "results.json"), "w"), indent=1, default=float)
+def main(mode=MODE):
+    biases = BIASES["dual"] if mode == "P1" else MODE_BIASES[mode]
+    res = {f"{b:g}": {q: run(quality=q, bias=b, mode=mode) for q in QUALITY} for b in biases}
+    if mode == "P1":
+        res[f"{BIAS_MA:g}"]["plain_4x"] = run(quality=(4, None))
+    json.dump(res, open(results_file(mode), "w"), indent=1, default=float)
     for b, rb in res.items():
         for q, r in rb.items():
-            print(f"== {b} mA, {q}: {r['oversampling']}x, Rk {r['rk']:.6g} ohm, resampler {r['resampler']}")
+            print(f"== {mode}, {b} mA, {q}: {r['oversampling']}x, Rk {r['rk']:.6g} ohm, resampler {r['resampler']}")
             print(summary(r))
-    if not all(all(rb[q]["passed"].values()) for rb in res.values() for q in QUALITY):
-        sys.exit("criteria failed: " + str({b: {q: rb[q]["passed"] for q in QUALITY} for b, rb in res.items()}))
+    return {b: {q: (status(rb[q]), rb[q].get("supported", True)) for q in QUALITY} for b, rb in res.items()}
+
+
+if __name__ == "__main__":
+    st = {m: main(m) for m in (sys.argv[1:] or MODE_BIASES)}
+    print(json.dumps(st))
+    # Every supported setting must pass; unsupported (experimental) ones are recorded, never counted as passes.
+    bad = {m: {b: v for b, v in sm.items() if any(s != "passed" and ok for s, ok in v.values())}
+           for m, sm in st.items()}
+    if any(bad.values()):
+        sys.exit("supported settings not passed: " + str(bad))

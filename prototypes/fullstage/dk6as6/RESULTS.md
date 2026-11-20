@@ -1,10 +1,11 @@
-# 6AS6 DK stage — the #102 circuit values and the #110 bias control, validated against the same-model ngspice references (20 Nov 2026)
+# 6AS6 DK stage — the #102 circuit values, the #110 bias control and the #111 T / P1 / P2 modes, validated against the same-model ngspice references (20 Nov 2026)
 
 `python -m dk6as6.validate` → `results.json` (standard 8× and hq 16× at 0.1, 0.25, 0.45 and 0.6 mA; plain 4× at
 0.45 mA for information); `python -m pytest -q dk6as6/tests spice6as6/tests` covers it (standard at all four currents,
 hq at 0.1 and 0.6 mA, for CI time). **Standard (8×) and hq (16×) pass every criterion at all four currents**,
 including the starved 0.1 mA, with the 12AX7 stage's criteria (`dk/validate.CRIT`, imported unchanged) against
-reference (ii), ngspice running the same valve law. The bias control (#110) is in "Bias control" below. History: #26 validated the same method on placeholder values
+reference (ii), ngspice running the same valve law. The bias control (#110) is in "Bias control" below; the Distortion switch's T / P1 / P2 wiring (#111) is in
+"Modes (#111)" at the end (everything above it is P1, the default, unchanged by #111). History: #26 validated the same method on placeholder values
 (the 12AX7 stage's passives, HT 300 V, Ra 100k, Rk 1.5k bypassed by 22 µF, g3 at 0 V); those are replaced here.
 
 ## Circuit values (#102)
@@ -23,7 +24,9 @@ manual iss. 2 (2014), S6 UA plug-in manual, S7 SOS review (2003), S8 GroupDIY th
 | Bias network | unbypassed rheostat cathode → ground, solved for a target cathode current over 0.1–0.6 mA, default 0.45 mA (S6's default) | Topology from S3/S6; "unbypassed" **inferred** from S5's PK modes and E4/E6 | medium (topology), low (values) |
 | Ck | **removed** | Inferred (E4, E6) | medium |
 | EC2 | 120 V, stiff | S9 typical operation | medium |
-| P1 wiring | g3 → cathode (the default and only mode here) | S8 **speculation**; the datasheet's standard pentode connection | low |
+| P1 wiring | g3 → cathode (the default mode) | S8 **speculation**; the datasheet's standard pentode connection | low |
+| T wiring (#111) | g2 + g3 → plate through Rstrap = 100 Ω, no screen supply | S8 **speculation** plus standard practice (#102) | low |
+| P2 wiring (#111) | g3 → ground | **our hypothesis** (#102 E9) | low |
 | Rg (g1 grid leak) | 1 MΩ | S9 maximum | medium |
 | Cin, Cout | 100 nF | **Inferred** (HP corner of a few Hz) | low |
 | Rl | 1 MΩ | the next-stage grid; the #102 Zout figures include a 1 MΩ load | — |
@@ -33,8 +36,7 @@ manual iss. 2 (2014), S6 UA plug-in manual, S7 SOS review (2003), S8 GroupDIY th
 Not in the #102 table, kept from the 12AX7 stage (our conventional round values, `dk/circuit.py`): the test bench's
 source resistance **Rs 1 kΩ** and the grid stopper **Rgs 68 kΩ**. With Ig1 = 0 neither has a DC effect.
 
-Not implemented here: T (g2 + g3 strapped to the plate through 100 Ω) and P2 (g3 → ground hypothesis) are #111;
-live bias changes are #115. The knob law (#110) is below.
+T and P2 are in "Modes (#111)"; live bias and mode changes are #115. The knob law (#110) is below.
 
 **Placement of the g3 input capacitance (a modelling choice, not a value).** The datasheet's 3.4 pF is g3 to all
 other electrodes (with the external shield). `fit6as6/results/6AS6_fit.inc` and #26 put it g3 → k. With g3 on the
@@ -322,3 +324,361 @@ Operating point #51 / #55: Va 126.575 / 126.066 V, Vk 4.4427 / 4.4428 V, Ip 0.27
 which depends on the g3 / plate share; with g3 on the cathode both run at Vg3k = 0, not in the fit's weak g3 cut-off
 region. Neither fit has been checked against a measured 6AS6 stage; this table compares the fits, it does not rank
 them.
+
+## Modes (#111)
+The Distortion switch's T / P1 / P2, wired as `circuit.MODES` (one table for the DK netlist and the ngspice netlists).
+The v1 mode set is the original unit's three positions, the issue's starting point; the Mastering Plus P3 and the
+Super 15 PK / SQ positions are out of scope (no sourced reason to include one was found). The mode is fixed per run
+(`Stage(mode=)`; smooth switching is #115). Rk is solved for the target current in each mode, so `bias` stays the
+meter reading.
+
+### Supported envelope (`stage.SUPPORTED_MA`; PR #121 review)
+`Stage` accepts a mode / bias only inside the supported envelope and raises `UnsupportedSettingError` outside it;
+`experimental=True` runs any setting with an `ExperimentalWarning` (`Stage.supported` records which). A setting is
+supported only where all three hold:
+1. **in the law** (`python -m dk6as6.envelope` → `envelope.json`): for host signals bounded by 8 V peak (validate.py's
+   largest drive), g1 never goes positive (the valve law has no grid current and no positive-g1 data; that is #112)
+   and the plate never goes below the cathode. Both are read on the **interpolated internal-rate** voltages the solver
+   sees, not the host signal: the interpolator's onsets overshoot (an 8 V 18 kHz sine from silence reaches 8.63 V,
+   PR #121 re-review). The stimulus class: tones at 20, 50, 100, 200, 500 Hz and 1, 2, 5, 10, 15, 18, 20 kHz, each from
+   silence at sine phase (a slope onset) and at cosine phase (a full 8 V step onset), gated off at a peak (a step
+   offset), at standard 8× and hq 16×. The worst case everywhere is the step onset at 20–200 Hz;
+2. **validated:** passing same-model ngspice references (`status() == "passed"`, standard and hq) at or bracketing
+   each end of the range (`test_committed_validation_every_supported_setting_passes`);
+3. **aliasing:** within `aliasing.QUALITY_GATE_DBC` at every supported current (below).
+
+Worst excursion over the whole stimulus class (both qualities):
+
+| mode, bias | max Vg1k | where | min Vak | in the law |
+|---|---|---|---|---|
+| P1 0.1 mA | −4.347 V | hq, 100 Hz step onset | 148.2 V | yes |
+| P1 0.6 mA | −3.170 V | hq, 20 Hz step onset | 30.2 V | yes |
+| T 0.1 mA | −6.131 V | hq, 100 Hz step onset | 138.5 V | yes |
+| T 0.25 mA | −2.064 V | hq, 100 Hz step onset | 63.6 V | yes |
+| T 0.3 mA | −0.855 V | hq, 100 Hz step onset | 35.1 V | yes |
+| T 0.35 mA | **+0.298 V** | 100 Hz step onset (standard and hq); also positive on the 18 kHz slope onset (+0.080 V) | 3.8 V | **no** |
+
+| mode | supported | why it ends there |
+|---|---|---|
+| P1 | 0.1–0.6 mA (the documented range) | holds all three over the whole range, with ≥ 3.17 V of g1 margin |
+| T | **0.1–0.3 mA** | at 0.35 mA an 8 V step onset takes g1 to +0.30 V; the top end (0.3 mA, 0.85 V of margin) lies between the passing 0.25 and 0.35 mA references (no reference at 0.3 mA: one would be another multi-hour run, #125) |
+| P2 | **none: experimental only** | our wiring hypothesis on the fit's weakest g3 region (with the #51 fit its doubling vanishes; refit is #123), its 2 V aliasing fails the gate at every current, and its 0.6 mA burst τ fails CRIT |
+
+**Runtime guard.** The derivation covers its stimulus class only; larger inputs, or adversarial inter-sample peaks,
+are not covered. So `Stage.process_internal` also counts every internal sample with Vg1k > 0 or Vak < 0
+(`Stage.out_of_law`, `out_of_law_block`) and raises `OutOfLawWarning` for a block that has any, in every mode and
+whether supported or not. It is a counter and a comparison per sample (realtime-safe, no change to the numerics;
+P1's results are unchanged). Tested on the re-review's reproduction and on T just above its envelope.
+
+Within T's envelope the DC point still extrapolates the fit in Vg2: Vg2k = 165 V at 0.1 mA and > 140 V below
+~0.2 mA (the fit covers 60–140 V), and Vg3k = Vg2k is far above the fitted +12 V everywhere (where the share
+saturates; "Where each mode sits in the fit"). That is disclosed, as P1's Vg1k = −5.28 V at 0.1 mA (just below the
+fitted −5 V) has been since #110, not hidden behind the envelope. Panel consequence: in T the Bias knob's 0.3–0.6 mA
+travel (knob 1 to 4.87) is not available; how the panel should handle that is #115 / Michael's call.
+
+### What the sources say, and the wirings considered
+**No source states how T, P1 or P2 is wired.** What is documented is each mode's character:
+- T: "triode 'T' (even harmonics)" (M-ORIG §2); "The 'T' position provides a triode configuration, which generates
+  mainly even-order harmonics" (SOS 2003). The whole-unit spec point is in T (M-MP p.10 / M-S15: 1 kHz, 0.25 mA,
+  Function at T, 10 kΩ load, 0.2 % THD).
+- P1: "pentode 'P1' (odd harmonics)" (M-ORIG §2); "a pentode configuration which creates odd-order harmonics" (SOS).
+  "The P1 mode was also distinctly noisier than the triode mode" (SOS).
+- P2: "an unusual version of pentode … more drastic distortion at high bias settings, especially when 'overdrive'
+  is selected … frequency doubling effect" (M-ORIG §2), frequency doubling at 0.15–0.2 mA (M-ORIG §3);
+  "far more drastic distortion effects, especially when used with high bias settings" and "Strangely, the P2 mode
+  was also the quietest of all" (SOS); UA: P2 "unusual wiring", quieter than T / P1, polarity may invert at
+  extremes, and no slight HF roll-off with the filter off (all as recorded in
+  `prototypes/research/culture-vulture-controls.md`; the UA page returned HTTP 403 on 20 Nov 2026, so it was not
+  re-read). The Mastering Plus manual puts frequency doubling on P2 / P3 "around 0.1mA" (M-MP p.6). "High bias" is
+  low current on this reverse-acting control.
+
+The only wiring-level statements found are forum speculation (GroupDIY, read 20 Nov 2026; S8 in #102):
+- thread 42421, tardishead, 23 Dec 2010: "So in triode mode the screen grid and suppressor grid would be tied to
+  the plate." and "P1 the suppessor to cathode and the screen through a resistor to B+" — "I would imagine", "Not
+  sure about the Pentode 2 mode".
+- thread 27906, Sorr, 30 May 2008, not identified as this unit ("I have forgotten the effect of the second pentode
+  mode"): "The second pentode mode could alter the screen volts (probably lower)." and "It could also disconnect
+  the screen bypass cap?"
+- thread 42421, 0dbfs, 23 Dec 2010, from a photo: "Looks like the bias pot is dual ganged with the meter in series."
+
+| mode | wiring | basis | label | confidence | status |
+|---|---|---|---|---|---|
+| T | **g2 + g3 strapped to the plate through 100 Ω (`Rstrap`), no screen supply** | tardishead (speculation); the 100 Ω stopper is #102's standard-practice value | inferred (speculation + practice) | low | **v1** |
+| T | g2 → plate, g3 → cathode | the other common triode strapping [our note] | inferred | low | not implemented: in this model it differs only in how Ik splits between plate and screen, which are tied (below) |
+| P1 | **g3 → cathode, g2 at a stiff 120 V** | tardishead (g3 → cathode); 120 V is the GE / Raytheon typical screen voltage (S9) | inferred | low | **v1, the default, unchanged since #118** |
+| P1 | g3 → cathode, g2 through a dropping resistor to B+ | tardishead (speculation) | inferred | low | not implemented: no source gives the resistor or a bypass |
+| P2 | **g3 → ground (so Vg3k = −Vk), g2 at the stiff 120 V** | #102 E9: of the hypotheses tried, the only one showing all three documented traits | **our hypothesis** | low | **v1** |
+| P2 | lower screen volts, or the screen bypass removed | Sorr (speculation, not this unit) | hypothesis | very low | #102 E9 tried a 1 MΩ unbypassed and a 470k bypassed screen: neither shows the traits |
+| P2 | g3 → g1 (signal on g3) | research note [our hypothesis] | hypothesis | very low | #102 E9: fails the traits |
+| P2 | g3 → plate | — | hypothesis | — | #102 E9: no DC solution |
+
+CG3 placement (a modelling choice, not a value): the 3.4 pF g3 input capacitance goes g3 → k in T and P2, as in
+`fit6as6/results/6AS6_fit.inc`; only P1, where g3 is the cathode, keeps #118's g3 → g2. No mode shorts a valve
+capacitance (tested). The ngspice subckt therefore comes in two variants, `models/6as6_dual.inc` (P1, unchanged)
+and `models/6as6_dual_cg3k.inc` (T, P2), generated from the same expressions.
+
+### Operating points and small signal (`python -m dk6as6.modes` → `modes.json`; DK, standard 8×)
+Rk is solved for the target cathode current in each mode, so `bias` stays the meter reading (Ik = Ip + Ig2). In T
+the whole of Ik flows through Ra (the screen is on the plate side), so Va falls by Ra = 270 V per mA against ~150 V
+per mA in P1 (only Ip flows in Ra there).
+
+| mode | bias | Rk | Va | Vk | Vg2k | Vg3k | Ip | Ig2 | gain 1 kHz | polarity | 20 kHz re 1 kHz |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| P1 | 0.1 mA | 52.768 kΩ | 182.36 V | 5.277 V | 114.72 V | 0.000 V | 0.0653 mA | 0.0347 mA | 6.99 dB | inverting | -0.000 dB |
+| P1 | 0.25 mA | 19.129 kΩ | 156.99 V | 4.782 V | 115.22 V | 0.000 V | 0.1593 mA | 0.0907 mA | 15.22 dB | inverting | -0.003 dB |
+| P1 | 0.45 mA | 9.873 kΩ | 126.07 V | 4.443 V | 115.56 V | 0.000 V | 0.2738 mA | 0.1762 mA | 19.87 dB | inverting | -0.004 dB |
+| P1 | 0.6 mA | 7.111 kΩ | 105.75 V | 4.267 V | 115.73 V | 0.000 V | 0.3491 mA | 0.2509 mA | 21.58 dB | inverting | -0.004 dB |
+| T | 0.1 mA | 80.168 kΩ | 173.00 V | 8.017 V | 164.98 V | 164.980 V | 0.0707 mA | 0.0293 mA | 6.18 dB | inverting | +0.005 dB |
+| T | 0.25 mA | 21.499 kΩ | 132.50 V | 5.375 V | 127.12 V | 127.118 V | 0.1766 mA | 0.0734 mA | 15.49 dB | inverting | -0.003 dB |
+| T | 0.45 mA | 5.895 kΩ | 78.50 V | 2.653 V | 75.83 V | 75.834 V | 0.3173 mA | 0.1327 mA | 22.22 dB | inverting | -0.010 dB |
+| T | 0.6 mA | 1.581 kΩ | 38.00 V | 0.949 V | 37.03 V | 37.033 V | 0.4211 mA | 0.1789 mA | 26.32 dB | inverting | -0.019 dB |
+| P2 | 0.1 mA | 52.581 kΩ | 189.87 V | 5.258 V | 114.74 V | -5.258 V | 0.0375 mA | 0.0625 mA | -7.36 dB | non-inverting | -0.003 dB |
+| P2 | 0.25 mA | 19.057 kΩ | 174.05 V | 4.764 V | 115.24 V | -4.764 V | 0.0961 mA | 0.1539 mA | -4.78 dB | non-inverting | -0.005 dB |
+| P2 | 0.45 mA | 9.831 kΩ | 155.12 V | 4.424 V | 115.58 V | -4.424 V | 0.1662 mA | 0.2838 mA | -1.09 dB | non-inverting | -0.006 dB |
+| P2 | 0.6 mA | 7.079 kΩ | 142.73 V | 4.247 V | 115.75 V | -4.247 V | 0.2121 mA | 0.3879 mA | 1.92 dB | non-inverting | -0.006 dB |
+
+- **T reaches 0.1–0.6 mA** with Rk 80.2–1.58 kΩ (#102: "T 80k down to 1.6k"; tested). **P2** needs nearly P1's Rk
+  (52.6–7.08 kΩ), since its screen takes the current its plate loses.
+- **P2 is the quiet mode**, as documented (UA, SOS): its small-signal gain is 14–20 dB below P1's at every current
+  (−7.4 to +1.9 dB against +7.0 to +21.6 dB). #102 E9 gave −4 to −6 dB at 0.15–0.3 mA; the DK stage gives −6.24 to
+  −3.98 dB there.
+- **P2 is non-inverting** where P1 and T invert: with g3 on ground, Vg3k = −Vk, so a rise on g1 raises Vk and cuts
+  the plate's share faster than it raises the cathode current. UA records that P2's polarity "may invert at
+  extremes"; here it is inverted relative to P1 / T at small signal at every current. This is a property of the hypothesis, not a
+  measurement.
+- **HF roll-off.** The UA manual records a slight HF roll-off with the filter off except in P2. The stage alone
+  rolls off by at most 0.019 dB at 20 kHz in every mode (T at 0.6 mA), so if the unit's roll-off is real it comes
+  from somewhere this stage does not model (the filter's "off" position, the output stage or #103's network), not
+  from the mode wiring.
+
+### Harmonic profile (1 kHz, 0.5 / 2 / 8 V peak in; `modes.json` has 0.05–8 V at ten currents)
+"even − odd" is the energy of H2 + H4 over H3 + H5.
+
+| mode | bias | 0.5 V: H2 / H3 dBc, THD | 2 V | 8 V | even − odd at 0.5 / 2 / 8 V |
+|---|---|---|---|---|---|
+| T | 0.1 mA | -58.4 / -96.8, 0.121 % | -46.2 / -72.6, 0.489 % | -32.4 / -45.8, 2.46 % | +38.4 / +26.4 / +13.4 dB |
+| T | 0.25 mA | -53.9 / -94.3, 0.203 % | -41.7 / -70.0, 0.821 % | -27.8 / -42.5, 4.16 % | +40.4 / +28.3 / +14.7 dB |
+| T | 0.45 mA | -46.6 / -96.4, 0.47 % | -34.4 / -71.5, 1.92 % | -14.5 / -23.7, 20.2 % | +49.8 / +37.1 / +9.3 dB |
+| T | 0.6 mA | -38.2 / -68.2, 1.23 % | -18.2 / -22.7, 16.4 % | -8.1 / -26.2, 40.3 % | +30.0 / +4.0 / +16.6 dB |
+| P1 | 0.1 mA | -58.5 / -86.1, 0.119 % | -45.9 / -61.6, 0.512 % | -23.9 / -29.0, 7.43 % | +27.6 / +15.7 / +5.2 dB |
+| P1 | 0.25 mA | -76.2 / -81.3, 0.0177 % | -72.7 / -56.8, 0.147 % | -24.8 / -25.3, 8.17 % | +5.0 / -15.0 / +0.9 dB |
+| P1 | 0.45 mA | -47.0 / -75.4, 0.446 % | -35.3 / -51.1, 1.75 % | -41.2 / -21.4, 8.9 % | +28.4 / +15.8 / -9.9 dB |
+| P1 | 0.6 mA | -40.1 / -72.9, 0.987 % | -28.4 / -48.6, 3.84 % | -27.5 / -19.6, 11.9 % | +32.8 / +20.3 / -5.4 dB |
+| P2 | 0.1 mA | -13.7 / -59.1, 20.5 % | -1.8 / -33.5, 81.3 % | 17.8 / 2.9, 829 % | +45.4 / +31.7 / +14.8 dB |
+| P2 | 0.25 mA | -8.5 / -52.7, 37.8 % | 4.1 / -28.1, 161 % | 36.9 / 13.1, 7.45e+03 % | +44.2 / +32.3 / +22.9 dB |
+| P2 | 0.45 mA | -7.7 / -45.6, 41 % | 6.3 / -20.5, 207 % | 25.4 / -18.5, 1.98e+03 % | +37.9 / +26.8 / +27.8 dB |
+| P2 | 0.6 mA | -9.0 / -44.0, 35.5 % | 5.7 / -18.2, 194 % | 21.3 / -15.7, 1.23e+03 % | +35.0 / +23.9 / +26.1 dB |
+
+- **T is even-dominant at every current and drive** (even − odd +4.0 to +57 dB over the whole grid), as documented
+  ("even harmonics", M-ORIG; "mainly even-order harmonics", SOS). Tested (`test_mode_harmonic_character`).
+- **P1 is not reliably "odd"**, as #102 already found: H3 leads only near the H2 null (0.25 mA at 2 V: −15 dB) and
+  at 8 V from 0.3 mA up. Not asserted in the tests.
+- **P2 doubles the frequency.** H2 ≥ H1 from 1.5 V at 0.2–0.6 mA, from 2 V at 0.15 mA and from 3 V at 0.1 mA; above
+  2–6 V the fundamental *falls* as the drive rises (the "inverted dynamics" of M-MP's P2 / M-S15's SQ3):
+
+  | P2 bias | H2 ≥ H1 from (drive grid 0.05–8 V) | H1 peaks at | H1 there |
+  |---|---|---|---|
+  | 0.1 mA | 3 V | 4 V | 1.241 V |
+  | 0.15 mA | 2 V | 4 V | 1.362 V |
+  | 0.2 mA | 1.5 V | 4 V | 1.362 V |
+  | 0.25 mA | 1.5 V | 4 V | 1.293 V |
+  | 0.3 mA | 1.5 V | 3 V | 1.267 V |
+  | 0.35 mA | 1.5 V | 3 V | 1.264 V |
+  | 0.4 mA | 1.5 V | 3 V | 1.273 V |
+  | 0.45 mA | 1.5 V | 2 V | 1.313 V |
+  | 0.5 mA | 1.5 V | 2 V | 1.437 V |
+  | 0.6 mA | 1.5 V | 6 V | 2.009 V |
+
+  Against the sources: frequency doubling appears, but **not specifically at the documented currents** (0.15–0.2 mA,
+  M-ORIG §3; "around 0.1mA", M-MP p.6): the model doubles at every current, and needs *more* drive at 0.1 mA than at
+  0.45 mA. Likewise the documented "more drastic distortion at high bias settings" (low current) is the reverse
+  here: P2's THD at 0.5 V is 20.5 % at 0.1 mA and 41 % at 0.45 mA. No unit has been measured, so neither is a match
+  or a mismatch to the inspiring unit, only to its manuals' wording.
+- **P2 depends on the fit's g3 toe.** With the #51 parameters (`refit_51`, the same data with KR = 0, XA = 1) the same
+  P2 circuit gives +4.6 to +5.8 dB more small-signal gain and **no doubling at 2 V** (H2 −4.4 / −2.2 / −0.4 dBc at
+  0.15 / 0.25 / 0.45 mA, against +0.8 / +4.1 / +6.3 dBc with `dual_control`; scratch run, not committed). The
+  mechanism (g1 and g3 acting on the plate current in opposite directions through Vk) is structural; its size is
+  not settled by the fit.
+
+### Where each mode sits in the fit (`modes.json` "swing" / "outside_fit"; fit ranges from `fit6as6/README.md`)
+The #55 fit's data cover Ec2 60–140 V, Ec1 −5…0 V, Ec3 about −9…+12 V (to −14 V only at Ec2 = 120 V, Ec1 = −2 V),
+Eb 20–435 V, with no positive-g1 data and no grid current (Ig1 = Ig3 = 0 here).
+
+| | P1 | T | P2 |
+|---|---|---|---|
+| Vg3k | 0 (the fitted Ec3 = 0 families) | = Vg2k: +37…+165 V at rest, +17…+186 V on the 1 kHz sines while the stage stays physical (below): far above +12 V | = −Vk: −5.26 (0.1 mA) to −4.25 V (0.6 mA) at rest; −7.0…−2.6 V at 2 V, −12.4…−0.0 V at 8 V |
+| what the fit does there | fitted | the share saturates at FMAX (z ≫ 0) and the KR term is off, so Ik = Ik0(Vg1k, Vg2k): Koren's law in g1 and g2 | the g3 cut-off toe, the fit's weakest region: toe points at Ec3 −4.7…−8 V read 1.5–3.1× high (#25; up to 2.4× for #51, not re-measured for #55); gm(g3) bias +3 % at −6…0 V, +74 % below −6 V; Ik drop past cut-off one fitted fraction (KR = 0.27) |
+| Vg2k | 108–120 V (EC2 − Vk) | **> 140 V below ~0.2 mA** (165 V at 0.1 mA), **< 60 V above ~0.52 mA** (37 V at 0.6 mA), at rest | 108–120 V |
+| Vg1k | −5.28 V at rest at 0.1 mA, i.e. just below the lowest fitted Ec1 at ≤ 0.15 mA (as since #110) | −8.0 V at rest at 0.1 mA; **positive** at 0.4 mA / 8 V, 0.45 mA / 8 V, 0.5 mA / 4 V, 0.6 mA / 2 V (below) | as P1 |
+| Ic3 needed? | no: g3 is the cathode | not to first order: a real g3 current would flow into the same strapped node, and only the plate / screen split behind the 100 Ω Rstrap would change (Rstrap · Ig2 ≤ 18 mV at rest) | **no**: Vg3k = −Vk ≤ 0 always (Vk = Rk · Ik ≥ 0), so g3 never collects current |
+| g3 refit needed? | no | no | **probably**, before P2's numbers are relied on (previous section) |
+
+**T at high current and drive leaves the valve law entirely.** With Rk down to 1.6 kΩ there is little cathode
+feedback, so g1 goes positive, and with g2 strapped to the plate the Koren term (floored at Vg2 = 1 mV) still
+conducts as Vg2k reaches 0: E1 → Vg1 for a positive g1, so the screen keeps drawing current with the plate at or below
+the cathode and the plate is driven far negative. Lowest Vak and highest Vg1k over the 1 kHz sines:
+
+| T, bias | 0.5 V in | 2 V | 4 V | 8 V |
+|---|---|---|---|---|
+| 0.25 mA | Vg1k ≤ -5.18 V, Vak ≥ 124 V | Vg1k ≤ -4.60 V, Vak ≥ 114 V | Vg1k ≤ -3.85 V, Vak ≥ 100 V | Vg1k ≤ -2.44 V, Vak ≥ 72 V |
+| 0.35 mA | Vg1k ≤ -3.69 V, Vak ≥ 97 V | Vg1k ≤ -2.93 V, Vak ≥ 82 V | Vg1k ≤ -1.96 V, Vak ≥ 61 V | Vg1k ≤ -0.16 V, Vak ≥ 17 V |
+| 0.4 mA | Vg1k ≤ -2.99 V, Vak ≥ 83 V | Vg1k ≤ -2.15 V, Vak ≥ 65 V | Vg1k ≤ -1.07 V, Vak ≥ 40 V | **Vg1k ≤ +0.57 V, Vak ≥ -24 V** |
+| 0.45 mA | Vg1k ≤ -2.33 V, Vak ≥ 69 V | Vg1k ≤ -1.40 V, Vak ≥ 48 V | Vg1k ≤ -0.21 V, Vak ≥ 18 V | **Vg1k ≤ +0.70 V, Vak ≥ -100 V** |
+| 0.5 mA | Vg1k ≤ -1.70 V, Vak ≥ 55 V | Vg1k ≤ -0.67 V, Vak ≥ 30 V | **Vg1k ≤ +0.54 V, Vak ≥ -12 V** | **Vg1k ≤ +0.88 V, Vak ≥ -213 V** |
+| 0.6 mA | Vg1k ≤ -0.53 V, Vak ≥ 26 V | **Vg1k ≤ +0.57 V, Vak ≥ -29 V** | **Vg1k ≤ +0.95 V, Vak ≥ -259 V** | **Vg1k ≤ +1.56 V, Vak ≥ -746 V** |
+
+A real valve would draw grid current there (clamping g1 near 0 V through Rgs and the coupling network), and no
+electrode below the cathode collects electrons; this model has neither. **These T settings (≥ 0.4 mA at 8 V,
+≥ 0.5 mA at 4 V, 0.6 mA from 2 V) are not physical**, whatever the DK and ngspice agreement below says (both run
+the same law). On these 1 kHz steady-state sines T stays at Vg1k ≤ −0.16 V and Vak ≥ 17 V up to 0.35 mA at every drive
+up to 8 V; with tone onsets from silence the limit is 0.3 mA ("Supported envelope"). Fixing it needs
+either a g1 grid-current model for the 6AS6 (no sheet gives one) or a positive-screen-voltage condition on the
+cathode current: both change the #55 valve law, so they are left to Michael (below), not invented here.
+
+
+### Validation against the same-model ngspice references (`dk/validate.CRIT` unchanged)
+References `spice6as6/reference_dual_{T,P2}_{0.1,0.25,0.45,0.6}mA.json` and `reference_dual_T_0.35mA.json` (added for
+the top of T's envelope; 2.5 h, of which ~2 h is the burst's silent start, as #120's 0.6 mA): ngspice 41, the conda-forge osx-64 build of
+#118 / #120 (under Rosetta), `spice/run_refs.SOLVER` unchanged, the netlists generated from `circuit.VALUES` and
+`circuit.MODES` (`stage_6as6_{T,P2}.cir` are the committed 0.45 mA copies). Each took 1.3–2.4 h, all eight run
+side by side (`run_refs.py dual/T dual/P2`); none needed the solver settings touched. `python -m dk6as6.validate`
+→ `results_T.json`, `results_P2.json` (P1's `results.json` is unchanged, CPU time apart; it and `aliasing.json` were
+regenerated by this branch and compared).
+
+**T**
+
+| criterion | 0.1 mA std 8× | 0.1 mA hq 16× | 0.25 mA std 8× | 0.25 mA hq 16× | 0.35 mA std 8× | 0.35 mA hq 16× | 0.45 mA std 8× | 0.45 mA hq 16× | 0.6 mA std 8× | 0.6 mA hq 16× |
+|---|---|---|---|---|---|---|---|---|---|---|
+| op point, worst rel. (< 0.001) | 1.8e-09 | 1.8e-09 | 1.1e-09 | 1.1e-09 | 2.8e-09 | 2.8e-09 | 1.5e-09 | 1.5e-09 | 7.9e-09 | 7.9e-09 |
+| small signal, stage (< 0.1 dB) | 0.00010 dB | 0.00002 dB | 0.00005 dB | 0.00001 dB | 0.00012 dB | 0.00003 dB | 0.00019 dB | 0.00005 dB | 0.00035 dB | 0.00009 dB |
+| small signal, whole chain (< 0.1 dB) | 0.00076 dB | 0.00108 dB | 0.00084 dB | 0.00110 dB | 0.00088 dB | 0.00111 dB | 0.00092 dB | 0.00112 dB | 0.00101 dB | 0.00114 dB |
+| H2–H5 worst tested, ref > −90 dBc (< 0.1 dB) | 0.00048 dB (H2, 0.05 V; 8 tested) | 0.00050 dB (H5, 8 V; 8 tested) | 0.00037 dB (H4, 8 V; 8 tested) | 0.00036 dB (H4, 8 V; 8 tested) | 0.00180 dB (H5, 8 V; 9 tested) | 0.00178 dB (H5, 8 V; 9 tested) | 0.00390 dB (H4, 2 V; 5 tested; 8 V not compared: exp cap) | 0.00391 dB (H4, 2 V; 5 tested; 8 V not compared: exp cap) | 0.00016 dB (H2, 0.05 V; 3 tested; 2 V, 8 V not compared: exp cap) | 0.00016 dB (H2, 0.05 V; 3 tested; 2 V, 8 V not compared: exp cap) |
+| burst shift / trajectory (< 0.5 % / 0.5 %) | 0.067 % / 0.0075 % | 0.067 % / 0.0075 % | 0.069 % / 0.0076 % | 0.068 % / 0.0076 % | 0.069 % / 0.0077 % | 0.069 % / 0.0077 % | 0.070 % / 0.0077 % | 0.069 % / 0.0077 % | not compared: exp cap (1.25 % / 15.84 %) | not compared: exp cap (1.25 % / 15.84 %) |
+| Newton non-converged (sines + burst) | 0 (max 3 it.) | 0 (max 3 it.) | 0 (max 3 it.) | 0 (max 3 it.) | 0 (max 3 it.) | 0 (max 3 it.) | 0 (max 4 it.) | 0 (max 4 it.) | 0 (max 6 it.) | 0 (max 5 it.) |
+| status (validate.status) | **passed** | **passed** | **passed** | **passed** | **passed** | **passed** | inconclusive, unsupported | inconclusive, unsupported | inconclusive, unsupported | inconclusive, unsupported |
+
+**P2**
+
+| criterion | 0.1 mA std 8× | 0.1 mA hq 16× | 0.25 mA std 8× | 0.25 mA hq 16× | 0.45 mA std 8× | 0.45 mA hq 16× | 0.6 mA std 8× | 0.6 mA hq 16× |
+|---|---|---|---|---|---|---|---|---|
+| op point, worst rel. (< 0.001) | 1.7e-09 | 1.7e-09 | 2.7e-09 | 2.7e-09 | 2.4e-09 | 2.4e-09 | 2.6e-09 | 2.6e-09 |
+| small signal, stage (< 0.1 dB) | 0.00006 dB | 0.00001 dB | 0.00009 dB | 0.00002 dB | 0.00011 dB | 0.00003 dB | 0.00011 dB | 0.00003 dB |
+| small signal, whole chain (< 0.1 dB) | 0.00084 dB | 0.00110 dB | 0.00087 dB | 0.00111 dB | 0.00087 dB | 0.00111 dB | 0.00087 dB | 0.00111 dB |
+| H2–H5 worst tested, ref > −90 dBc (< 0.1 dB) | 0.02467 dB (H4, 0.5 V; 12 tested) | 0.02468 dB (H4, 0.5 V; 12 tested) | 0.03942 dB (H4, 0.5 V; 12 tested) | 0.03944 dB (H4, 0.5 V; 12 tested) | 0.04881 dB (H4, 0.5 V; 13 tested) | 0.04882 dB (H4, 0.5 V; 13 tested) | 0.06713 dB (H4, 0.5 V; 13 tested) | 0.06714 dB (H4, 0.5 V; 13 tested) |
+| burst shift / trajectory (< 0.5 % / 0.5 %) | 0.059 % / 0.0066 % | 0.059 % / 0.0066 % | 0.058 % / 0.0064 % | 0.058 % / 0.0064 % | 0.057 % / 0.0063 % | 0.057 % / 0.0064 % | 0.057 % / 0.0063 %; τ 53 % (**> 1 %**; tail fit 0.03 %) | 0.056 % / 0.0063 %; τ 53 % (**> 1 %**; tail fit 0.03 %) |
+| Newton non-converged (sines + burst) | 0 (max 3 it.) | 0 (max 3 it.) | 0 (max 3 it.) | 0 (max 3 it.) | 0 (max 3 it.) | 0 (max 3 it.) | 0 (max 3 it.) | 0 (max 3 it.) |
+| status (validate.status) | **passed**, unsupported | **passed**, unsupported | **passed**, unsupported | **passed**, unsupported | **passed**, unsupported | **passed**, unsupported | failed, unsupported | failed, unsupported |
+
+- **Statuses** (`validate.status`): a case is `passed` only if every criterion passed, `failed` if any failed, and
+  `inconclusive` if a criterion could not be compared (it reads `None`). A non-pass is never counted as a pass, and
+  `python -m dk6as6.validate` fails if any *supported* setting is not `passed`. Unsupported settings are run as
+  experimental and recorded with `"supported": false`.
+  - *Inconclusive: ngspice's exp() cap* (T 0.45 and 0.6 mA, outside T's envelope). ngspice 41 clamps a B-source
+    `exp()` argument at 227.9559 (checked: `ln(1+exp(300))` evaluates to 227.9559), so the subckt's Koren term
+    `ln(1 + exp(KP (1/MU + Vg1k/max(Vg2k, 1 mV))))` stops being the DK law (an exact softplus) once Vg1k / Vg2k passes
+    ~1.5: a positive g1 over a screen near 0 V. `validate.exp_capped` detects it on exactly the unphysical cases
+    (0.45 mA / 8 V, 0.6 mA / 2 and 8 V, the 0.6 mA burst), never inside any supported envelope (tested). There the two
+    laws disagree (up to 13.8 dB in H1; burst shift 1.25 %, trajectory 15.8 % at 0.6 mA), so those criteria are not
+    compared and the cases are `inconclusive`. Emitting a stable softplus in the subckt and regenerating would make the
+    reference agree, but only about a stage that is outside the valve law anyway (it would not make these settings
+    supported); it is left for the C++ port's reference work.
+  - *Failed: P2's recovery τ at 0.6 mA* (CRIT's 1 %: DK 41.7 ms against ngspice 87.8 ms). This is the only finite τ
+    among the P1 and P2 references, and the metric, not the stage, is what differs: it starts from the 30.5 ms sample,
+    whose cycle mean still straddles the burst's end (ngspice +0.110 mV, DK +0.187 mV above rest), and takes 1/e of
+    that. From 31 ms on the two tails agree to ≤ 0.28 % at every current, and a log-linear fit over 31–118 ms gives the
+    same decay constant to ≤ 0.03 % (`tail_tau_fit_rel`; 87.61 ms ngspice, 87.58 ms DK). The criterion and the shared
+    metric (`spice/run_refs.burst_metrics`, also the 12AX7 stage's and P1's) are left as they are, the case is
+    `failed`, and CI carries it: `test_p2_0p6mA_burst_recovery_tau_crit` is a strict xfail (it turns CI red if it
+    starts passing) beside `test_p2_0p6mA_burst_shift_trajectory_and_tail`, which passes. P2 is unsupported anyway.
+- **P2's H4 at 0.5 V** is the largest tested deviation of any mode (0.025–0.067 dB, rising with current; P1 and T
+  ≤ 0.004 dB), within the 0.1 dB criterion: the analysis window, not the method or the reference (TIGHT, below).
+- **Newton:** zero non-converged samples on the 0.05 / 0.5 / 2 / 8 V sines and the 4 V burst in every mode at every
+  current, standard and hq; at most 3 iterations in P1, P2 and T up to 0.35 mA, 4 in T at 0.45 mA, 6 at 0.6 mA (the
+  unphysical cases). Same contract as `dk6as6/solver.py` / #7; nothing in the solver changed.
+- **Silence:** `test_silence_has_no_startup_thump` (< 1 µV over 100 ms) passes in all three modes at 0.1, 0.45 and
+  0.6 mA, standard and hq.
+- **CI** runs P1 as before, T at standard at 0.25 mA (its highest reference inside the envelope), the P2 0.6 mA burst,
+  the envelope's onset checks, and checks the
+  committed `results_*.json` statuses; `python -m dk6as6.validate` runs every mode at every bias, standard and hq.
+
+### TIGHT convergence of the new references (`spice6as6/convergence_dual_{T,P2}_*mA.json`)
+Partial; completing it is #125. Started for T and P2 at 0.25 and 0.45 mA only (`run_refs.py --convergence dual/T:0.25 ...`, `run_refs.TIGHT`, ngspice
+41), to bound the run time; 0.1 and 0.6 mA were not run.
+
+| change under TIGHT | T 0.25 mA | T 0.45 mA | P2 0.25 mA | P2 0.45 mA |
+|---|---|---|---|---|
+| op point, AC | **not run** (below) | 0 / 0 dB | 0 / 0 dB | 0 / 1e-8 dB |
+| H2–H5 with reference above −90 dBc, max | — | 8.2e-3 dB (H4, 2 V, −80.0 dBc) | 3.5e-3 dB (H5, 2 V, −68.5 dBc) | 3.2e-3 dB (H3, 0.05 V, −85.6 dBc) |
+| H4 at 0.5 V (P2's largest DK deviation) | — | — | 1.3e-3 dB | 8.0e-4 dB |
+| burst shift / trajectory | — | 1.4e-7 / 1.0e-7 | **not run** (below) | **not run** |
+
+- **T 0.25 mA:** ngspice's TIGHT transient aborts at its first step ("Timestep too small", node in1, at 2.5 ns), the
+  first-step failure #118 met with other settings; the reference itself runs at the unchanged #5 settings. Nothing
+  was loosened to make TIGHT run.
+- **P2:** both TIGHT runs finished their main analyses, then were terminated abnormally (not by ngspice) 3.5 h in,
+  during the burst. Their op / AC / sine outputs were analysed with `run_refs`'s own functions (`load_wrdata`,
+  `harmonics`) into the convergence JSONs, which say so in a `note` and have `burst: null`. Rerunning would take
+  another 4+ h and was not done.
+- So above −90 dBc these references move by ≤ 8.2e-3 dB (T), ≤ 3.5e-3 dB (P2), under a tenth of the 0.1 dB criterion,
+  but more than P1's ≤ 1.1e-3 dB.
+- **P2's H4 at 0.5 V is not reference error** (TIGHT moves it by ≤ 1.3e-3 dB against a DK deviation of 0.025–0.067
+  dB), and not the DK time step (standard and hq agree to 1e-5 dB). It is the analysis window: P2 rectifies strongly
+  (H2 −8.5 dBc at 0.5 V), so the 0.1 s coupling caps are still settling, and the DK's input starts through the
+  interpolator's ramp where ngspice's starts abruptly. The same reference reads H3 0.04 dB and H5 5.7 dB apart over
+  0.3–0.4 s and 0.4–0.5 s, and the DK's H4 moves by 0.037 dB from a 0.5 s to a 1 s sine (scratch runs). A setup
+  limit for strongly rectifying modes, within the criterion; not changed here.
+
+### Aliasing (`python -m dk6as6.aliasing` → `aliasing_{T,P2}.json`; 8× FIR, 48 kHz, full sweep, 1 s windows)
+Worst total over the sweep (1037–19037 Hz):
+
+| mode | 0.1 mA, 2 V | 0.1 mA, 8 V | 0.25 mA, 2 V | 0.25 mA, 8 V | 0.45 mA, 2 V | 0.45 mA, 8 V | 0.6 mA, 2 V | 0.6 mA, 8 V |
+|---|---|---|---|---|---|---|---|---|
+| P1 | -140.31 | -112.50 | -147.99 | -107.18 | -130.37 | -100.96 | -123.59 | -98.44 |
+| T | -140.73 | -125.25 | -136.55 | -121.08 | -129.32 | -56.71 (18037 Hz) | -55.38 | -54.77 (18037 Hz) |
+| P2 | -97.25 | -81.21 (16037 Hz) | -91.24 | -61.55 | -89.01 | -63.50 | -89.53 | -65.77 |
+
+(dBc; worst tone 19037 Hz unless shown. P1 is #120's sweep, reproduced byte for byte. T swept since the review at
+0.3 mA, the top of its envelope: −135.02 dBc at 2 V, −119.64 dBc at 8 V; and at 0.35 mA: −133.35 / −117.98 dBc. CI checks
+the regression baselines at T 0.3 mA / 8 V and P2 0.25 mA / 8 V, and the gate on the committed sweeps.)
+
+- **Two separate things** (PR #121 review). `aliasing.LIMIT_DBC` (the full sweep's worst + 3 dB, as for P1) are
+  regression baselines: chosen from the measurements, they show reproducibility, not quality. The quality gate is
+  `aliasing.QUALITY_GATE_DBC`, the shipped 12AX7 stage's committed budget for the same setting, filter and drive
+  (`dk/aliasing.LIMIT_DBC["standard", "fir"]`: −118.3 dBc at 2 V, −48.6 dBc at 8 V, #6 / #96), which no 6AS6 result
+  chose. It is an engineering budget, not an audibility threshold: the repo has no calibrated listening criterion
+  and #96 explicitly declined to invent a dBc cutoff for "inaudible", so neither does this. Every supported setting
+  must meet it (`test_every_supported_setting_meets_the_quality_gate`).
+- **P1 and T (to 0.3 mA) meet the gate** with room: T ≤ −135.0 dBc at 2 V and ≤ −119.6 dBc at 8 V (all at the
+  resampler floor; internal ≤ −188 dBc), better than P1 at the same currents. T's unphysical cases are at −55 to
+  −57 dBc; they are outside the envelope, and their baselines are a regression ratchet only.
+- **P2 fails the gate at 2 V at every current** (−89.0 to −97.3 dBc against −118.3), which is one reason it is
+  experimental only (`test_p2_fails_the_quality_gate`). At 2 V it is all resampler (internal ≤ −171 dBc); at 8 V
+  (−61.5 to −81.2 dBc) internal and resampler are both large. hq (16×) removes the internal part (0.25 mA / 8 V:
+  internal −63.1 → −127.1 dBc) but not the resampler part (−66.7 → −66.9 dBc; 0.45 mA / 2 V −89.0 dBc at both;
+  scratch run), so higher oversampling is not a demonstrated fix.
+- **Supplementary, output-relative** (`python -m dk6as6.aliasing --output-relative` →
+  `aliasing_output_relative.json`): the dBc denominator is the fundamental, which P2's doubling suppresses at 1 kHz,
+  so the same alias total was also taken relative to the stage's whole in-band output (fundamental + harmonics,
+  20 Hz–20 kHz) at every worst tone. At those tones (16–19 kHz) every harmonic is above 20 kHz, so the in-band output
+  *is* the fundamental and the two figures are equal in every mode (harmonics +0.00 dB re H1). **P2's poor figures
+  are therefore not a denominator effect**: its 19 kHz alias energy is −61.5 to −97 dB below everything the stage puts
+  in the audio band.
+
+### For Michael
+1. **T is supported only to 0.3 mA.** Above it an 8 V step onset takes g1 positive, and from 0.4 mA a steady 8 V drive
+   also drives the plate below the cathode (−55 dBc aliasing). Making 0.3–0.6 mA usable in T needs a positive-g1 /
+   grid-current treatment (#112) or a screen-voltage condition in the #55 law (no data for either). The Bias knob in
+   T (knob 1 to 4.87) is a panel question (#115). The runtime guard flags any excursion in the meantime.
+2. **P2 is experimental only:** our hypothesis, the fit's weakest region (the #51 parameters remove its doubling at
+   2 V; refit #123), its doubling not confined to the documented 0.15–0.2 mA and its distortion growing with current
+   against the manuals, its 2 V aliasing above the gate (the resampler's stopband; not fixed by hq), and its 0.6 mA
+   burst τ failure.
+3. **The burst τ metric** starts on a sample that straddles the burst's end: #124.
+4. **TIGHT** is partial: #125 (T 0.45 mA complete; P2 0.25 / 0.45 mA main analyses only; T 0.25 mA fails at
+   ngspice's first TIGHT step; 0.1 / 0.3 / 0.35 / 0.6 mA not run).
+5. **The Rosetta ngspice hang** is #126; every call now has a wall-clock timeout with kill and a bounded reap.
+   **macOS fullstage headroom** is #127.
+6. **T wiring alternative** (g3 → cathode instead of the plate) and **P1 with a screen resistor** were not built;
+   neither has a sourced value.
+7. **#119's LPF** (`dk6as6/lpf.py`, `RESULTS-lpf.md`) forwards `mode=` to this Stage, but its measured evidence is P1
+   only; T / P2 through the filter are not measured.

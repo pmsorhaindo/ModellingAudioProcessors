@@ -12,15 +12,22 @@ so every passive below is INFERRED from the manuals and datasheets, not measured
   Rl 1M                    next-stage grid leak (the #102 table's Zout figures include a 1 MOhm load).
   EC2 120 V                screen at the datasheet typical condition, stiff (S9; GE ET-T706,
                            https://frank.pocnet.net/sheets/084/6/6AS6.pdf p.1).
-  g3 -> cathode            P1 wiring: S8 speculation, the datasheet's standard pentode connection. Low confidence.
-                           T (g2 + g3 strapped to the plate) and P2 are #111.
+  Modes (#111, MODES)      the valve's g2 / g3 connection per Distortion-switch position. No source states how T / P1 /
+                           P2 are wired (dk6as6/RESULTS.md, "Modes (#111)", has the sourced / inferred labels):
+                           P1 g3 -> cathode, g2 the stiff EC2: S8 speculation, the datasheet's standard pentode
+                              connection. Low confidence. The default; unchanged since #118.
+                           T  g2 + g3 strapped to the plate through Rstrap = 100 Ohm (no EC2): S8 speculation plus
+                              standard triode-strapping practice (#102). Low confidence.
+                           P2 g3 -> ground (so Vg3k = -Vk), g2 the stiff EC2: OUR hypothesis (#102 E9), the only one
+                              of those tried that shows all three documented P2 traits. Low confidence.
   Inter-electrode caps     GE sheet p.1 values (with external shield): g1 input 4p, g3 input 3.4p, output 3p,
                            g1-p 0.02p, g1-g3 0.15p. Placed as in prototypes/fit6as6/results/6AS6_fit.inc (g1 input,
                            output -> cathode) except the g3 input capacitance (g3 to all other electrodes), which
                            6AS6_fit.inc and #26 put g3 -> k: with g3 on the cathode that is a short, leaving the cathode
                            with no capacitance to AC ground (and ngspice 41's transient then fails at its first step
-                           at the #5 tolerances). Here CG3 goes g3 -> g2, the screen, an AC ground like the heater
-                           and shield it also faces. CG1G3 sits g1-k with g3 on the cathode.
+                           at the #5 tolerances). So in P1 CG3 goes g3 -> g2, the screen, an AC ground like the heater
+                           and shield it also faces; in T and P2, where g3 is not on the cathode, it goes g3 -> k as in
+                           6AS6_fit.inc (MODES[mode]["cg3"]). CG1G3 sits g1-k in P1.
   Rs 1k, Rgs 68k           NOT in the #102 table: the test bench's source resistance and the grid stopper, kept
                            from the 12AX7 stage (dk/circuit.py, our conventional round values). Ig1 = 0, so neither
                            has any DC effect.
@@ -33,8 +40,9 @@ incidence Nv), so with  w = S^-1 (Nx^T x - Ni^T i_nl + Nu^T u):
      v_nl   = G x + H u - K i_nl,   K = Nv' Si Ni'^T  (4x2),   G = Nv' Si Nx'^T,  H = Nv' Si Nu'^T
      x[n+1] = A x + B u + C i_nl,   C = -2 Gx Nx' Si Ni'^T
      y      = D x + E u + F i_nl,   F = -No' Si Ni'^T
-A, B, D, E as in dk/circuit.py. u = (vin, HT, EC2). g2 is a source node, so Vg2k = EC2 - Vk comes out of the same
-equations; g3 is the cathode node, so the Vg3k row of Nv is zero and Vg3k = 0.
+A, B, D, E as in dk/circuit.py. u = (vin, HT, EC2) in P1 and P2, (vin, HT) in T. In P1 / P2 g2 is a source node, so
+Vg2k = EC2 - Vk comes out of the same equations; in T it is a node strapped to the plate. In P1 g3 is the cathode node,
+so the Vg3k row of Nv is zero and Vg3k = 0; in P2 g3 is ground, so that row is -1 on k; in T g3 is the g2 node.
 """
 import numpy as np
 from dk.circuit import companion_g, SMALL_C  # noqa: F401  (same companion model and pre-warp rule)
@@ -43,58 +51,83 @@ NODES = ["src", "in1", "gl", "g", "k", "a", "out", "ht", "g2"]
 PASSIVES = ("HT", "Rs", "Cin", "Rg", "Rgs", "Ra", "Cout", "Rl")   # Rk is solved per bias (stage.cathode_resistor)
 VALUES = dict(HT=200.0, Rs=1e3, Cin=100e-9, Rg=1e6, Rgs=68e3, Ra=270e3, Cout=100e-9, Rl=1e6,
               EC2=120.0,                                                                   # stiff screen supply
-              CG1K=4e-12, CG3=3.4e-12, CPK=3e-12, CG1P=0.02e-12, CG1G3=0.15e-12)          # GE sheet p.1
-# The valve's pins -> stage nodes. P1: g3 on the cathode. One map for the DK netlist and the ngspice subckt
-# (spice6as6/run_refs.py), in the subckt's pin order.
-PINS = dict(P="a", G2="g2", G3="k", G1="g", K="k")
-VALVE_CAPS = (("CG1K", "G1", "K"), ("CG3", "G3", "G2"), ("CPK", "P", "K"), ("CG1P", "G1", "P"),
-              ("CG1G3", "G1", "G3"))           # (VALUES key, pin+, pin-), as inside the subckt
-U = ["src", "ht", "g2"]                          # ideal voltage sources to ground: u = [vin, HT, EC2]
-NLV = [(PINS[p], "k") for p in ("G1", "G2", "G3", "P")]   # controlling voltages Vg1k, Vg2k, Vg3k, Vak
+              CG1K=4e-12, CG3=3.4e-12, CPK=3e-12, CG1P=0.02e-12, CG1G3=0.15e-12,          # GE sheet p.1
+              Rstrap=100.0)                                       # T: g2 + g3 -> plate stopper (#102, inferred)
+# The Distortion switch (#111): per mode, the valve's pins -> stage nodes (None = ground), in the subckt's pin order;
+# the screen feed ("EC2": the g2 node is the stiff supply; "strap": the g2 node is tied to the plate through Rstrap);
+# and the pin CG3 goes to from g3. One table for the DK netlist and the ngspice netlists (spice6as6/run_refs.py).
+MODES = {
+    "P1": dict(pins=dict(P="a", G2="g2", G3="k", G1="g", K="k"), screen="EC2", cg3="G2"),
+    "T": dict(pins=dict(P="a", G2="g2", G3="g2", G1="g", K="k"), screen="strap", cg3="K"),
+    "P2": dict(pins=dict(P="a", G2="g2", G3=None, G1="g", K="k"), screen="EC2", cg3="K"),
+}
+MODE = "P1"                                      # the default (#118)
+VALVE_CAPS = ("CG1K", "G1", "K"), ("CPK", "P", "K"), ("CG1P", "G1", "P"), ("CG1G3", "G1", "G3")   # + CG3, per mode
 NLI = [("a", "k"), ("g2", "k")]                  # valve currents Ip (a->k), Ig2 (g2->k)
 OUT_NAMES = ["out", "g", "k", "a", "gl"]
 
 
-def valve_caps(v=VALUES):
-    """The inter-electrode capacitances as (node+, node-, C) of the stage."""
-    return [(PINS[a], PINS[b], v[k]) for k, a, b in VALVE_CAPS]
+def valve_cap_pins(mode=MODE):
+    """The inter-electrode capacitances as (VALUES key, pin+, pin-), as inside the subckt, in the #118 order."""
+    return [VALVE_CAPS[0], ("CG3", "G3", MODES[mode]["cg3"])] + list(VALVE_CAPS[1:])
 
 
-def netlist(rk, v=VALUES):
-    """(resistors, capacitors, sources, NLV, NLI, outputs) with cathode resistor rk (ohms)."""
+def valve_caps(v=VALUES, mode=MODE):
+    """The inter-electrode capacitances as (node+, node-, C) of the stage (a grounded end last)."""
+    pins = MODES[mode]["pins"]
+    return [(pins[a], pins[b], v[k]) if pins[a] is not None else (pins[b], None, v[k])
+            for k, a, b in valve_cap_pins(mode)]
+
+
+def sources_of(mode=MODE):
+    """The ideal voltage sources to ground: u = [vin, HT, EC2] (P1, P2) or [vin, HT] (T, no screen supply)."""
+    return ["src", "ht", "g2"] if MODES[mode]["screen"] == "EC2" else ["src", "ht"]
+
+
+def nlv(mode=MODE):
+    """The controlling voltages Vg1k, Vg2k, Vg3k, Vak as (node+, node-) pairs (None = ground)."""
+    pins = MODES[mode]["pins"]
+    return [(pins[p], pins["K"]) for p in ("G1", "G2", "G3", "P")]
+
+
+def netlist(rk, v=VALUES, mode=MODE):
+    """(resistors, capacitors, sources, NLV, NLI, outputs) with cathode resistor rk (ohms), wired as `mode`."""
     R = [("src", "in1", v["Rs"]), ("gl", None, v["Rg"]), ("gl", "g", v["Rgs"]), ("ht", "a", v["Ra"]),
          ("k", None, rk), ("out", None, v["Rl"])]
-    Cs = [("in1", "gl", v["Cin"]), ("a", "out", v["Cout"])] + valve_caps(v)
+    if MODES[mode]["screen"] == "strap":
+        R.append(("g2", "a", v["Rstrap"]))
+    Cs = [("in1", "gl", v["Cin"]), ("a", "out", v["Cout"])] + valve_caps(v, mode)
     OUT = [(n, None) for n in OUT_NAMES]
-    return R, Cs, U, NLV, NLI, OUT
+    return R, Cs, sources_of(mode), nlv(mode), NLI, OUT
 
 
-def sources(v=VALUES):
-    """u without the input: (HT, EC2)."""
-    return np.array([v["HT"], v["EC2"]])
+def sources(v=VALUES, mode=MODE):
+    """u without the input: (HT, EC2), or (HT,) in T."""
+    return np.array([v["HT"], v["EC2"]] if MODES[mode]["screen"] == "EC2" else [v["HT"]])
 
 
 def _inc(pairs):
     M = np.zeros((len(pairs), len(NODES)))
     for r, (p, q) in enumerate(pairs):
-        M[r, NODES.index(p)] += 1.0
+        if p is not None:
+            M[r, NODES.index(p)] += 1.0     # p is None: Vg3k with g3 on ground (P2)
         if q is not None:
-            M[r, NODES.index(q)] -= 1.0     # p == q (Vg3k with g3 on the cathode): a zero row
+            M[r, NODES.index(q)] -= 1.0     # p == q (Vg3k with g3 on the cathode, P1): a zero row
     return M
 
 
-def _nu():
+def _nu(U):
     Nu = np.zeros((len(U), len(NODES)))
     for r, n in enumerate(U):
         Nu[r, NODES.index(n)] = 1.0
     return Nu
 
 
-def analog_response(f, J, rk):
+def analog_response(f, J, rk, mode=MODE):
     """Exact (continuous-time) small-signal response v(out)/v(src) at frequencies f, with the valve linearised to
     the 2x4 Jacobian J = d(Ip, Ig2)/d(Vg1k, Vg2k, Vg3k, Vak) of its operating point (what ngspice's .ac computes)."""
-    R, Cs, _, NV, NI, OUT = netlist(rk)
-    Nr, Nx, Nv, Ni, Nu = _inc([(p, q) for p, q, _ in R]), _inc([(p, q) for p, q, _ in Cs]), _inc(NV), _inc(NI), _nu()
+    R, Cs, U, NV, NI, OUT = netlist(rk, mode=mode)
+    Nr, Nx, Nv, Ni, Nu = _inc([(p, q) for p, q, _ in R]), _inc([(p, q) for p, q, _ in Cs]), _inc(NV), _inc(NI), _nu(U)
     Y0 = Nr.T @ np.diag([1.0 / r for _, _, r in R]) @ Nr + Ni.T @ np.asarray(J) @ Nv
     Yc = Nx.T @ np.diag([c for _, _, c in Cs]) @ Nx
     nu = len(U)
@@ -107,12 +140,13 @@ def analog_response(f, J, rk):
     return np.array(out)
 
 
-def build(fs, rk, dc=False, prewarp_hz=None):
-    """State-space matrices at sample rate fs with cathode resistor rk (ohms). dc=True: capacitors open (for the
-    operating point). prewarp_hz: pre-warp the small capacitances to this frequency (None = plain trapezoidal)."""
-    R, Cs, _, NV, NI, OUT = netlist(rk)
+def build(fs, rk, dc=False, prewarp_hz=None, mode=MODE):
+    """State-space matrices at sample rate fs with cathode resistor rk (ohms), wired as `mode`. dc=True: capacitors
+    open (for the operating point). prewarp_hz: pre-warp the small capacitances to this frequency (None = plain
+    trapezoidal)."""
+    R, Cs, U, NV, NI, OUT = netlist(rk, mode=mode)
     Nr, Nx, Nv, Ni, No, Nu = (_inc([(p, q) for p, q, _ in R]), _inc([(p, q) for p, q, _ in Cs]), _inc(NV), _inc(NI),
-                              _inc(OUT), _nu())
+                              _inc(OUT), _nu(U))
     Gr = np.diag([1.0 / r for _, _, r in R])
     Gx = np.diag([0.0 if dc else companion_g(c, fs, prewarp_hz) for _, _, c in Cs])
     nn, nu = len(NODES), len(U)

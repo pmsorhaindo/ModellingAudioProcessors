@@ -13,7 +13,12 @@ latency, the resampler and iteration_stats()):
                   its circuit, and a 6AS6 one would need its own minimax derivation and validation.
   filt          : resampler, "fir" (default) or "iir" (dk/resample.py)
   pentode       : valve parameter set (default pentode.DUAL_CONTROL, issue #55; pentode.REFIT_51 for comparison)
-Screen: an ideal source at EC2 = 120 V; suppressor on the cathode (P1). circuit.py has the values.
+  mode          : the Distortion switch (#111), circuit.MODES: "P1" (default; g3 on the cathode, screen at the stiff
+                  EC2 = 120 V), "T" (g2 + g3 strapped to the plate) or "P2" (g3 to ground, our hypothesis). Fixed
+                  for the run (smooth switching is #115). Rk is solved for the target current in each mode.
+  experimental  : False (default) accepts only the SUPPORTED envelope and raises UnsupportedSettingError outside it;
+                  True runs any setting with an ExperimentalWarning (Stage.supported records which it is).
+circuit.py has the values and the wiring.
 """
 import warnings
 import numpy as np
@@ -31,15 +36,53 @@ BIAS_RANGE_MA = (0.6, 0.1)         # target Ik at the knob's two ends, mA (#110;
 KNOB = (1.0, 11.0)                 # the panel's Bias scale (SOS 2003: "calibrated from one to 11")
 RK_LOG10 = (2.7, 6.0)              # cathode_resistor's bracket, log10(Rk / ohm): ~0.5 kOhm to 1 MOhm
 NEWTON = dict(max_it=MAX_IT, tol_v=TOL_V, tol_f=TOL_F)
-__all__ = ["Stage", "QUALITY", "BIAS_MA", "BIAS_RANGE_MA", "KNOB", "knob_bias", "bias_knob", "bias_point",
-           "cathode_resistor", "operating_point", "OperatingPointError", "NonConvergenceWarning"]
+# The supported envelope (#111 review), target cathode current in mA per mode. A mode / bias is supported only where
+# all three hold (dk6as6/RESULTS.md, "Supported envelope"):
+#   in the law   for host signals bounded by 8 V peak (tones over 20 Hz-20 kHz from silence, step and slope onsets and
+#                step offsets, standard and hq: dk6as6/envelope.py), g1 never goes positive (the valve law has no grid
+#                current and no positive-g1 data; that is #112) and the plate never goes below the cathode, read on the
+#                interpolated internal-rate voltages (envelope.json);
+#   validated    passing same-model ngspice references (dk/validate.CRIT) at or bracketing each end;
+#   aliasing     within the shipped 12AX7 stage's budget for the same setting (aliasing.QUALITY_GATE_DBC).
+# P1 holds all three over the whole documented 0.1-0.6 mA; T only to 0.3 mA (at 0.35 mA an 8 V step onset at 100 Hz
+# takes g1 to +0.30 V; its top end lies between the passing 0.25 and 0.35 mA references); P2 nowhere (our wiring
+# hypothesis on the fit's weakest g3 region, #123, and its resampler aliasing fails the gate at every current).
+# Outside the derivation's stimulus class the runtime guard (Stage.out_of_law, OutOfLawWarning) still counts every
+# internal sample with g1 positive or the plate below the cathode.
+SUPPORTED_MA = {"P1": (0.1, 0.6), "T": (0.1, 0.3)}
+WHY_UNSUPPORTED = {
+    "T": "above 0.3 mA an 8 V step onset takes g1 positive (outside the valve law; dk6as6/envelope.py)",
+    "P2": "P2 (g3 to ground) is our hypothesis on the fit's weakest g3 region, and its aliasing fails the quality gate",
+}
+__all__ = ["Stage", "QUALITY", "BIAS_MA", "BIAS_RANGE_MA", "KNOB", "SUPPORTED_MA", "knob_bias", "bias_knob",
+           "bias_point", "cathode_resistor", "operating_point", "supported", "OperatingPointError",
+           "NonConvergenceWarning", "UnsupportedSettingError", "ExperimentalWarning", "OutOfLawWarning"]
 
 
-def operating_point(rk, par=DUAL_CONTROL, newton=tuple(NEWTON.values())):
-    """DC operating point with cathode resistor rk: capacitors open, the stage's Newton solver from zero valve current,
-    source-stepping all supplies (HT, EC2) in 10 steps as the 12AX7 stage does on HT."""
-    m0 = circuit.build(1.0, rk, dc=True)
-    u = np.r_[0.0, circuit.sources()]
+class UnsupportedSettingError(ValueError):
+    """A mode / bias outside SUPPORTED_MA, without experimental=True."""
+
+
+class ExperimentalWarning(UserWarning):
+    """A Stage built outside SUPPORTED_MA with experimental=True."""
+
+
+class OutOfLawWarning(UserWarning):
+    """A processed block had internal samples outside the valve law: g1 positive or the plate below the cathode."""
+
+
+def supported(mode, bias_ma):
+    """True if `bias_ma` mA in `mode` is inside SUPPORTED_MA (to 1e-9 mA)."""
+    lo, hi = SUPPORTED_MA.get(mode, (np.inf, -np.inf))
+    return lo - 1e-9 <= bias_ma <= hi + 1e-9
+
+
+def operating_point(rk, par=DUAL_CONTROL, newton=tuple(NEWTON.values()), mode=circuit.MODE):
+    """DC operating point with cathode resistor rk, wired as `mode`: capacitors open, the stage's Newton solver from
+    zero valve current, source-stepping all supplies (HT, and EC2 where there is one) in 10 steps as the 12AX7 stage
+    does on HT."""
+    m0 = circuit.build(1.0, rk, dc=True, mode=mode)
+    u = np.r_[0.0, circuit.sources(mode=mode)]
     p = m0["H"] @ u
     K0 = m0["K"].tolist()
     i0 = i1 = 0.0
@@ -49,7 +92,7 @@ def operating_point(rk, par=DUAL_CONTROL, newton=tuple(NEWTON.values())):
             raise OperatingPointError(
                 f"DC operating point did not converge at source step {k}/10 (supplies x {s:.1f}): "
                 f"{it} Newton iterations (max_it, tol_v, tol_f = {newton}), best iterate v={v}, "
-                f"Ip={i0:.6g} A, Ig2={i1:.6g} A, Rk={rk:.6g} ohm")
+                f"Ip={i0:.6g} A, Ig2={i1:.6g} A, Rk={rk:.6g} ohm, mode {mode}")
     inl = np.array([i0, i1])
     w = m0["Si"] @ (m0["Nup"].T @ u - m0["Nip"].T @ inl)
     nodes = dict(zip(circuit.NODES, w[:len(circuit.NODES)]))
@@ -57,16 +100,16 @@ def operating_point(rk, par=DUAL_CONTROL, newton=tuple(NEWTON.values())):
                 nodes=nodes, w=w, rk=rk)
 
 
-def cathode_resistor(bias_ma=BIAS_MA, par=DUAL_CONTROL, newton=tuple(NEWTON.values())):
-    """The cathode resistor (ohms) whose DC operating point draws bias_ma mA of cathode current (Ip + Ig2): Brent's
-    method on log10(Rk) over RK_LOG10 (Ik falls monotonically with Rk). Raises OperatingPointError outside the
+def cathode_resistor(bias_ma=BIAS_MA, par=DUAL_CONTROL, newton=tuple(NEWTON.values()), mode=circuit.MODE):
+    """The cathode resistor (ohms) whose DC operating point in `mode` draws bias_ma mA of cathode current (Ip + Ig2):
+    Brent's method on log10(Rk) over RK_LOG10 (Ik falls monotonically with Rk). Raises OperatingPointError outside the
     bracket. Converged to 1e-13 in log10(Rk), i.e. Ik to ~1e-12 relative."""
     ik = bias_ma * 1e-3
     def err(lg):
-        return operating_point(10.0 ** lg, par, newton)["ik"] / ik - 1.0
+        return operating_point(10.0 ** lg, par, newton, mode)["ik"] / ik - 1.0
     lo, hi = RK_LOG10
     if not err(lo) > 0.0 > err(hi):
-        raise OperatingPointError(f"bias {bias_ma} mA is outside what Rk = 10^{lo}..10^{hi} ohm can set")
+        raise OperatingPointError(f"bias {bias_ma} mA is outside what Rk = 10^{lo}..10^{hi} ohm can set in {mode}")
     return 10.0 ** brentq(err, lo, hi, xtol=1e-13, rtol=4 * np.finfo(float).eps)
 
 
@@ -98,18 +141,28 @@ def bias_knob(bias_ma):
     return lo + (hi - lo) * np.log(bias_ma / a) / np.log(b / a)
 
 
-def bias_point(bias_ma=BIAS_MA, par=DUAL_CONTROL, newton=tuple(NEWTON.values())):
-    """What a bias meter needs for a setting: the DC operating point at the Rk that sets bias_ma mA. Returns the solved
-    rheostat rk (ohm), the cathode voltage vk = Rk * Ik (V, positive: the "positive voltage on its cathode" the
-    manuals describe), the plate voltage va (V), ip, ig2 and ik = ip + ig2 (A)."""
-    dc = operating_point(cathode_resistor(bias_ma, par, newton), par, newton)
+def bias_point(bias_ma=BIAS_MA, par=DUAL_CONTROL, newton=tuple(NEWTON.values()), mode=circuit.MODE):
+    """What a bias meter needs for a setting: the DC operating point at the Rk that sets bias_ma mA in `mode`. Returns
+    the solved rheostat rk (ohm), the cathode voltage vk = Rk * Ik (V, positive: the "positive voltage on its cathode"
+    the manuals describe), the plate voltage va (V), ip, ig2 and ik = ip + ig2 (A)."""
+    dc = operating_point(cathode_resistor(bias_ma, par, newton, mode), par, newton, mode)
     return dict(bias_ma=bias_ma, rk=float(dc["rk"]), vk=float(dc["nodes"]["k"]), va=float(dc["nodes"]["a"]),
                 ip=float(dc["ip"]), ig2=float(dc["ig2"]), ik=float(dc["ik"]))
 
 
 class Stage(_Stage12AX7):
     def __init__(self, fs, bias=BIAS_MA, drive=1.0, output=1.0, pentode=DUAL_CONTROL, quality="standard", filt="fir",
-                 newton=None):
+                 newton=None, mode=circuit.MODE, experimental=False):
+        if mode not in circuit.MODES:
+            raise ValueError(f"unknown mode {mode!r}, expected one of {sorted(circuit.MODES)}")
+        self.mode, self.supported = mode, supported(mode, bias)
+        if not self.supported:
+            rng = "%g-%g mA" % SUPPORTED_MA[mode] if mode in SUPPORTED_MA else "none"
+            why = (f"{mode} at {bias:g} mA is outside the supported envelope ({mode}: {rng}): "
+                   + WHY_UNSUPPORTED.get(mode, "outside the documented 0.1-0.6 mA"))
+            if not experimental:
+                raise UnsupportedSettingError(why + " (experimental=True runs it anyway)")
+            warnings.warn(why, ExperimentalWarning, stacklevel=2)
         nw = dict(NEWTON)
         if set(newton or {}) - set(nw):
             raise TypeError(f"unknown newton option(s) {sorted(set(newton) - set(nw))}, expected {sorted(nw)}")
@@ -120,17 +173,17 @@ class Stage(_Stage12AX7):
         self.rs = Resampler(fs, self.os, filt)
         self.fs = fs * self.os
         self.drive, self.output, self.bias, self.par = drive, output, bias, pentode
-        self.rk = cathode_resistor(bias, pentode, self.newton)
-        self.m = circuit.build(self.fs, self.rk, prewarp_hz=self.prewarp_hz)
+        self.rk = cathode_resistor(bias, pentode, self.newton, mode)
+        self.m = circuit.build(self.fs, self.rk, prewarp_hz=self.prewarp_hz, mode=mode)
         self.K = self.m["K"].tolist()
-        self.supplies = circuit.sources()
+        self.supplies = circuit.sources(mode=mode)
         self.dc = self.operating_point()
         self.reset()
 
     def operating_point(self):
-        """The DC operating point at this stage's Rk, valve parameters and Newton settings (module operating_point();
-        overrides dk.stage.Stage's, which solves the 12AX7 circuit)."""
-        return operating_point(self.rk, self.par, self.newton)
+        """The DC operating point at this stage's Rk, valve parameters, Newton settings and mode (module
+        operating_point(); overrides dk.stage.Stage's, which solves the 12AX7 circuit)."""
+        return operating_point(self.rk, self.par, self.newton, self.mode)
 
     def swap_bias(self, bias):
         raise NotImplementedError("the 6AS6 stage's Rk is fixed for the run; live bias changes are #115")
@@ -154,11 +207,13 @@ class Stage(_Stage12AX7):
         self.iters = []
         self.nonconv = 0
         self.nonconv_block = 0
+        self.out_of_law = 0                     # internal samples with Vg1k > 0 or Vak < 0 (the runtime guard)
+        self.out_of_law_block = 0
         self.rs.reset()
 
     def process_internal(self, vin, record=("out",)):
         """Run the stage at the internal rate on an input already at self.fs. Returns dict of signals
-        ('vgk' = Vg1k). Non-convergence handling as dk/stage.Stage.process_internal (#7)."""
+        ('vgk' = Vg1k, 'vg2k' = Vg2k). Non-convergence handling as dk/stage.Stage.process_internal (#7)."""
         m = self.m
         A, C, D, F, G = (m[k] for k in "ACDFG")
         B0, E0, H0 = m["B"][:, 0], m["E"][:, 0], m["H"][:, 0]
@@ -168,7 +223,7 @@ class Stage(_Stage12AX7):
         x, (i0, i1), K, par, nw = self.x, self.i, self.K, self.par, self.newton
         q0, q1 = self.i_prev
         iters = np.empty(len(vin), dtype=np.int16)
-        bad = 0
+        bad = law = 0
         for n, s in enumerate(vin):
             p = (G @ x + H0 * s + p_dc).tolist()
             # warm start: linear extrapolation of the last two current solutions (as dk/stage.py does on voltages)
@@ -178,6 +233,8 @@ class Stage(_Stage12AX7):
             iters[n] = it
             if not ok:
                 bad += 1
+            if v[0] > 0.0 or v[3] < 0.0:       # outside the valve law: g1 positive or the plate below the cathode
+                law += 1
             inl = np.array([i0 - idc0, i1 - idc1])     # deviation from the operating point
             if idx:
                 y = D @ x + E0 * s + F @ inl + y_dc
@@ -185,11 +242,19 @@ class Stage(_Stage12AX7):
                     rec[nm][n] = y[j]
             if "vgk" in rec:
                 rec["vgk"][n] = v[0]
+            if "vg2k" in rec:
+                rec["vg2k"][n] = v[1]
             x = A @ x + B0 * s + C @ inl
         self.x, self.i, self.i_prev = x, [i0, i1], [q0, q1]
         self.iters.append(iters)
         self.nonconv += bad
         self.nonconv_block = bad
+        self.out_of_law += law
+        self.out_of_law_block = law
+        if law:
+            warnings.warn(f"{law} of {len(vin)} internal samples outside the valve law (g1 positive or the plate below "
+                          f"the cathode) in {self.mode} at {self.bias:g} mA: the 6AS6 law has no grid current (#112)",
+                          OutOfLawWarning, stacklevel=2)
         if bad:
             warnings.warn(f"Newton did not converge on {bad} of {len(vin)} samples at {self.fs:g} Hz "
                           f"(max_it, tol_v, tol_f = {self.newton}); kept the best finite iterate",
