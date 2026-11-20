@@ -1,17 +1,29 @@
-"""The 6AS6 common-cathode stage netlist and its nodal-DK state-space matrices (issue #26).
+"""The 6AS6 stage netlist and its nodal-DK state-space matrices (issues #26, #102).
 
-Same coupling / load topology and the same passive values as the 12AX7 stage: VALUES is built from
-dk/circuit.VALUES (HT, Rs, Cin, Rg, Rgs, Ra, Rk, Ck, Cout, Rl). THESE ARE CHOSEN EXAMPLE VALUES, NOT CULTURE VULTURE
-VALUES; sources in dk/circuit.py (Merlin Blencowe, "Designing Valve Preamps for Guitar and Bass", ch.1,
-https://www.valvewizard.co.uk/Common_Gain_Stage.pdf: HT 300 V, Ra 100k, Rk 1.5k, Rg 1M; Cin, Ck, Cout, Rl, Rs and Rgs
-our conventional round values). The 12AX7's inter-electrode capacitances are dropped; in their place:
-  Screen g2 and suppressor g3: ideal voltage sources to ground at the datasheet typical conditions used throughout
-    prototypes/fit6as6, EC2 = 120 V and EC3 = 0 V (GE ET-T706, https://frank.pocnet.net/sheets/084/6/6AS6.pdf p.1;
-    Raytheon 5725/6AS6W, https://frank.pocnet.net/sheets/138/5/5725.pdf). No screen resistor and no T/P1/P2 switch
-    wiring: the Culture Vulture schematic is unknown (references/schematics.md).
-  Inter-electrode capacitances: GE sheet p.1 values, as in prototypes/fit6as6/results/6AS6_fit.inc:
-    CG1K 4p, CG3K 3.4p, CPK 3p, CG1P 0.02p, CG1G3 0.15p. The same set is inside the same-model ngspice subckt
-    (spice6as6/run_refs.py), so the two describe the same circuit.
+Values: issue #102's research pass (https://github.com/pmsorhaindo/ModellingAudioProcessors/issues/102#issuecomment-7021775895;
+table and labels copied in dk6as6/RESULTS.md, "Circuit values"). No public schematic of the inspiring unit exists,
+so every passive below is INFERRED from the manuals and datasheets, not measured:
+  HT 200 V, Ra 270k        inferred (#102 E2/E3/E7): puts the P1 THD minimum on the manuals' 0.25-0.3 mA; <= the
+                           5725's 200 V plate rating at cut-off (S9). Low confidence.
+  Rk                       unbypassed rheostat cathode -> ground, NO bypass capacitor (#102 E4/E6, topology from the
+                           manuals S3/S6). Not a value: the stage solves it for a target cathode current (stage.py).
+  Rg 1M                    S9 maximum grid-circuit resistance.
+  Cin = Cout = 100n        inferred (HP corner of a few Hz).
+  Rl 1M                    next-stage grid leak (the #102 table's Zout figures include a 1 MOhm load).
+  EC2 120 V                screen at the datasheet typical condition, stiff (S9; GE ET-T706,
+                           https://frank.pocnet.net/sheets/084/6/6AS6.pdf p.1).
+  g3 -> cathode            P1 wiring: S8 speculation, the datasheet's standard pentode connection. Low confidence.
+                           T (g2 + g3 strapped to the plate) and P2 are #111.
+  Inter-electrode caps     GE sheet p.1 values (with external shield): g1 input 4p, g3 input 3.4p, output 3p,
+                           g1-p 0.02p, g1-g3 0.15p. Placed as in prototypes/fit6as6/results/6AS6_fit.inc (g1 input,
+                           output -> cathode) except the g3 input capacitance (g3 to all other electrodes), which
+                           6AS6_fit.inc and #26 put g3 -> k: with g3 on the cathode that is a short, leaving the cathode
+                           with no capacitance to AC ground (and ngspice 41's transient then fails at its first step
+                           at the #5 tolerances). Here CG3 goes g3 -> g2, the screen, an AC ground like the heater
+                           and shield it also faces. CG1G3 sits g1-k with g3 on the cathode.
+  Rs 1k, Rgs 68k           NOT in the #102 table: the test bench's source resistance and the grid stopper, kept
+                           from the 12AX7 stage (dk/circuit.py, our conventional round values). Ig1 = 0, so neither
+                           has any DC effect.
 The valve: pentode.py (fit6as6 dual_control). Ig1 = Ig3 = 0, so g1 and g3 carry no valve current.
 
 Derivation: as dk/circuit.py (nodal DK, trapezoidal companion capacitors, Yeh 2009, Holters & Zoelzer), with one
@@ -21,46 +33,53 @@ incidence Nv), so with  w = S^-1 (Nx^T x - Ni^T i_nl + Nu^T u):
      v_nl   = G x + H u - K i_nl,   K = Nv' Si Ni'^T  (4x2),   G = Nv' Si Nx'^T,  H = Nv' Si Nu'^T
      x[n+1] = A x + B u + C i_nl,   C = -2 Gx Nx' Si Ni'^T
      y      = D x + E u + F i_nl,   F = -No' Si Ni'^T
-A, B, D, E as in dk/circuit.py. u = (vin, HT, EC2, EC3). g2 and g3 are source nodes, so Vg2k = EC2 - Vk and
-Vg3k = EC3 - Vk come out of the same equations (rows of G, H, K).
+A, B, D, E as in dk/circuit.py. u = (vin, HT, EC2). g2 is a source node, so Vg2k = EC2 - Vk comes out of the same
+equations; g3 is the cathode node, so the Vg3k row of Nv is zero and Vg3k = 0.
 """
 import numpy as np
-from dk import circuit as _c12
 from dk.circuit import companion_g, SMALL_C  # noqa: F401  (same companion model and pre-warp rule)
 
-NODES = ["src", "in1", "gl", "g", "k", "a", "out", "ht", "g2", "g3"]
-PASSIVES = ("HT", "Rs", "Cin", "Rg", "Rgs", "Ra", "Rk", "Ck", "Cout", "Rl")    # shared with the 12AX7 stage
-VALUES = dict({k: _c12.VALUES[k] for k in PASSIVES},
-              EC2=120.0, EC3=0.0,                                         # GE / Raytheon typical conditions
-              CG1K=4e-12, CG3K=3.4e-12, CPK=3e-12, CG1P=0.02e-12, CG1G3=0.15e-12)   # GE sheet p.1
-VALVE_CAPS = ("CG1K", "CG3K", "CPK", "CG1P", "CG1G3")
-U = ["src", "ht", "g2", "g3"]                     # ideal voltage sources to ground: u = [vin, HT, EC2, EC3]
-NLV = [("g", "k"), ("g2", "k"), ("g3", "k"), ("a", "k")]   # controlling voltages Vg1k, Vg2k, Vg3k, Vak
-NLI = [("a", "k"), ("g2", "k")]                   # valve currents Ip (a->k), Ig2 (g2->k)
+NODES = ["src", "in1", "gl", "g", "k", "a", "out", "ht", "g2"]
+PASSIVES = ("HT", "Rs", "Cin", "Rg", "Rgs", "Ra", "Cout", "Rl")   # Rk is solved per bias (stage.cathode_resistor)
+VALUES = dict(HT=200.0, Rs=1e3, Cin=100e-9, Rg=1e6, Rgs=68e3, Ra=270e3, Cout=100e-9, Rl=1e6,
+              EC2=120.0,                                                                   # stiff screen supply
+              CG1K=4e-12, CG3=3.4e-12, CPK=3e-12, CG1P=0.02e-12, CG1G3=0.15e-12)          # GE sheet p.1
+# The valve's pins -> stage nodes. P1: g3 on the cathode. One map for the DK netlist and the ngspice subckt
+# (spice6as6/run_refs.py), in the subckt's pin order.
+PINS = dict(P="a", G2="g2", G3="k", G1="g", K="k")
+VALVE_CAPS = (("CG1K", "G1", "K"), ("CG3", "G3", "G2"), ("CPK", "P", "K"), ("CG1P", "G1", "P"),
+              ("CG1G3", "G1", "G3"))           # (VALUES key, pin+, pin-), as inside the subckt
+U = ["src", "ht", "g2"]                          # ideal voltage sources to ground: u = [vin, HT, EC2]
+NLV = [(PINS[p], "k") for p in ("G1", "G2", "G3", "P")]   # controlling voltages Vg1k, Vg2k, Vg3k, Vak
+NLI = [("a", "k"), ("g2", "k")]                  # valve currents Ip (a->k), Ig2 (g2->k)
 OUT_NAMES = ["out", "g", "k", "a", "gl"]
 
 
-def netlist(rk_scale=1.0, v=VALUES):
+def valve_caps(v=VALUES):
+    """The inter-electrode capacitances as (node+, node-, C) of the stage."""
+    return [(PINS[a], PINS[b], v[k]) for k, a, b in VALVE_CAPS]
+
+
+def netlist(rk, v=VALUES):
+    """(resistors, capacitors, sources, NLV, NLI, outputs) with cathode resistor rk (ohms)."""
     R = [("src", "in1", v["Rs"]), ("gl", None, v["Rg"]), ("gl", "g", v["Rgs"]), ("ht", "a", v["Ra"]),
-         ("k", None, v["Rk"] * rk_scale), ("out", None, v["Rl"])]
-    Cs = [("in1", "gl", v["Cin"]), ("k", None, v["Ck"]), ("a", "out", v["Cout"]),
-          ("g", "k", v["CG1K"]), ("g3", "k", v["CG3K"]), ("a", "k", v["CPK"]), ("g", "a", v["CG1P"]),
-          ("g", "g3", v["CG1G3"])]
+         ("k", None, rk), ("out", None, v["Rl"])]
+    Cs = [("in1", "gl", v["Cin"]), ("a", "out", v["Cout"])] + valve_caps(v)
     OUT = [(n, None) for n in OUT_NAMES]
     return R, Cs, U, NLV, NLI, OUT
 
 
 def sources(v=VALUES):
-    """u without the input: (HT, EC2, EC3)."""
-    return np.array([v["HT"], v["EC2"], v["EC3"]])
+    """u without the input: (HT, EC2)."""
+    return np.array([v["HT"], v["EC2"]])
 
 
 def _inc(pairs):
     M = np.zeros((len(pairs), len(NODES)))
     for r, (p, q) in enumerate(pairs):
-        M[r, NODES.index(p)] = 1.0
+        M[r, NODES.index(p)] += 1.0
         if q is not None:
-            M[r, NODES.index(q)] = -1.0
+            M[r, NODES.index(q)] -= 1.0     # p == q (Vg3k with g3 on the cathode): a zero row
     return M
 
 
@@ -71,10 +90,10 @@ def _nu():
     return Nu
 
 
-def analog_response(f, J, rk_scale=1.0):
+def analog_response(f, J, rk):
     """Exact (continuous-time) small-signal response v(out)/v(src) at frequencies f, with the valve linearised to
     the 2x4 Jacobian J = d(Ip, Ig2)/d(Vg1k, Vg2k, Vg3k, Vak) of its operating point (what ngspice's .ac computes)."""
-    R, Cs, _, NV, NI, OUT = netlist(rk_scale)
+    R, Cs, _, NV, NI, OUT = netlist(rk)
     Nr, Nx, Nv, Ni, Nu = _inc([(p, q) for p, q, _ in R]), _inc([(p, q) for p, q, _ in Cs]), _inc(NV), _inc(NI), _nu()
     Y0 = Nr.T @ np.diag([1.0 / r for _, _, r in R]) @ Nr + Ni.T @ np.asarray(J) @ Nv
     Yc = Nx.T @ np.diag([c for _, _, c in Cs]) @ Nx
@@ -88,10 +107,10 @@ def analog_response(f, J, rk_scale=1.0):
     return np.array(out)
 
 
-def build(fs, rk_scale=1.0, dc=False, prewarp_hz=None):
-    """State-space matrices at sample rate fs. dc=True: capacitors open (for the operating point).
-    prewarp_hz: pre-warp the small capacitances to this frequency (None = plain trapezoidal)."""
-    R, Cs, _, NV, NI, OUT = netlist(rk_scale)
+def build(fs, rk, dc=False, prewarp_hz=None):
+    """State-space matrices at sample rate fs with cathode resistor rk (ohms). dc=True: capacitors open (for the
+    operating point). prewarp_hz: pre-warp the small capacitances to this frequency (None = plain trapezoidal)."""
+    R, Cs, _, NV, NI, OUT = netlist(rk)
     Nr, Nx, Nv, Ni, No, Nu = (_inc([(p, q) for p, q, _ in R]), _inc([(p, q) for p, q, _ in Cs]), _inc(NV), _inc(NI),
                               _inc(OUT), _nu())
     Gr = np.diag([1.0 / r for _, _, r in R])

@@ -1,15 +1,20 @@
-"""Validate the 6AS6 DK stage against its same-model ngspice reference (spice6as6/reference_dual.json, #26).
+"""Validate the 6AS6 DK stage against its same-model ngspice references (spice6as6/reference_dual_<bias>mA.json, #26).
 
   (ii) 'dual' : ngspice running the same fit6as6 dual_control equations and parameters (#55) on the same netlist ->
                 isolates METHOD error. The pass criteria are dk/validate.CRIT, unchanged, tested against this only.
   There is no (i): no independent 6AS6 SPICE model in this repo's sources.
 Same measurements as dk/validate.py (op point, small signal 20 Hz-20 kHz over the whole resampler chain, H2-H5 of 1 kHz
-sines at spice/run_refs.AMPS, the 4 V tone-burst bias shift and recovery). run(model="r51") checks the DK stage with
-the #51 parameters against reference_r51.json the same way (for dk6as6/compare_fits.py; informational).
-Aliasing (dk/aliasing.py) is not part of this first 6AS6 pass.
-Run: python -m dk6as6.validate   (from prototypes/fullstage). Writes dk6as6/results.json: "standard" and "hq" against
-(ii), and "plain_4x": the same run at 4x without pre-warp, for information only (no 4x setting yet: its aliasing,
-dk/aliasing.py, has not been assessed for this stage).
+sines at spice/run_refs.AMPS, the 4 V tone-burst bias shift and recovery). Recovery tau is tested only where the
+reference has one: with no cathode bypass cap and no grid current (#102) the cycle-mean Vgk returns with the burst's
+end, and what is left is a ~0.07 % coupling-cap tail that ngspice's own trace does not take to 1/e in the 120 ms
+window (recovery_tau_s = nan; dk6as6/RESULTS.md). The shift and trajectory criteria are unchanged.
+run(model="r51") checks the DK stage with the #51 parameters against reference_r51_0.45mA.json the same way (for
+dk6as6/compare_fits.py; informational).
+bias: the target cathode current in mA (dk6as6/stage.py); references exist at spice6as6/run_refs.BIASES.
+Aliasing: dk6as6/aliasing.py.
+Run: python -m dk6as6.validate   (from prototypes/fullstage). Writes dk6as6/results.json: per reference bias,
+"standard" and "hq" against (ii), and at the default bias "plain_4x": the same run at 4x without pre-warp, for
+information only (no 4x setting).
 """
 import json
 import os
@@ -22,16 +27,17 @@ sys.path.insert(0, ROOT)
 from analysis import harmonics, thd, db_rel  # noqa: E402 -- after the sys.path setup
 from spice.run_refs import burst_metrics, AMPS  # noqa: E402 -- after the sys.path setup
 from dk.validate import CRIT, aligned  # noqa: E402 -- after the sys.path setup
-from dk6as6.stage import Stage, QUALITY  # noqa: E402 -- after the sys.path setup
+from dk6as6.stage import Stage, QUALITY, BIAS_MA  # noqa: E402 -- after the sys.path setup
 from dk6as6 import linear, pentode  # noqa: E402 -- after the sys.path setup
+from spice6as6.run_refs import BIASES, ref_file  # noqa: E402 -- after the sys.path setup
 
 FS = 48000.0
 PARAMS = {"dual": pentode.DUAL_CONTROL, "r51": pentode.REFIT_51}
-OP_KEYS = ("va", "vk", "ia", "ig2", "vgk")
+OP_KEYS = ("va", "vk", "ia", "ig2", "ik", "vgk")
 
 
-def ref(model):
-    return json.load(open(os.path.join(ROOT, "spice6as6", f"reference_{model}.json")))
+def ref(model, bias=BIAS_MA):
+    return json.load(open(ref_file(model, bias)))
 
 
 def small_signal(stage, f):
@@ -58,12 +64,12 @@ def ac_dev(st, r):
     return o
 
 
-def sines(quality="standard", filt="fir", model="dual", T=0.5, amps=AMPS):
+def sines(quality="standard", filt="fir", model="dual", T=0.5, amps=AMPS, bias=BIAS_MA):
     """1 kHz sines through Stage.process: harmonics, iteration stats and CPU per amplitude."""
     out, times, its = {}, {}, {}
     n = int(T * FS)
     for a in amps:
-        s = Stage(FS, quality=quality, filt=filt, pentode=PARAMS[model])
+        s = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model])
         t = np.arange(n + s.latency_samples) / FS
         t0 = time.perf_counter()
         y = aligned(s, float(a) * np.sin(2 * np.pi * 1000 * t))["out"]
@@ -90,24 +96,24 @@ def harm_dev(sine, r):
     return res
 
 
-def run(T=0.5, quality="standard", filt="fir", model="dual"):
-    st = Stage(FS, quality=quality, filt=filt, pentode=PARAMS[model])
+def run(T=0.5, quality="standard", filt="fir", model="dual", bias=BIAS_MA):
+    st = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model])
     out = dict(criteria=CRIT, fs_base=FS, quality=quality, oversampling=st.os, prewarp_hz=st.prewarp_hz, filter=filt,
-               model=model, params=PARAMS[model])
+               model=model, params=PARAMS[model], bias_ma=bias, rk=st.rk)
     out["resampler"] = dict(latency_samples=st.latency_samples, latency_ms=st.rs.latency_ms,
                             macs_up_down=st.resampler_macs)
     dc = st.dc
-    out["op"] = dict(va=dc["nodes"]["a"], vk=dc["nodes"]["k"], ia=dc["ip"], ig2=dc["ig2"], vgk=dc["vgk"],
+    out["op"] = dict(va=dc["nodes"]["a"], vk=dc["nodes"]["k"], ia=dc["ip"], ig2=dc["ig2"], ik=dc["ik"], vgk=dc["vgk"],
                      vg=dc["nodes"]["g"], vg2k=dc["vg2k"], vg3k=dc["vg3k"], vak=dc["vak"])
-    r = ref(model)
+    r = ref(model, bias)
     o = dict(op_rel={k: abs(out["op"][k] / r["op"][k] - 1) for k in OP_KEYS})
     o.update(ac_dev(st, r))
     out["ac_gain_1k_db"] = float(small_signal(st, [1000.0])[0][0])
 
-    out["sine"], times, its = sines(quality, filt, model, T)
+    out["sine"], times, its = sines(quality, filt, model, T, bias=bias)
     o["harm"] = harm_dev(out["sine"], r)
 
-    s = Stage(FS, quality=quality, filt=filt, pentode=PARAMS[model])
+    s = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model])
     nb = int(0.12 * FS)
     tb = np.arange(nb + s.latency_samples) / FS
     xb = 4 * np.sin(2 * np.pi * 1000 * tb) * ((tb > 10e-3) & (tb < 30e-3))
@@ -125,6 +131,7 @@ def run(T=0.5, quality="standard", filt="fir", model="dual"):
     o["burst"] = dict(min_rel=abs((out["burst"]["min_vgk"] - out["burst"]["rest_vgk"]) / shift_ref - 1),
                       tau_rel=abs(out["burst"]["recovery_tau_s"] / rb_["recovery_tau_s"] - 1),
                       traj_rel=float(np.sqrt(np.mean((tr - rr) ** 2)) / abs(shift_ref)),
+                      tau_tested=bool(np.isfinite(rb_["recovery_tau_s"])),
                       t_min_diff_ms=1e3 * (out["burst"]["t_min"] - rb_["t_min"]),
                       ref=dict(rest=rb_["rest_vgk"], min=rb_["min_vgk"], tau=rb_["recovery_tau_s"]))
     out["vs"] = {model: o}
@@ -139,8 +146,8 @@ def run(T=0.5, quality="standard", filt="fir", model="dual"):
         ac_chain=o["ac_maxdev_db_chain"] < CRIT["ac_db"],
         harmonics=all(abs(h["dev_db"]) < CRIT["harm_db"] for a in AMPS for k, h in o["harm"][a].items()
                       if isinstance(h, dict) and h["tested"]),
-        burst=(o["burst"]["min_rel"] < CRIT["burst_min_rel"] and o["burst"]["tau_rel"] < CRIT["burst_tau_rel"]
-               and o["burst"]["traj_rel"] < CRIT["burst_traj_rel"]),
+        burst=(o["burst"]["min_rel"] < CRIT["burst_min_rel"] and o["burst"]["traj_rel"] < CRIT["burst_traj_rel"]
+               and (not o["burst"]["tau_tested"] or o["burst"]["tau_rel"] < CRIT["burst_tau_rel"])),
         newton=all(v["converged"] for v in its.values()))
     return out
 
@@ -160,13 +167,12 @@ def summary(res):
 
 
 if __name__ == "__main__":
-    res = {q: run(quality=q) for q in QUALITY}
-    res["plain_4x"] = run(quality=(4, None))
+    res = {f"{b:g}": {q: run(quality=q, bias=b) for q in QUALITY} for b in BIASES["dual"]}
+    res[f"{BIAS_MA:g}"]["plain_4x"] = run(quality=(4, None))
     json.dump(res, open(os.path.join(HERE, "results.json"), "w"), indent=1, default=float)
-    for q in QUALITY:
-        print(f"== {q}: {res[q]['oversampling']}x, resampler {res[q]['resampler']}")
-        print(summary(res[q]))
-    print("== plain 4x (information only)")
-    print(summary(res["plain_4x"]))
-    if not all(all(res[q]["passed"].values()) for q in QUALITY):
-        sys.exit("criteria failed: " + str({q: res[q]["passed"] for q in QUALITY}))
+    for b, rb in res.items():
+        for q, r in rb.items():
+            print(f"== {b} mA, {q}: {r['oversampling']}x, Rk {r['rk']:.6g} ohm, resampler {r['resampler']}")
+            print(summary(r))
+    if not all(all(rb[q]["passed"].values()) for rb in res.values() for q in QUALITY):
+        sys.exit("criteria failed: " + str({b: {q: rb[q]["passed"] for q in QUALITY} for b, rb in res.items()}))
