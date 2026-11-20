@@ -20,8 +20,18 @@ To follow a different revision, change F0_HZ (one line per position; keep the S5
 Method: TPT state-variable filter (Zavalishin, "The Art of VA Filter Design"; Simper, "Linear trapezoidal integrated
 SVF", Cytomic 2013): g = tan(pi f0 / fs), k = 1/Q, a1 = 1/(1 + g(g + k)), a2 = g a1, a3 = g a2. It is the bilinear
 transform of the analog prototype, so it runs at the 8x internal rate: at host rate the warping error reaches
-13.6-25 dB at 20 kHz (F-b). Of the structures compared in F-c, it has the lowest float32 noise at 8x (-132 to
--135 dBc vs float64; direct-form biquads -107 to -122 dBc), and it stays stable under fast cutoff modulation (F-d).
+13.6-25 dB at 20 kHz (F-b). Of the structures compared in F-c, it has the lowest float32 noise at 8x (direct-form
+biquads -107 to -122 dBc), and it stays stable under fast cutoff modulation (F-d).
+Increment form: Simper's state update ic <- 2 v - ic is computed as ic <- ic + 2 (v - ic), with v - ic formed
+directly from the coefficients a2, a3 and b1 = 1 - a1 = g (g + k) a1 (no cancellation). It is the same filter in exact
+arithmetic (same transfer function, same state trajectory under per-sample coefficient changes). In float32 its fixed
+point for a constant input is the input whatever the coefficient rounding (d1 = d2 = 0 needs v3 = ic1 = 0), and the
+states take small increments instead of being re-formed as 2 v - ic from two near-equal terms; only the states'
+rounding deadband is left (a float32 step settles 4-8 ulp low, the direct form 11-18 ulp). Float32 vs float64, sines
+over 20 Hz-20 kHz and white noise, 8x of 44.1 / 48 kHz: worst -131.5 dBc (4k position, 20 kHz, where the output is
+22 dB below the input), against -117.2 dBc for the direct form (19.6 kHz at 8 x 44.1 kHz, found in the #119 review).
+Much of the direct form's excess is coefficient rounding: float32 coefficients with float64 states alone read up to
+-133.2 dBc in its 4k position, against -146.1 dBc worst for the increment form. RESULTS-lpf.md has the table.
 Pre-warp: g = tan(pi fp / fs) * f0 / fp makes the response exact at fp. fp = f0 (the formula above) leaves 0.153 dB /
 0.351 deg worst error against the prototype over 20 Hz-20 kHz at 8 x 44.1 kHz (4k / 7k position, at 20 kHz). The
 switch pre-warps both positions at PREWARP_HZ instead, the frequency that minimises the worst complex error
@@ -76,8 +86,9 @@ def prewarp_minimax(rates=OS_RATES, band=BAND_HZ, n=2000):
 class SVF:
     """TPT state-variable low-pass (module docstring). prewarp_hz: None pre-warps at f0 (exact cutoff, the usual choice
     under modulation), else at that fixed frequency. dtype: np.float64 (default) or np.float32 for every coefficient,
-    state and intermediate (for the float32 noise test; the C++ port's precision). set_f0 may be called between any two
-    samples (modulation). Python floats have no denormal slowdown; the C++ port relies on the core's FTZ/DAZ guard."""
+    state and intermediate (the brief allows a float32 filter; the float32 noise test). The C++ core runs in double.
+    set_f0 may be called between any two samples (modulation). Python floats have no denormal slowdown; the C++ port
+    relies on the core's FTZ/DAZ guard."""
 
     def __init__(self, fs, f0, q=Q, prewarp_hz=None, dtype=np.float64):
         self.fs, self.q, self.prewarp_hz = float(fs), float(q), prewarp_hz
@@ -94,18 +105,19 @@ class SVF:
         g = np.tan(np.pi * fp / self.fs) * f0 / fp
         a1 = 1.0 / (1.0 + g * (g + 1.0 / self.q))
         c = self.cast
-        self.f0, self.a1, self.a2, self.a3 = f0, c(a1), c(g * a1), c(g * g * a1)
+        self.f0, self.a2, self.a3, self.b1 = f0, c(g * a1), c(g * g * a1), c(g * (g + 1.0 / self.q) * a1)
 
     def reset(self):
         self.ic1 = self.ic2 = self.cast(0.0)
 
     def tick(self, x):
-        a1, a2, a3, ic1, ic2 = self.a1, self.a2, self.a3, self.ic1, self.ic2
+        """One sample, increment form (module docstring): d1 = v1 - ic1, d2 = v2 - ic2; the output is v2."""
+        a2, a3, b1, ic1, ic2 = self.a2, self.a3, self.b1, self.ic1, self.ic2
         v3 = x - ic2
-        v1 = a1 * ic1 + a2 * v3
-        v2 = ic2 + a2 * ic1 + a3 * v3
-        self.ic1, self.ic2 = 2 * v1 - ic1, 2 * v2 - ic2
-        return v2
+        d1 = a2 * v3 - b1 * ic1
+        d2 = a2 * ic1 + a3 * v3
+        self.ic1, self.ic2 = ic1 + 2 * d1, ic2 + 2 * d2
+        return ic2 + d2
 
     def process(self, x):
         x = np.asarray(x, dtype=np.float64 if self.cast is float else self.cast)

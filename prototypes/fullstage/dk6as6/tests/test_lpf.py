@@ -1,6 +1,6 @@
 """Post-distortion low-pass (#103, dk6as6/lpf.py). Limits from the #103 brief: magnitude / phase against the analog
 prototype <= 0.15 dB / 0.35 deg over 20 Hz-20 kHz at 8x of 44.1 and 48 kHz; float32 vs float64 <= -125 dBc at 8x;
-stable under fast cutoff modulation; aliasing with the filter on not worse than off, in absolute terms.
+stable under fast cutoff modulation; total alias energy with the filter on not worse than off, in absolute terms.
 Run from prototypes/fullstage:  python -m pytest -q dk6as6/tests/test_lpf.py
 """
 import os
@@ -9,8 +9,10 @@ import numpy as np
 import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from dk6as6 import lpf, lpf_aliasing, stage  # noqa: E402 -- after the sys.path setup
+from dk6as6 import aliasing as aliasing6  # noqa: E402 -- after the sys.path setup
 
 MAG_DB, PHASE_DEG, F32_DBC = 0.15, 0.35, -125.0
+OTHER_BELOW_DB = 20.0     # 'other' at least this far under the off total: it moves the total by <= 0.05 dB
 CASES = [(fs, p) for fs in lpf.OS_RATES for p in lpf.F0_HZ]
 
 
@@ -61,17 +63,29 @@ def test_prewarp_is_the_minimax():
     assert abs(fp - lpf.PREWARP_HZ) < 50.0 and worst_db < -42.0
 
 
+# Float32 sweep: 20 Hz-20 kHz in third-octave steps, 1 kHz (the original case), and the frequencies the #119 review
+# found failing in the direct form (3.2 and 13.6 kHz at 384 kHz, 19.6 kHz at 352.8 kHz: -124.5 / -123.4 / -117.2 dBc).
+F32_SINES_HZ = tuple(np.round(np.geomspace(20.0, 20000.0, 31))) + (1000.0, 3200.0, 13600.0, 19600.0)
+
+
 @pytest.mark.parametrize("fs,p", CASES)
 def test_float32_noise_below_m125dBc(fs, p):
+    """Float32 filter vs float64, same float32 input, error energy over output energy (DC included), 50 ms: every
+    sine of F32_SINES_HZ and white noise."""
     rng = np.random.default_rng(1)
     n = np.arange(int(0.05 * fs))
-    for x in (np.sin(2 * np.pi * 1000 * n / fs), rng.standard_normal(len(n))):
+    xs = {f"{f:g} Hz": np.sin(2 * np.pi * f * n / fs) for f in F32_SINES_HZ}
+    xs["noise"] = rng.standard_normal(len(n))
+    errs = {}
+    for name, x in xs.items():
         x = x.astype(np.float32)
         y32 = lpf.SVF(fs, lpf.F0_HZ[p], prewarp_hz=lpf.PREWARP_HZ, dtype=np.float32).process(x)
         y64 = lpf.SVF(fs, lpf.F0_HZ[p], prewarp_hz=lpf.PREWARP_HZ).process(x.astype(float))
         assert y32.dtype == np.float32
-        err = 10 * np.log10(np.sum((y32 - y64) ** 2) / np.sum(y64 ** 2))
-        assert -170.0 < err <= F32_DBC, err          # lower bound: proves the float32 path really rounds
+        errs[name] = 10 * np.log10(np.sum((y32 - y64) ** 2) / np.sum(y64 ** 2))
+    worst = max(errs, key=errs.get)
+    print(f"{fs:g} {p}: worst {errs[worst]:.1f} dBc ({worst}), noise {errs['noise']:.1f} dBc")
+    assert all(-170.0 < e <= F32_DBC for e in errs.values()), errs    # lower bound: the float32 path really rounds
 
 
 @pytest.mark.parametrize("q", [lpf.Q, 5.0])
@@ -152,14 +166,19 @@ def test_stage_filters_inside_the_oversampled_block():
     assert np.max(np.abs(np.degrees(np.angle(e)))) <= PHASE_DEG
 
 
-@pytest.mark.parametrize("fs", [48000, 44100])
-def test_aliasing_with_filter_not_worse_than_off(fs):
-    """8 V, standard 8x, FIR, the CI guard's settle / window: alias energy relative to the UNFILTERED fundamental
-    (lpf_aliasing.measure), each position against off. The filter is linear and |H| <= 1 (Q < 0.707), so every alias
-    line can only drop."""
-    for f in (10037, 19037):
-        r = lpf_aliasing.measure(fs, 8.0, f, window=0.1, settle=0.2)
-        res = {p: r[p]["abs_db_re_off_fund"] for p in lpf.POSITIONS}
-        print(fs, f, {p: round(v, 2) for p, v in res.items()})
-        for p in lpf.F0_HZ:
-            assert res[p] <= res["off"] + 0.01, (fs, f, p, res)
+@pytest.mark.parametrize("fs,f", [(48000, 10037), (48000, 19037), (44100, 10037), (44100, 19037)])
+def test_aliasing_with_filter_not_worse_than_off(fs, f):
+    """8 V, default bias, standard 8x, FIR, the CI window (0.1 s) after dk6as6.aliasing.SETTLE_S (1.25 s, validated
+    for the #102 stage): total alias energy relative to the UNFILTERED fundamental (lpf_aliasing.measure), each
+    position against off. This checks the total, not every alias line (lines from several internal frequencies can
+    fold onto one output bin). The settle is checked too: the 'other' energy (on no harmonic fold, e.g. the startup
+    drift) must stay OTHER_BELOW_DB under the off total, so the comparison measures aliasing; with dk's 0.2 s settle
+    the drift dominated, at -81.6 dB for every position."""
+    r = lpf_aliasing.measure(fs, 8.0, f, window=0.1)
+    assert r["settle_s"] == aliasing6.SETTLE_S
+    res = {p: r[p]["abs_db_re_off_fund"] for p in lpf.POSITIONS}
+    print(fs, f, {p: (round(v, 2), round(r[p]["abs_other_db"], 1)) for p, v in res.items()})
+    for p in lpf.POSITIONS:
+        assert r[p]["abs_other_db"] <= res["off"] - OTHER_BELOW_DB, (fs, f, p, r[p])
+    for p in lpf.F0_HZ:
+        assert res[p] <= res["off"] + 0.01, (fs, f, p, res)

@@ -22,6 +22,11 @@ Changing revision (5/9 or 6/9 kHz) is one line per position in `lpf.F0_HZ`.
 ## Method
 - **TPT state-variable filter** (Zavalishin; Simper 2013): g, k = 1/Q, a1 = 1/(1 + g(g + k)), a2 = g a1, a3 = g a2. Chosen
   for F-c (lowest float32 noise at 8×) and F-d (stable under modulation).
+- **Increment form.** Simper's state update ic ← 2v − ic is computed as ic ← ic + 2(v − ic), with v − ic formed directly
+  from a2, a3 and b1 = 1 − a1 = g(g + k)a1. It is the same filter in exact arithmetic (the transfer-function and
+  modulation tests pass unchanged), but in float32 the constant-input fixed point no longer depends on coefficient
+  rounding and the states take small increments instead of being re-formed from two near-equal terms. It replaces the
+  direct form, which missed the float32 limit at some frequencies (#119 review: −117.2 dBc at 19.6 kHz, 8 × 44.1 kHz).
 - **Inside the oversampled block.** `lpf.Stage` (a subclass of `dk6as6.stage.Stage`) filters the stage's internal-rate
   `out` in `process_internal`, so `process` decimates the filtered signal. The stage's own solve is untouched (the filter
   does not load the plate), so the class is independent of the stage's values (#102 / PR #118) and works on any of them.
@@ -48,40 +53,67 @@ response. The host-rate column is the same SVF run at 44.1 / 48 kHz, for compari
 End to end (`Stage(lpf="4k")` over the unfiltered stage, 10 mV multitone, base-rate output): within the same limits at
 1, 5, 10 and 19 kHz.
 
-Float32 vs float64 (same float32 input; error energy over output energy) [≤ −125 dBc]:
+Float32 vs float64 (same float32 input, 50 ms, error energy over output energy, DC included) [≤ −125 dBc]: 31
+third-octave sines over 20 Hz–20 kHz, 1 kHz, the review's 3.2 / 13.6 / 19.6 kHz, and white noise. The worst sine is at
+the top of the band, where the 4k output is 22 dB below its input, so the error relative to the output is largest.
 
-| internal rate | position | 1 kHz sine | white noise |
-|---|---|---|---|
-| 8 × 44.1 kHz | 4k | −133.3 dBc | −130.1 dBc |
-| 8 × 44.1 kHz | 7k | −134.3 dBc | −132.9 dBc |
-| 8 × 48 kHz | 4k | −132.0 dBc | −129.2 dBc |
-| 8 × 48 kHz | 7k | −133.7 dBc | −132.6 dBc |
+| internal rate | position | 1 kHz sine | worst sine | white noise | direct form (before): 1 kHz / worst sine / noise |
+|---|---|---|---|---|---|
+| 8 × 44.1 kHz | 4k | −141.6 dBc | −131.5 dBc (20 kHz) | −138.5 dBc | −133.3 / −117.2 (19.6 kHz) / −130.1 |
+| 8 × 44.1 kHz | 7k | −144.7 dBc | −139.2 dBc (20 kHz) | −140.4 dBc | −134.3 / −131.5 (13.6 kHz) / −133.2 |
+| 8 × 48 kHz | 4k | −142.4 dBc | −132.3 dBc (19.6 kHz) | −138.2 dBc | −132.0 / −123.4 (13.6 kHz) / −129.5 |
+| 8 × 48 kHz | 7k | −145.8 dBc | −137.3 dBc (19.6 kHz) | −139.8 dBc | −133.7 / −129.9 (19.6 kHz) / −132.1 |
+
+Where the direct form's excess came from: with float32 coefficients but float64 states it already reads up to
+−133.2 dBc in the 4k position (coefficient rounding moves its response), against −146.1 dBc worst for the increment form.
+A float32 step settles 4–8 ulp low in the increment form (the states' rounding deadband), 11–18 ulp in the direct form.
+The C++ core runs in double, so float32 here shows the brief's float32 option is safe; it is not the port's precision.
 
 Modulation: f0 changed every sample (random over 20 Hz–0.45 fs, and alternating 4k / 7k), Q 0.4277 and 5, both pre-warp
 choices: finite and bounded, and below 1e-9 over the last 2.6 ms of 52 ms of silence.
 
 ### Aliasing, filter on vs off (`lpf_aliasing.json`)
-The `dk/aliasing` metric and full sweep (1037…19037 Hz, 1 s window after 0.25 s), standard 8×, FIR, on **main's 6AS6
-stage values** (the #26 example values; the #102 values are PR #118). "dBc" is relative to each output's own
-fundamental (the repo metric); "abs" is the same alias energy relative to the **unfiltered** fundamental. Worst over the
-sweep, with its tone:
+The `dk/aliasing` metric and full sweep (1037…19037 Hz, 1 s window), standard 8×, FIR, on the **#102 stage values** (PR
+#118, merged), at both reference biases, after `dk6as6.aliasing.SETTLE_S` = 1.25 s: the #102 stage's coupling caps
+settle 4–5× slower than the 12AX7 stage's, and dk's 0.2–0.25 s leaves the startup drift dominating the metric (−82 dB
+in the CI's 0.1 s window, whatever the filter position). The off column reproduces `dk6as6/aliasing.json` exactly. "dBc"
+is relative to each output's own fundamental (the repo metric); "abs" is the same total relative to the **unfiltered**
+fundamental. Worst over the sweep, with its tone:
 
-| rate, drive | off | 4k: dBc / abs | 7k: dBc / abs | largest change on − off, abs, any tone |
+| rate, bias, drive | off | 4k: dBc / abs | 7k: dBc / abs | largest change on − off, abs, any tone |
 |---|---|---|---|---|
-| 48 kHz, 2 V | −110.4 (19037) | −97.0 (16037) / −117.2 (16037) | −102.6 (19037) / −117.0 (16037) | −0.01 dB |
-| 48 kHz, 8 V | −59.7 (19037) | −42.3 / −65.2 (19037) | −47.9 / −62.8 (19037) | −2.54 dB |
-| 44.1 kHz, 2 V | −108.0 (19037) | −98.7 (19037) / −120.3 (15037) | −101.4 / −116.3 (19037) | −0.01 dB |
-| 44.1 kHz, 8 V | −52.6 (19037) | −42.4 / −65.3 (19037) | −44.7 / −59.6 (19037) | −2.20 dB |
+| 48 kHz, 0.25 mA, 2 V | −148.0 (19037) | −132.8 (16037) / −153.0 (16037) | −140.1 (19037) / −153.0 (16037) | −0.01 dB |
+| 48 kHz, 0.25 mA, 8 V | −107.2 (19037) | −92.3 / −115.2 (19037) | −97.4 / −112.3 (19037) | −0.11 dB |
+| 48 kHz, 0.45 mA, 2 V | −130.4 (19037) | −121.1 / −144.0 (19037) | −123.2 / −138.1 (19037) | −0.05 dB |
+| 48 kHz, 0.45 mA, 8 V | −101.0 (19037) | −83.9 / −106.8 (19037) | −89.5 / −104.4 (19037) | −0.17 dB |
+| 44.1 kHz, 0.25 mA, 2 V | −149.9 (8037) | −137.6 / −156.9 (15037) | −144.5 / −156.5 (15037) | −0.01 dB |
+| 44.1 kHz, 0.25 mA, 8 V | −104.8 (19037) | −93.8 / −115.0 (17037) | −96.8 (19037) / −110.8 (17037) | −0.11 dB |
+| 44.1 kHz, 0.45 mA, 2 V | −133.1 (19037) | −119.6 / −142.5 (19037) | −123.4 / −138.3 (19037) | −0.05 dB |
+| 44.1 kHz, 0.45 mA, 8 V | −95.2 (19037) | −85.2 / −108.1 (19037) | −87.5 / −102.4 (19037) | −0.23 dB |
 
-The filter never raises the alias energy on any tone (it is linear with |H| ≤ 1, so each alias line can only drop); the
-dBc figures rise only because the filter cuts the fundamental too (14.9 dB at 19 kHz in 7k, 22.8 dB in 4k). The 8 V
-figures are main's stage at 58 % THD; the research's −102 dBc (off) / −106.9 dB abs (7k on) are for the #102 values.
-CI runs the absolute check at 10037 and 19037 Hz, 8 V, 48 and 44.1 kHz with the guard's short buffers.
+The total alias energy, in absolute terms, is lower with the filter on than off at every one of the 152 measured points
+(by 0.013 dB at least, where both read near the analysis floor). That is a measurement of the total, not a proof
+for each line: |H| ≤ 1 before decimation does not by itself bound every output bin, since components from several
+internal frequencies can fold onto one bin and their filtered phases change how they add. The dBc figures rise
+because the filter cuts the fundamental too (14.9 dB at 19 kHz in 7k, 22.8 dB in 4k). The source split
+(`internal` / `resampler` / `other` per position, and `abs_other_db`) is in every record: "other" (energy on no
+harmonic fold, e.g. a settling transient) reads ≤ −194.8 dB re the unfiltered fundamental at every point, so the
+sweep measures aliasing, not the startup. For comparison, the research's figures (−102.2 dBc off, −106.9 dB abs with 7k
+on, #102 values) sit close to the 48 kHz, 0.45 mA, 8 V row (−101.0 / −104.4).
 
-## Not in this PR
-- **C++ port**: the 6AS6 C++ core is #104; the SVF (no allocation, two state variables, denormal-safe under the core's
-  FTZ/DAZ guard) goes in with it.
-- **ngspice reference / digitised-curve check**: the chosen topology is an ideal decoupled 2-pole, so the analog
-  prototype formula is the reference (tested). The digitised S5 data is in the box lab, not the repo; F-a's fit is the
-  check.
+CI (`test_lpf.py`) runs the absolute check at 10037 and 19037 Hz, 8 V, 0.45 mA, 48 and 44.1 kHz, in the 0.1 s window
+after the same 1.25 s settle. It also requires "other" to be at least 20 dB under the off total, so a short settle that
+measures the startup tail (as 0.2 s did: −81.6 dB at every position, which passed the +0.01 dB allowance) now fails.
+Settled CI values, abs dB (off / 4k / 7k): 48 kHz 10037 −134.6 / −148.3 / −142.5, 19037 −101.0 / −106.7 / −104.4;
+44.1 kHz 10037 −127.5 / −141.6 / −136.8, 19037 −95.2 / −108.2 / −102.4.
+
+## Not in this PR (still open under #103)
+This PR is the Python prototype step of #103; the issue stays open for the rest.
+- **C++ port** with the 6AS6 C++ core (#104): the SVF in the core (no allocation, two state variables), realtime and
+  denormal tests under the core's FTZ/DAZ guard, and a benchmark.
+- **Check against the digitised Super 15 curve**: the S5 data is in the box lab, not the repo. The tests here check the
+  discretisation against the analog prototype formula, which is not an independent check of the shape; F-a's fit to
+  the curve (RMS 0.023 dB) is the only one so far.
+- **Topology reference**: the chosen topology is an ideal decoupled 2-pole, so there is no circuit to put in ngspice
+  yet. A topology reference is still owed if evidence for a real circuit (or a plate-loaded one) turns up.
 - Smoothing of the other controls (#115); mode interaction and the "Off" roll-off (#111).
