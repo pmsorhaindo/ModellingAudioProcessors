@@ -20,16 +20,20 @@ from dk.aliasing import FS, SWEEP_HZ, DRIVES, WINDOW_S, CI_WINDOW_S, tone_bin, a
 from dk6as6.stage import Stage, BIAS_MA  # noqa: E402 -- after the sys.path setup
 
 SETTLE_S = 1.25
-BIASES = (0.25, BIAS_MA)          # mA: the reference bias points (spice6as6/run_refs.BIASES["dual"])
+BIASES = (0.1, 0.25, BIAS_MA, 0.6)   # mA: the reference bias points (spice6as6/run_refs.BIASES["dual"])
 JSON = os.path.join(HERE, "aliasing.json")
 # Pass limits, standard 8x / FIR / 48 kHz, dBc: the full sweep's worst total (aliasing.json, 1 s windows) plus
 # dk.aliasing.MARGIN_DB (3 dB), rounded up to 0.1 dB, as dk.aliasing.LIMIT_DBC. Every worst tone is 19037 Hz; the
 # CI window (CI_WINDOW_S, tone on 19040 Hz) reads within 0.11 dB of the full sweep there.
 LIMIT_DBC = {                     # (bias mA, drive V): limit      worst measured
+    (0.1, 2.0): -137.3,           # -140.31 (resampler floor)
+    (0.1, 8.0): -109.5,           # -112.50
     (0.25, 2.0): -144.9,          # -147.99 (resampler floor)
     (0.25, 8.0): -104.1,          # -107.18
     (BIAS_MA, 2.0): -127.3,       # -130.37 (resampler floor)
     (BIAS_MA, 8.0): -97.9,        # -100.96
+    (0.6, 2.0): -120.5,           # -123.59 (resampler floor)
+    (0.6, 8.0): -95.4,            # -98.44, the worst of the range (least cathode feedback)
 }
 
 

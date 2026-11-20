@@ -11,7 +11,7 @@ and the C++ core do not depend on it.
 | `spice/` | ngspice references: Koren 12AX7 (i) and Dempwolf–Zölzer (ii) on the same netlist, generated from `dk/circuit.VALUES` (#4) | done; settled 500 ms sine data, tight solver (#5) |
 | `analysis.py` | shared measurements (DFT harmonics, THD, bias shift, recovery τ) | done |
 | `dk/` | nodal DK prototype in Python/NumPy with streaming half-band resamplers, Drive/Bias/Output, quality settings hq 16× / standard 8× (default) / eco 4× + small-cap pre-warp | all tests pass in every setting (small-signal worst 0.013 / 0.052 / 0.054 dB; plain 4× fails with 0.21 dB from trapezoidal warping) — see `dk/RESULTS.md` |
-| `dk6as6/`, `spice6as6/` | the 6AS6 stage (#26, values #102): HT 200 V, Ra 270k, unbypassed cathode rheostat solved for a target cathode current (0.1–0.6 mA, default 0.45 mA), P1 wiring (g3 on the cathode), screen at Ec2 = 120 V, the fit6as6 `dual_control` law (#55); nodal DK in `dk6as6/` (reusing `dk/`'s resampler, stage controls and tolerances), its same-model ngspice references at 0.25 and 0.45 mA in `spice6as6/` | standard 8× and hq 16× pass the 12AX7 criteria against the same-model references at both currents — see `dk6as6/RESULTS.md` |
+| `dk6as6/`, `spice6as6/` | the 6AS6 stage (#26, values #102): HT 200 V, Ra 270k, unbypassed cathode rheostat solved for a target cathode current (0.1–0.6 mA, default 0.45 mA; knob law and bias meter #110), P1 wiring (g3 on the cathode), screen at Ec2 = 120 V, the fit6as6 `dual_control` law (#55); nodal DK in `dk6as6/` (reusing `dk/`'s resampler, stage controls and tolerances), its same-model ngspice references at 0.1, 0.25, 0.45 and 0.6 mA in `spice6as6/` | standard 8× and hq 16× pass the 12AX7 criteria against the same-model references at all four currents — see `dk6as6/RESULTS.md` |
 | `cpp/` | header-only realtime C++17 core of the 12AX7 DK stage (#19): fixed-size state, no allocation in `process()`, FTZ/DAZ guard, lock-free coefficient swap, #7 fallback, hq / standard / eco with the FIR resampler | reproduces `dk/results.json` in every setting (harmonics to 5.5e-8 dB, identical Newton histograms) — see `cpp/README.md` |
 | `../wdf/` | WDF **reference** (#12), not the shipping core: R-type root with the triode's two ports (Werner et al., DAFx-15), reusing `dk/`'s values, triode, Newton, quality settings, resamplers and `dk.validate` | passes the DK criteria in every setting; same output as DK to ≤ 1e-7 V — see `../wdf/README.md` and `../wdf/RESULTS.md`. Kept for comparison; the plugin and the C++ core do not depend on it |
 
@@ -66,12 +66,12 @@ python -m dk.aliasing_guard                        # CI aliasing guard: limits +
 python -m dk.aliasing_guard --fs 44100              # #96: separate FIR budget and baseline at 44.1 kHz
 python -m dk.bench_triode                          # #16: triode eval before/after, Python + C (gcc) -> dk/bench_triode.json (~5 s)
 python -m pytest -q cpp/tests                      # #19: C++ core vs the Python stage (needs a C++17 compiler; ~20 s)
-python spice6as6/run_refs.py                       # 6AS6: regenerates spice6as6/reference_{dual_0.25mA,dual_0.45mA,r51_0.45mA}.json
-python spice6as6/run_refs.py --convergence dual    # 6AS6: TIGHT rerun of both dual references -> spice6as6/convergence_*.json
-python -m dk6as6.validate                          # 6AS6: -> dk6as6/results.json (standard, hq at 0.25 / 0.45 mA; plain 4x)
+python spice6as6/run_refs.py                       # 6AS6: regenerates spice6as6/reference_{dual_{0.1,0.25,0.45,0.6}mA,r51_0.45mA}.json
+python spice6as6/run_refs.py --convergence dual    # 6AS6: TIGHT rerun of the dual references -> spice6as6/convergence_*.json
+python -m dk6as6.validate                          # 6AS6: -> dk6as6/results.json (standard, hq at 0.1 / 0.25 / 0.45 / 0.6 mA; plain 4x)
 python -m dk6as6.compare_fits                      # 6AS6: #51 vs #55 harmonics -> dk6as6/fit_comparison.json
-python -m dk6as6.bias_sweep                        # 6AS6: Rk, gain, THD at 3 V out over 0.1-0.6 mA -> dk6as6/bias_sweep.json
-python -m dk6as6.aliasing                          # 6AS6: aliasing sweep at 0.25 / 0.45 mA -> dk6as6/aliasing.json
+python -m dk6as6.bias_sweep                        # 6AS6: Rk, gain, THD at 3 V out over 0.1-0.6 mA, knob law, Newton -> dk6as6/bias_sweep.json
+python -m dk6as6.aliasing                          # 6AS6: aliasing sweep at 0.1 / 0.25 / 0.45 / 0.6 mA -> dk6as6/aliasing.json
 ```
 
 ### Aliasing guard and its baseline (#35)

@@ -12,7 +12,7 @@ from dk.aliasing import MARGIN_DB
 from dk6as6 import aliasing as A
 
 
-@pytest.mark.parametrize("bias, drive", [(0.25, 8.0), (A.BIAS_MA, 2.0), (A.BIAS_MA, 8.0)])
+@pytest.mark.parametrize("bias, drive", [(0.25, 8.0), (A.BIAS_MA, 2.0), (A.BIAS_MA, 8.0), (0.6, 8.0)])
 def test_worst_tone_within_limit(bias, drive):
     r = A.measure(drive, 19037, bias=bias, window=A.CI_WINDOW_S)
     assert r["total_dbc"] <= A.LIMIT_DBC[bias, drive], r

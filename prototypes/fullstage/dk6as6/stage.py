@@ -3,10 +3,11 @@
 Same controls and streaming resampler as the 12AX7 stage (dk/stage.py, which this subclasses for process(),
 latency, the resampler and iteration_stats()):
   drive, output : linear gains before / after the stage
-  bias          : target DC cathode current Ik = Ip + Ig2, in mA (default BIAS_MA = 0.45, the manuals' range is
-                  0.1-0.6 mA; #102). The cathode is an unbypassed rheostat to ground: cathode_resistor() solves the
-                  Rk that gives this current at the DC operating point, and Rk is then a fixed resistor for the run
-                  (Stage.rk). The knob law and live bias changes are #110 / #115.
+  bias          : target DC cathode current Ik = Ip + Ig2, in mA: what the unit's meter reads (default BIAS_MA = 0.45,
+                  the manuals' range is 0.1-0.6 mA; #102). The cathode is an unbypassed rheostat to ground:
+                  cathode_resistor() solves the Rk that gives this current at the DC operating point, and Rk is then
+                  a fixed resistor for the run (Stage.rk; live bias changes are #115). The panel knob maps to it by
+                  knob_bias() (#110); bias_point() reports Rk, Vk, Ip, Ig2 and Ik for a setting (a bias meter).
   quality       : QUALITY key, or an (os, prewarp_hz) pair for experiments. Validated here: "standard" = 8x (the
                   12AX7 stage's default) and "hq" = 16x. No eco setting yet: the 12AX7's PREWARP_HZ was derived for
                   its circuit, and a 6AS6 one would need its own minimax derivation and validation.
@@ -26,10 +27,12 @@ from .pentode import DUAL_CONTROL
 
 QUALITY = {"hq": (16, None), "standard": (8, None)}   # (os, prewarp_hz)
 BIAS_MA = 0.45                     # default target cathode current, mA (S6's default; #102)
+BIAS_RANGE_MA = (0.6, 0.1)         # target Ik at the knob's two ends, mA (#110; knob_bias)
+KNOB = (1.0, 11.0)                 # the panel's Bias scale (SOS 2003: "calibrated from one to 11")
 RK_LOG10 = (2.7, 6.0)              # cathode_resistor's bracket, log10(Rk / ohm): ~0.5 kOhm to 1 MOhm
 NEWTON = dict(max_it=MAX_IT, tol_v=TOL_V, tol_f=TOL_F)
-__all__ = ["Stage", "QUALITY", "BIAS_MA", "cathode_resistor", "operating_point", "OperatingPointError",
-           "NonConvergenceWarning"]
+__all__ = ["Stage", "QUALITY", "BIAS_MA", "BIAS_RANGE_MA", "KNOB", "knob_bias", "bias_knob", "bias_point",
+           "cathode_resistor", "operating_point", "OperatingPointError", "NonConvergenceWarning"]
 
 
 def operating_point(rk, par=DUAL_CONTROL, newton=tuple(NEWTON.values())):
@@ -67,6 +70,42 @@ def cathode_resistor(bias_ma=BIAS_MA, par=DUAL_CONTROL, newton=tuple(NEWTON.valu
     return 10.0 ** brentq(err, lo, hi, xtol=1e-13, rtol=4 * np.finfo(float).eps)
 
 
+def knob_bias(knob):
+    """The Bias knob law (#110): target cathode current in mA for a knob position on the panel's 1-11 scale.
+    Reverse acting, as the sources describe (SOS 2003: "As the Bias control is advanced, the amount of current flowing
+    through the 6AS6 valve falls"; UA: clockwise decreases current), and logarithmic in Ik between the documented
+    range's ends, 0.6 mA at 1 and 0.1 mA at 11:  Ik = 0.6 mA * (0.1 / 0.6) ** ((knob - 1) / 10).
+    No source gives the taper or the current at the ends of the travel: putting the documented 0.1-0.6 mA range on the
+    ends and the log taper are OUR choices (dk6as6/RESULTS.md, "Bias control"). Log because the manuals describe the
+    control only by its meter reading, and their named settings (starved < 0.1, frequency doubling ~0.1-0.2,
+    lowest distortion 0.25-0.3, normal 0.2-0.4, warm ~0.6 mA) sit at roughly equal current ratios, crowded at the
+    low end; equal knob travel per ratio gives them comparable travel. It does NOT reproduce the UA plug-in's default
+    (knob 6 = 0.45 mA, prototypes/research/culture-vulture-controls.md): here knob 6 is 0.245 mA."""
+    lo, hi = KNOB
+    if not lo <= knob <= hi:
+        raise ValueError(f"Bias knob {knob} is outside the panel's {lo:g}-{hi:g} scale")
+    a, b = BIAS_RANGE_MA
+    return a * (b / a) ** ((knob - lo) / (hi - lo))
+
+
+def bias_knob(bias_ma):
+    """The inverse of knob_bias(): the knob position (1-11) that sets bias_ma mA."""
+    a, b = BIAS_RANGE_MA
+    if not b <= bias_ma <= a:
+        raise ValueError(f"bias {bias_ma} mA is outside the knob's {b:g}-{a:g} mA range")
+    lo, hi = KNOB
+    return lo + (hi - lo) * np.log(bias_ma / a) / np.log(b / a)
+
+
+def bias_point(bias_ma=BIAS_MA, par=DUAL_CONTROL, newton=tuple(NEWTON.values())):
+    """What a bias meter needs for a setting: the DC operating point at the Rk that sets bias_ma mA. Returns the solved
+    rheostat rk (ohm), the cathode voltage vk = Rk * Ik (V, positive: the "positive voltage on its cathode" the
+    manuals describe), the plate voltage va (V), ip, ig2 and ik = ip + ig2 (A)."""
+    dc = operating_point(cathode_resistor(bias_ma, par, newton), par, newton)
+    return dict(bias_ma=bias_ma, rk=float(dc["rk"]), vk=float(dc["nodes"]["k"]), va=float(dc["nodes"]["a"]),
+                ip=float(dc["ip"]), ig2=float(dc["ig2"]), ik=float(dc["ik"]))
+
+
 class Stage(_Stage12AX7):
     def __init__(self, fs, bias=BIAS_MA, drive=1.0, output=1.0, pentode=DUAL_CONTROL, quality="standard", filt="fir",
                  newton=None):
@@ -93,7 +132,7 @@ class Stage(_Stage12AX7):
         return operating_point(self.rk, self.par, self.newton)
 
     def swap_bias(self, bias):
-        raise NotImplementedError("the 6AS6 stage's Rk is fixed for the run; live bias changes are #110 / #115")
+        raise NotImplementedError("the 6AS6 stage's Rk is fixed for the run; live bias changes are #115")
 
     def reset(self):
         m, dc = self.m, self.dc
