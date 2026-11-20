@@ -32,6 +32,7 @@ Usage: python spice6as6/run_refs.py [dual] [r51] [dual:0.25] [dual/T] [dual/P2:0
 import json
 import math
 import os
+import signal
 import subprocess
 import sys
 import numpy as np
@@ -40,7 +41,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 from analysis import load_wrdata, resample_uniform, harmonics, thd, db_rel  # noqa: E402 -- after the sys.path setup
 from spice.run_refs import (SOLVER, SINE, BURST, AC_GRID, AC_EDGES_HZ, AMPS, NGBEHAVIOR, NGSPICE, spice_num,  # noqa: E402 -- after the sys.path setup
-                            burst_metrics, ngspice_version)
+                            burst_metrics)
 from dk6as6.circuit import VALUES, MODES, MODE, valve_cap_pins  # noqa: E402 -- after the sys.path setup
 from dk6as6 import pentode  # noqa: E402 -- after the sys.path setup
 from dk6as6.stage import cathode_resistor, BIAS_MA  # noqa: E402 -- after the sys.path setup
@@ -50,7 +51,8 @@ import emit_spice  # noqa: E402  (fit6as6's SPICE expressions)
 PARAMS = {"dual": pentode.DUAL_CONTROL, "r51": pentode.REFIT_51}
 BIASES = {"dual": (0.1, 0.25, 0.45, 0.6), "r51": (0.45,)}   # target cathode currents of the P1 references, mA (#110:
                                                            # the range ends, lowest distortion, default)
-MODE_BIASES = {"P1": BIASES["dual"], "T": (0.1, 0.25, 0.45, 0.6), "P2": (0.1, 0.25, 0.45, 0.6)}   # dual model (#111)
+# dual model (#111); T 0.35 mA is the top of its supported envelope (stage.SUPPORTED_MA)
+MODE_BIASES = {"P1": BIASES["dual"], "T": (0.1, 0.25, 0.35, 0.45, 0.6), "P2": (0.1, 0.25, 0.45, 0.6)}
 SUBCKT = {"dual": "6AS6_DUAL", "r51": "6AS6_R51"}
 ANALYSES = ["main", "burst"]
 SUBCKT_PINS = ("P", "G2", "G3", "G1", "K")   # XV1: plate screen suppressor grid cathode (6AS6_fit.inc order)
@@ -254,6 +256,40 @@ def write_netlist():
     return fns
 
 
+# Every ngspice call has a wall-clock limit (#111: two Rosetta ngspice children wrote all their output, then hung
+# for ~2 h until killed). The longest analysis so far took 2.4 h with eight runs sharing the CPU (P2 0.1 mA main).
+NGSPICE_TIMEOUT_S = float(os.environ.get("NGSPICE_TIMEOUT_S", 4 * 3600))
+KILL_WAIT_S = 30.0
+
+
+def ngspice(args, timeout=None):
+    """(returncode, stdout + stderr) of `ngspice args` in spice6as6/. Past `timeout` seconds (NGSPICE_TIMEOUT_S) its
+    process group is killed (SIGKILL), reaped with a bounded wait, and TimeoutError is raised: nothing waits forever,
+    even on a child that does not die (then it is left to the OS and the error says so)."""
+    timeout = NGSPICE_TIMEOUT_S if timeout is None else timeout
+    p = subprocess.Popen([NGSPICE, *args], cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                         start_new_session=True)
+    try:
+        out, err = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            p.communicate(timeout=KILL_WAIT_S)
+            reaped = "killed"
+        except subprocess.TimeoutExpired:
+            reaped = f"killed but not reaped after {KILL_WAIT_S:g} s (pid {p.pid})"
+        raise TimeoutError(f"ngspice {' '.join(args)} ran past {timeout:g} s: {reaped}") from None
+    return p.returncode, out + err
+
+
+def ngspice_version():
+    _, txt = ngspice(["--version"], timeout=60)
+    return next((ln.strip("* ").split(":")[0].strip() for ln in txt.splitlines() if "ngspice-" in ln), txt.strip())
+
+
 def run(model, bias, solver=SOLVER, out="out", write=True, mode=MODE):
     """Simulate `model` wired as `mode` at `bias` mA with `solver` settings into spice6as6/<out>/ and analyse it;
     write=True (re)writes the committed reference_<tag>_<bias>mA.json, write=False is for convergence studies. Fails if
@@ -268,10 +304,12 @@ def run(model, bias, solver=SOLVER, out="out", write=True, mode=MODE):
     for name in ANALYSES:   # one at a time: a failure stops the run with nothing left running (PR #120 review)
         fn = os.path.join(HERE, f"_gen_{out.replace('/', '_')}_{c}_{name}.cir")
         open(fn, "w").write(netlist(model, name, bias, out=out, solver=solver, rk=rk, mode=mode))
-        r = subprocess.run([NGSPICE, "-b", fn], cwd=HERE, capture_output=True, text=True)
-        open(os.path.join(o, f"{c}_{name}_log.txt"), "w").write(r.stdout + r.stderr)
-        os.remove(fn)
-        if r.returncode != 0:
+        try:
+            code, log = ngspice(["-b", fn])
+        finally:
+            os.remove(fn)
+        open(os.path.join(o, f"{c}_{name}_log.txt"), "w").write(log)
+        if code != 0:
             raise RuntimeError(f"ngspice failed on {name} ({c}), see {o}/{c}_{name}_log.txt")
     gen = dict(script="spice6as6/run_refs.py", ngspice=ngspice_version(), solver=solver, sine=SINE, burst=BURST,
                ac=dict(AC_GRID, edges_hz=AC_EDGES_HZ), spiceinit=init, params=PARAMS[model], bias_ma=bias,
