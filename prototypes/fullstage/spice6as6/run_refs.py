@@ -20,7 +20,8 @@ runs the DK model's exact parameters (and 2/pi to 17 digits instead of emit_spic
 the internal V(ik0) / V(ik) nodes substituted inline (no internal nodes
 whose ~mA "voltages" would sit near vntol), and the GE inter-electrode capacitances from circuit.VALUES.
 spice6as6/tests/test_netlists_6as6.py parses all of it and fails on any divergence.
-Usage: python spice6as6/run_refs.py [dual] [r51] [dual:0.25] ...   (every BIASES case if none given; ~2-4 min each)
+Usage: python spice6as6/run_refs.py [dual] [r51] [dual:0.25] ...   (every BIASES case if none given; ~2-4 min
+       each, except the 0.6 mA burst: ~2 h, dk6as6/RESULTS.md)
        python spice6as6/run_refs.py --write-netlist   (rewrites models/*.inc and stage_6as6.cir; no ngspice needed)
        python spice6as6/run_refs.py --convergence [dual]   (TIGHT rerun vs the committed JSONs; ~2x as long)
 """
@@ -43,7 +44,8 @@ sys.path.insert(0, pentode.FIT6AS6)
 import emit_spice  # noqa: E402  (fit6as6's SPICE expressions)
 
 PARAMS = {"dual": pentode.DUAL_CONTROL, "r51": pentode.REFIT_51}
-BIASES = {"dual": (0.25, 0.45), "r51": (0.45,)}          # target cathode currents of the references, mA
+BIASES = {"dual": (0.1, 0.25, 0.45, 0.6), "r51": (0.45,)}   # target cathode currents of the references, mA (#110:
+                                                           # the range ends, lowest distortion, default)
 SUBCKT = {"dual": "6AS6_DUAL", "r51": "6AS6_R51"}
 MODELS = {m: (f".include models/6as6_{m}.inc", SUBCKT[m]) for m in PARAMS}
 ANALYSES = ["main", "burst"]
@@ -199,7 +201,7 @@ def run(model, bias, solver=SOLVER, out="out", write=True):
     init = spiceinit()
     rk = cathode_resistor(bias, PARAMS[model])
     c = case(model, bias)
-    for name in ANALYSES:
+    for name in ANALYSES:   # one at a time: a failure stops the run with nothing left running (PR #120 review)
         fn = os.path.join(HERE, f"_gen_{out.replace('/', '_')}_{c}_{name}.cir")
         open(fn, "w").write(netlist(model, name, bias, out=out, solver=solver, rk=rk))
         r = subprocess.run([NGSPICE, "-b", fn], cwd=HERE, capture_output=True, text=True)
@@ -246,8 +248,8 @@ TIGHT = dict(SOLVER, reltol=SOLVER["reltol"] / 10, abstol=SOLVER["abstol"] / 10,
 def convergence(model="dual", bias=BIAS_MA):
     """Rerun `model` at `bias` with TIGHT (not written) and compare it with the committed reference_<case>.json;
     writes convergence_<case>.json. H2-H5 differences are in dB, the rest relative."""
-    a = json.load(open(ref_file(model, bias)))
     b = run(model, bias, solver=TIGHT, out="out_tight", write=False)
+    a = json.load(open(ref_file(model, bias)))
     d = dict(model=model, bias_ma=bias, solver=TIGHT,
              op_rel={k: abs(b["op"][k] / a["op"][k] - 1) for k in ("va", "vk", "ia", "ig2")},
              ac_max_db=float(np.max(np.abs(np.array(b["ac"]["db"]) - np.array(a["ac"]["db"])))),

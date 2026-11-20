@@ -1,7 +1,8 @@
 """6AS6 DK stage tests (#26, #102). Pass criteria are dk/validate.CRIT, unchanged, tested against reference (ii):
 ngspice running the same fit6as6 dual_control equations and parameters (#55) on the same netlist
-(spice6as6/reference_dual_<bias>mA.json), so a failure here is a METHOD error, not a valve-model difference. Every
-6AS6 quality setting must pass at every reference bias (spice6as6/run_refs.BIASES["dual"]).
+(spice6as6/reference_dual_<bias>mA.json), so a failure here is a METHOD error, not a valve-model difference. The
+default quality (standard 8x) is tested at every reference bias (spice6as6/run_refs.BIASES["dual"]: 0.1, 0.25, 0.45,
+0.6 mA) and hq 16x at the range's ends; `python -m dk6as6.validate` runs every quality at every bias (results.json).
 Run from prototypes/fullstage:  python -m pytest -q dk6as6/tests
 """
 import os
@@ -9,7 +10,8 @@ import sys
 import numpy as np
 import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from dk6as6.stage import Stage, QUALITY, BIAS_MA, cathode_resistor, operating_point, OperatingPointError
+from dk6as6.stage import (Stage, QUALITY, BIAS_MA, cathode_resistor, operating_point, OperatingPointError, knob_bias,
+                           bias_knob, bias_point)
 from dk6as6 import validate as V, circuit, linear
 from spice.run_refs import AMPS
 from spice6as6.run_refs import BIASES
@@ -17,7 +19,11 @@ from spice6as6.run_refs import BIASES
 C = V.CRIT
 
 
-@pytest.fixture(scope="module", params=[(q, b) for b in BIASES["dual"] for q in QUALITY], ids=str)
+# CI time: the fullstage job is ~12 of its 15 minutes; standard at every bias plus hq at the ends keeps it inside.
+CASES = [("standard", b) for b in BIASES["dual"]] + [("hq", b) for b in (BIASES["dual"][0], BIASES["dual"][-1])]
+
+
+@pytest.fixture(scope="module", params=CASES, ids=str)
 def res(request):
     q, b = request.param
     return V.run(quality=q, bias=b)
@@ -36,7 +42,7 @@ def test_values_are_the_102_table():
     assert circuit.VALUES == dict(HT=200.0, Ra=270e3, Rg=1e6, Rl=1e6, Cin=100e-9, Cout=100e-9, EC2=120.0,
                                   Rs=1e3, Rgs=68e3,
                                   CG1K=4e-12, CG3=3.4e-12, CPK=3e-12, CG1P=0.02e-12, CG1G3=0.15e-12)
-    assert BIAS_MA == 0.45 and BIASES["dual"] == (0.25, 0.45)
+    assert BIAS_MA == 0.45 and BIASES["dual"] == (0.1, 0.25, 0.45, 0.6)
 
 
 @pytest.mark.parametrize("bias, rk_k", [(0.1, 52.8), (0.25, 19.1), (0.3, 15.6), (0.6, 7.1)])
@@ -81,6 +87,40 @@ def test_operating_point_method_is_the_6as6_solve(bias):
     assert abs(dc["ik"] / (bias * 1e-3) - 1) < 1e-3
 
 
+def test_knob_law_is_reverse_acting_and_log_in_ik():
+    """#110: knob 1 = 0.6 mA, 11 = 0.1 mA (the documented range on the ends), each knob step the same current ratio."""
+    ik = [knob_bias(k) for k in range(1, 12)]
+    assert ik[0] == pytest.approx(0.6, rel=1e-15) and ik[-1] == pytest.approx(0.1, rel=1e-15)
+    assert all(a > b for a, b in zip(ik, ik[1:]))                       # advancing the knob lowers the current
+    assert np.allclose(np.array(ik[1:]) / ik[:-1], (0.1 / 0.6) ** 0.1, rtol=1e-13, atol=0)
+    assert knob_bias(6) == pytest.approx(0.6 / 6 ** 0.5, rel=1e-15)     # mid-travel: the geometric mean, 0.245 mA
+    for b in (0.1, 0.25, 0.3, 0.45, 0.6):
+        assert knob_bias(bias_knob(b)) == pytest.approx(b, rel=1e-13)
+
+
+@pytest.mark.parametrize("knob", [0.5, 11.5])
+def test_knob_outside_the_scale_raises(knob):
+    with pytest.raises(ValueError):
+        knob_bias(knob)
+
+
+@pytest.mark.parametrize("bias", [0.05, 0.7])
+def test_bias_outside_the_knob_range_raises(bias):
+    with pytest.raises(ValueError):
+        bias_knob(bias)
+
+
+@pytest.mark.parametrize("bias", [0.1, 0.25, 0.6])
+def test_bias_point_is_the_meter_reading_of_the_stage(bias):
+    """bias_point() reports the stage's own DC point: Ik on target, Vk = Rk Ik (all of Ik in the rheostat)."""
+    m, st = bias_point(bias), Stage(V.FS, bias=bias)
+    assert m["rk"] == st.rk and m["ik"] == m["ip"] + m["ig2"]
+    assert (m["vk"], m["va"], m["ip"], m["ig2"]) == (st.dc["nodes"]["k"], st.dc["nodes"]["a"], st.dc["ip"],
+                                                     st.dc["ig2"])
+    assert m["ik"] == pytest.approx(bias * 1e-3, rel=1e-9)
+    assert m["vk"] == pytest.approx(m["rk"] * m["ik"], rel=1e-12)
+
+
 def test_bias_is_fixed_for_the_run():
     with pytest.raises(NotImplementedError):
         Stage(V.FS).swap_bias(0.25)
@@ -96,9 +136,10 @@ def test_analog_response_is_what_ngspice_computes(bias):
     assert np.max(np.abs(db - np.array(r["ac"]["db"]))) < 1e-5
 
 
+@pytest.mark.parametrize("bias", [0.1, BIAS_MA, 0.6])
 @pytest.mark.parametrize("quality", QUALITY)
-def test_silence_has_no_startup_thump(quality):
-    s = Stage(48000.0, quality=quality)
+def test_silence_has_no_startup_thump(quality, bias):
+    s = Stage(48000.0, bias=bias, quality=quality)
     y = s.process(np.zeros(4800))["out"]
     assert np.max(np.abs(y)) < 1e-6          # volts at the output, first 100 ms of silence
 
