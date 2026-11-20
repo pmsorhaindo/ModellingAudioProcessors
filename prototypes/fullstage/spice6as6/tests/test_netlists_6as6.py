@@ -209,3 +209,23 @@ def test_subckt_is_the_dk_valve_law(model):
         rel = 1e-12 + (2e-16 / math.exp(x) if x < 0 else 0.0)
         assert _eval(b["BP"][2], *v) == pytest.approx(ip, rel=rel, abs=1e-25), v
         assert _eval(b["BG2"][2], *v) == pytest.approx(ig2, rel=10 * rel, abs=1e-25), v
+
+
+def test_failed_analysis_stops_the_run(tmp_path, monkeypatch):
+    """run() runs the analyses one at a time: when one fails it raises with no ngspice left running, its generated
+    netlist removed and no later analysis started (PR #120 review: the concurrent version raised on a failed main
+    while the ~2 h burst kept writing to the paths a retry reuses). A stand-in executable plays ngspice: "main"
+    fails, anything else would sleep."""
+    calls = tmp_path / "calls.txt"
+    fake = tmp_path / "ngspice"
+    fake.write_text('#!/bin/sh\necho "$2" >> "$CALLS"\ncase "$2" in *_main.cir) exit 1;; esac\nsleep 30\n')
+    fake.chmod(0o755)
+    monkeypatch.setattr(R, "NGSPICE", str(fake))
+    monkeypatch.setenv("CALLS", str(calls))
+    out = str(tmp_path / "out")
+    with pytest.raises(RuntimeError, match="ngspice failed on main"):
+        R.run("dual", BIAS_MA, out=out, write=False)
+    started = calls.read_text().split()
+    assert len(started) == 1 and started[0].endswith("_main.cir"), started
+    assert not [f for f in os.listdir(R.HERE) if f.startswith("_gen_") and "_out_" in f and tmp_path.name in f]
+    assert os.path.exists(os.path.join(out, f"{R.case('dual', BIAS_MA)}_main_log.txt"))

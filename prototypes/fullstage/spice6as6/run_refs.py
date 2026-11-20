@@ -201,17 +201,13 @@ def run(model, bias, solver=SOLVER, out="out", write=True):
     init = spiceinit()
     rk = cathode_resistor(bias, PARAMS[model])
     c = case(model, bias)
-    procs = {}
-    for name in ANALYSES:   # independent analyses, run concurrently (the 0.6 mA burst alone takes ~2 h, RESULTS.md)
+    for name in ANALYSES:   # one at a time: a failure stops the run with nothing left running (PR #120 review)
         fn = os.path.join(HERE, f"_gen_{out.replace('/', '_')}_{c}_{name}.cir")
         open(fn, "w").write(netlist(model, name, bias, out=out, solver=solver, rk=rk))
-        log = open(os.path.join(o, f"{c}_{name}_log.txt"), "w")
-        procs[name] = fn, log, subprocess.Popen([NGSPICE, "-b", fn], cwd=HERE, stdout=log, stderr=subprocess.STDOUT)
-    for name, (fn, log, pr) in procs.items():
-        rc = pr.wait()
-        log.close()
+        r = subprocess.run([NGSPICE, "-b", fn], cwd=HERE, capture_output=True, text=True)
+        open(os.path.join(o, f"{c}_{name}_log.txt"), "w").write(r.stdout + r.stderr)
         os.remove(fn)
-        if rc != 0:
+        if r.returncode != 0:
             raise RuntimeError(f"ngspice failed on {name} ({c}), see {o}/{c}_{name}_log.txt")
     gen = dict(script="spice6as6/run_refs.py", ngspice=ngspice_version(), solver=solver, sine=SINE, burst=BURST,
                ac=dict(AC_GRID, edges_hz=AC_EDGES_HZ), spiceinit=init, params=PARAMS[model], bias_ma=bias,
