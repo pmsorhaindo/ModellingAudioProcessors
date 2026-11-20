@@ -32,10 +32,10 @@ will not use a brand or device name.
   1.25–1.35 × one mono instance with fast math and 1.57–1.67 × with libm, over the three quality settings.
 - **6AS6.** A datasheet fit that covers the low-current region (`prototypes/fit6as6/README.md`), and a Python DK
   stage with the circuit values inferred in #102 (HT 200 V, Ra 270k, unbypassed cathode set by a target current over
-  0.1–0.6 mA) and the T / P1 / P2 Distortion-switch wirings of #111 (inferred; P2 is our hypothesis). It passes the
-  12AX7 stage's criteria against same-model ngspice references in every mode, except where #111 records why not (T
-  at high current and drive is outside the valve law; P2's burst τ at 0.6 mA). P1's aliasing at standard 8× / 48 kHz
-  is ≤ −98 dBc at 8 V; P2's is not yet acceptable (`prototypes/fullstage/dk6as6/RESULTS.md`). It is not ported to C++.
+  0.1–0.6 mA) and the T / P1 / P2 Distortion-switch wirings of #111 (inferred; P2 is our hypothesis). Its supported
+  envelope, P1 at 0.1–0.6 mA and T at 0.1–0.35 mA, passes the 12AX7 stage's criteria against same-model ngspice
+  references and the aliasing quality gate (P1 ≤ −98 dBc at 8 V, standard 8× / 48 kHz); P2 and T above 0.35 mA are
+  experimental only (`prototypes/fullstage/dk6as6/RESULTS.md`). It is not ported to C++.
 - **Plugin, first loadable build** (`plugin/README.md`, #22). AU v2 and VST 3 wrappers of the stereo 12AX7 stage,
   under the code name Gyre (#116). Parameters: Drive, Bias, Output, Quality and Bypass. On the M1 it passes the
   Steinberg validator and `auval`, and offline renders through both plugins null exactly against the C++ core.

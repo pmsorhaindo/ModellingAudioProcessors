@@ -20,15 +20,24 @@ env:
 
 jobs:
   test:
-    name: test (${{ matrix.prototype }})
+    name: test (${{ matrix.prototype }}${{ matrix.shard && format(' {0}', matrix.shard) || '' }})
     runs-on: ubuntu-latest
-    # fullstage took ~10 of 15 min in #120; #111 adds the T / P2 validation and aliasing cases (~3 min)
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        # wdf (#12): the WDF stage reuses prototypes/fullstage (its requirements.txt includes fullstage's); Linux only
-        prototype: [valvelab, fullstage, fit6as6, wdf]
+        # wdf (#12): the WDF stage reuses prototypes/fullstage (its requirements.txt includes fullstage's); Linux only.
+        # fullstage runs as two shards (#111): its 6AS6 tests (dk6as6/, spice6as6/) and everything else. One job had
+        # reached ~12 of 15 min on main after #119, and 16 min with #111's cases.
+        include:
+          - prototype: valvelab
+          - prototype: fullstage
+            pytest_args: --ignore=dk6as6 --ignore=spice6as6
+          - prototype: fullstage
+            shard: 6as6
+            pytest_args: dk6as6 spice6as6
+          - prototype: fit6as6
+          - prototype: wdf
     defaults:
       run:
         working-directory: prototypes/${{ matrix.prototype }}
@@ -48,7 +57,7 @@ jobs:
       # The DK and WDF tests compare against committed ngspice reference JSONs
       # (spice/reference_*.json), so ngspice itself is not needed here.
       - name: Pytest
-        run: python -m pytest -q
+        run: python -m pytest -q ${{ matrix.pytest_args }}
 
   # Apple silicon (#72): the plugin's first target (AU is macOS-only). The same fullstage suite as above, on an
   # arm64 macOS runner (Apple clang, numpy on Accelerate). Blocking since #70 was fixed.
