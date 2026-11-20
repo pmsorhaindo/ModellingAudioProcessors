@@ -80,6 +80,19 @@ def sines(quality="standard", filt="fir", model="dual", T=0.5, amps=AMPS, bias=B
     return out, times, its
 
 
+def burst(quality="standard", filt="fir", model="dual", bias=BIAS_MA):
+    """The 4 V 1 kHz tone burst (10-30 ms, 120 ms) through Stage.process: (burst_metrics of Vgk, iteration stats)."""
+    s = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model])
+    nb = int(0.12 * FS)
+    tb = np.arange(nb + s.latency_samples) / FS
+    xb = 4 * np.sin(2 * np.pi * 1000 * tb) * ((tb > 10e-3) & (tb < 30e-3))
+    rb = aligned(s, xb, record=("out", "vgk"))
+    vg = rb["_internal"]["vgk"]
+    ti = (np.arange(len(vg)) - s.rs.up_delay_internal) / s.fs   # Vgk is seen after the interpolator only
+    keep = (ti >= 0) & (ti < nb / FS)
+    return burst_metrics(ti[keep], vg[keep]), s.iteration_stats()
+
+
 def harm_dev(sine, r):
     res = {}
     for a in sine:
@@ -113,17 +126,7 @@ def run(T=0.5, quality="standard", filt="fir", model="dual", bias=BIAS_MA):
     out["sine"], times, its = sines(quality, filt, model, T, bias=bias)
     o["harm"] = harm_dev(out["sine"], r)
 
-    s = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model])
-    nb = int(0.12 * FS)
-    tb = np.arange(nb + s.latency_samples) / FS
-    xb = 4 * np.sin(2 * np.pi * 1000 * tb) * ((tb > 10e-3) & (tb < 30e-3))
-    rb = aligned(s, xb, record=("out", "vgk"))
-    vg = rb["_internal"]["vgk"]
-    ti = (np.arange(len(vg)) - s.rs.up_delay_internal) / s.fs   # Vgk is seen after the interpolator only
-    keep = (ti >= 0) & (ti < nb / FS)
-    vg, ti = vg[keep], ti[keep]
-    out["burst"] = burst_metrics(ti, vg)
-    its["burst"] = s.iteration_stats()
+    out["burst"], its["burst"] = burst(quality, filt, model, bias)
     rb_ = r["burst"]
     shift_ref = rb_["min_vgk"] - rb_["rest_vgk"]
     tr = np.array(out["burst"]["traj_vgk"]) - out["burst"]["rest_vgk"]

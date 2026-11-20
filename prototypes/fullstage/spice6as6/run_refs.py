@@ -199,13 +199,17 @@ def run(model, bias, solver=SOLVER, out="out", write=True):
     init = spiceinit()
     rk = cathode_resistor(bias, PARAMS[model])
     c = case(model, bias)
-    for name in ANALYSES:
+    procs = {}
+    for name in ANALYSES:   # independent analyses, run concurrently
         fn = os.path.join(HERE, f"_gen_{out.replace('/', '_')}_{c}_{name}.cir")
         open(fn, "w").write(netlist(model, name, bias, out=out, solver=solver, rk=rk))
-        r = subprocess.run([NGSPICE, "-b", fn], cwd=HERE, capture_output=True, text=True)
-        open(os.path.join(o, f"{c}_{name}_log.txt"), "w").write(r.stdout + r.stderr)
+        log = open(os.path.join(o, f"{c}_{name}_log.txt"), "w")
+        procs[name] = fn, log, subprocess.Popen([NGSPICE, "-b", fn], cwd=HERE, stdout=log, stderr=subprocess.STDOUT)
+    for name, (fn, log, pr) in procs.items():
+        rc = pr.wait()
+        log.close()
         os.remove(fn)
-        if r.returncode != 0:
+        if rc != 0:
             raise RuntimeError(f"ngspice failed on {name} ({c}), see {o}/{c}_{name}_log.txt")
     gen = dict(script="spice6as6/run_refs.py", ngspice=ngspice_version(), solver=solver, sine=SINE, burst=BURST,
                ac=dict(AC_GRID, edges_hz=AC_EDGES_HZ), spiceinit=init, params=PARAMS[model], bias_ma=bias,
@@ -246,8 +250,8 @@ TIGHT = dict(SOLVER, reltol=SOLVER["reltol"] / 10, abstol=SOLVER["abstol"] / 10,
 def convergence(model="dual", bias=BIAS_MA):
     """Rerun `model` at `bias` with TIGHT (not written) and compare it with the committed reference_<case>.json;
     writes convergence_<case>.json. H2-H5 differences are in dB, the rest relative."""
-    a = json.load(open(ref_file(model, bias)))
     b = run(model, bias, solver=TIGHT, out="out_tight", write=False)
+    a = json.load(open(ref_file(model, bias)))
     d = dict(model=model, bias_ma=bias, solver=TIGHT,
              op_rel={k: abs(b["op"][k] / a["op"][k] - 1) for k in ("va", "vk", "ia", "ig2")},
              ac_max_db=float(np.max(np.abs(np.array(b["ac"]["db"]) - np.array(a["ac"]["db"])))),
