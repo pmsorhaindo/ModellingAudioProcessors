@@ -80,7 +80,8 @@ def knob_bias(knob):
     control only by its meter reading, and their named settings (starved < 0.1, frequency doubling ~0.1-0.2,
     lowest distortion 0.25-0.3, normal 0.2-0.4, warm ~0.6 mA) sit at roughly equal current ratios, crowded at the
     low end; equal knob travel per ratio gives them comparable travel. It does NOT reproduce the UA plug-in's default
-    (knob 6 = 0.45 mA, prototypes/research/culture-vulture-controls.md): here knob 6 is 0.245 mA."""
+    (knob 6 = 0.45 mA, UA manual, Bias section): here knob 6 is 0.245 mA.
+    UA manual: https://help.uaudio.com/hc/en-us/articles/33542576197908-Thermionic-Culture-Vulture-Manual"""
     lo, hi = KNOB
     if not lo <= knob <= hi:
         raise ValueError(f"Bias knob {knob} is outside the panel's {lo:g}-{hi:g} scale")

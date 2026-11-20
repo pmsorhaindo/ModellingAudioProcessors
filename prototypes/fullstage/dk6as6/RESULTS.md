@@ -87,13 +87,14 @@ solved for it (`cathode_resistor`). Rk is fixed per run (`swap_bias` raises; smo
 | direction | reverse acting: advancing the knob lowers Ik | SOS 2003: "As the Bias control is advanced, the amount of current … falls"; UA: clockwise decreases current |
 | range | 0.6 mA at 1, 0.1 mA at 11 | **inferred.** The documented range (SOS: ~0.6 mA "warm", < 0.1 mA "starves"; M-ORIG §3) put on the ends of the travel. No source gives the current at either end, and Overdrive's "Bias range" shift (S1/S7) has no number (not modelled) |
 | taper | log in Ik (equal knob travel per current ratio) | **our choice**, no source gives a taper. The sources only describe the control by its meter reading, and their named settings sit at roughly equal ratios, crowded at the low end: < 0.1 starved, ~0.1–0.2 frequency doubling (P2), 0.2–0.4 normal, 0.25–0.3 lowest distortion, ~0.5 P2 null, ~0.6 warm. A log taper gives the 0.1–0.3 mA region, where most of those sit, 61 % of the travel; linear in Ik would give it 40 % |
-| default | 0.45 mA (`BIAS_MA`, unchanged) | UA plug-in default (research note) |
+| default | 0.45 mA (`BIAS_MA`, unchanged) | UA plug-in manual, Bias section: default knob 6 = 0.45 mA (https://help.uaudio.com/hc/en-us/articles/33542576197908-Thermionic-Culture-Vulture-Manual) |
 
-**Known disagreement.** The research note records the UA plug-in's default as knob 6 = 0.45 mA. This law puts 0.45 mA at
+**Known disagreement.** The UA plug-in manual (link above) gives the default as knob 6 = 0.45 mA. This law puts 0.45 mA at
 knob 2.61 and gives 0.245 mA at knob 6. The obvious alternatives with the same ends miss it too: linear in Ik gives
 0.35 mA at knob 6, and linear in Rk (a linear-taper rheostat) 0.167 mA. Matching it would mean shaping a law to that
-one point, with end currents that no source gives. (The UA page returned HTTP 403 when re-checked for #110, so the
-point rests on the research note.) So the knob scale here is ours, not UA's.
+one point, with end currents that no source gives. (The datum is also in
+`prototypes/research/culture-vulture-controls.md`; the PR #120 review re-read the UA page and confirmed it.) So the
+knob scale here is ours, not UA's.
 
 **Bias meter (`stage.bias_point(bias_ma)`).** Returns Rk, Vk, Va, Ip, Ig2 and Ik at the DC operating point (the
 stage's own solve; tested equal to `Stage.dc`, with Vk = Rk · Ik). Every knob position (`bias_sweep.json` "knobs"; THD
@@ -167,8 +168,7 @@ chgtol × 10 change nothing; TIGHT is no slower). A 0.05 V sine at 0.6 mA (the m
 (231 / 2), so only the silent stretch before the burst is slow. ngspice accepts only converged timepoints, so the reference is valid at the unchanged #5
 settings; it is only slow. We did not find the cause. The one difference we found is that at 0.6 mA
 Vak = 101.5 V < 120 V, the only reference with Vak below the fit's `pwr(V(P,K)/120, XA)` normalisation point; the
-expressions are smooth there, so that is not an explanation. `run_refs.run` now starts the two analyses (main,
-burst) concurrently.
+expressions are smooth there, so that is not an explanation.
 
 There is no reference (i): this repo's sources have no independent 6AS6 SPICE model.
 
