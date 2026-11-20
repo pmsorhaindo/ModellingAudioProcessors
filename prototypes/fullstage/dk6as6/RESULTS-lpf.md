@@ -74,30 +74,41 @@ choices: finite and bounded, and below 1e-9 over the last 2.6 ms of 52 ms of sil
 
 ### Aliasing, filter on vs off (`lpf_aliasing.json`)
 The `dk/aliasing` metric and full sweep (1037…19037 Hz, 1 s window), standard 8×, FIR, on the **#102 stage values** (PR
-#118, merged), at both reference biases, after `dk6as6.aliasing.SETTLE_S` = 1.25 s: the #102 stage's coupling caps
-settle 4–5× slower than the 12AX7 stage's, and dk's 0.2–0.25 s leaves the startup drift dominating the metric (−82 dB
-in the CI's 0.1 s window, whatever the filter position). The off column reproduces `dk6as6/aliasing.json` exactly. "dBc"
-is relative to each output's own fundamental (the repo metric); "abs" is the same total relative to the **unfiltered**
-fundamental. Worst over the sweep, with its tone:
+#118) at the four reference biases of #110 (`dk6as6.aliasing.BIASES`: 0.1, 0.25, 0.45, 0.6 mA), after
+`dk6as6.aliasing.SETTLE_S` = 1.25 s: the #102 stage's coupling caps settle 4–5× slower than the 12AX7 stage's, and dk's
+0.2–0.25 s leaves the startup drift dominating the metric (−82 dB in the CI's 0.1 s window, whatever the filter
+position). The off column reproduces `dk6as6/aliasing.json` exactly at every bias. "dBc" is relative to each output's
+own fundamental (the repo metric); "abs" is the same total relative to the **unfiltered** fundamental. Worst over the
+sweep, dBc (tone) / abs (tone):
 
 | rate, bias, drive | off | 4k: dBc / abs | 7k: dBc / abs | largest change on − off, abs, any tone |
 |---|---|---|---|---|
+| 48 kHz, 0.1 mA, 2 V | −140.3 (19037) | −131.1 (19037) / −154.0 (19037) | −133.1 (19037) / −148.0 (19037) | +0.002 dB (floor) |
+| 48 kHz, 0.1 mA, 8 V | −112.5 (19037) | −99.6 (19037) / −122.5 (19037) | −103.8 (19037) / −118.7 (19037) | −0.01 dB |
 | 48 kHz, 0.25 mA, 2 V | −148.0 (19037) | −132.8 (16037) / −153.0 (16037) | −140.1 (19037) / −153.0 (16037) | −0.01 dB |
-| 48 kHz, 0.25 mA, 8 V | −107.2 (19037) | −92.3 / −115.2 (19037) | −97.4 / −112.3 (19037) | −0.11 dB |
-| 48 kHz, 0.45 mA, 2 V | −130.4 (19037) | −121.1 / −144.0 (19037) | −123.2 / −138.1 (19037) | −0.05 dB |
-| 48 kHz, 0.45 mA, 8 V | −101.0 (19037) | −83.9 / −106.8 (19037) | −89.5 / −104.4 (19037) | −0.17 dB |
-| 44.1 kHz, 0.25 mA, 2 V | −149.9 (8037) | −137.6 / −156.9 (15037) | −144.5 / −156.5 (15037) | −0.01 dB |
-| 44.1 kHz, 0.25 mA, 8 V | −104.8 (19037) | −93.8 / −115.0 (17037) | −96.8 (19037) / −110.8 (17037) | −0.11 dB |
-| 44.1 kHz, 0.45 mA, 2 V | −133.1 (19037) | −119.6 / −142.5 (19037) | −123.4 / −138.3 (19037) | −0.05 dB |
-| 44.1 kHz, 0.45 mA, 8 V | −95.2 (19037) | −85.2 / −108.1 (19037) | −87.5 / −102.4 (19037) | −0.23 dB |
+| 48 kHz, 0.25 mA, 8 V | −107.2 (19037) | −92.3 (19037) / −115.2 (19037) | −97.4 (19037) / −112.3 (19037) | −0.11 dB |
+| 48 kHz, 0.45 mA, 2 V | −130.4 (19037) | −121.1 (19037) / −144.0 (19037) | −123.2 (19037) / −138.1 (19037) | −0.05 dB |
+| 48 kHz, 0.45 mA, 8 V | −101.0 (19037) | −83.9 (19037) / −106.8 (19037) | −89.5 (19037) / −104.4 (19037) | −0.17 dB |
+| 48 kHz, 0.6 mA, 2 V | −123.6 (19037) | −114.4 (19037) / −137.3 (19037) | −116.4 (19037) / −131.3 (19037) | −0.10 dB |
+| 48 kHz, 0.6 mA, 8 V | −98.4 (19037) | −80.9 (19037) / −103.8 (19037) | −86.5 (19037) / −101.4 (19037) | −0.18 dB |
+| 44.1 kHz, 0.1 mA, 2 V | −143.1 (19037) | −129.6 (19037) / −152.5 (19037) | −133.4 (19037) / −148.3 (19037) | +0.002 dB (floor) |
+| 44.1 kHz, 0.1 mA, 8 V | −109.8 (18037) | −100.5 (19037) / −122.8 (18037) | −102.8 (18037) / −117.0 (18037) | −0.01 dB |
+| 44.1 kHz, 0.25 mA, 2 V | −149.9 (8037) | −137.6 (15037) / −156.9 (15037) | −144.5 (15037) / −156.5 (15037) | −0.01 dB |
+| 44.1 kHz, 0.25 mA, 8 V | −104.8 (19037) | −93.8 (17037) / −115.0 (17037) | −96.8 (19037) / −110.8 (17037) | −0.11 dB |
+| 44.1 kHz, 0.45 mA, 2 V | −133.1 (19037) | −119.6 (19037) / −142.5 (19037) | −123.4 (19037) / −138.3 (19037) | −0.05 dB |
+| 44.1 kHz, 0.45 mA, 8 V | −95.2 (19037) | −85.2 (19037) / −108.1 (19037) | −87.5 (19037) / −102.4 (19037) | −0.23 dB |
+| 44.1 kHz, 0.6 mA, 2 V | −126.3 (19037) | −112.7 (19037) / −135.5 (19037) | −116.5 (19037) / −131.4 (19037) | −0.10 dB |
+| 44.1 kHz, 0.6 mA, 8 V | −90.8 (19037) | −81.1 (19037) / −103.9 (19037) | −83.2 (19037) / −98.2 (19037) | −0.19 dB |
 
-The total alias energy, in absolute terms, is lower with the filter on than off at every one of the 152 measured points
-(by 0.013 dB at least, where both read near the analysis floor). That is a measurement of the total, not a proof
-for each line: |H| ≤ 1 before decimation does not by itself bound every output bin, since components from several
-internal frequencies can fold onto one bin and their filtered phases change how they add. The dBc figures rise
-because the filter cuts the fundamental too (14.9 dB at 19 kHz in 7k, 22.8 dB in 4k). The source split
-(`internal` / `resampler` / `other` per position, and `abs_other_db`) is in every record: "other" (energy on no
-harmonic fold, e.g. a settling transient) reads ≤ −194.8 dB re the unfiltered fundamental at every point, so the
+Over the 304 points × 2 positions, the absolute total alias energy with the filter on is lower than off in 604 cases
+and higher in 4, by +0.0014 to +0.0024 dB: 1037 Hz, 0.1 mA, 2 V, 4k and 7k, both rates, where every output reads
+−209.9 dB, below `dk.aliasing.ANALYSIS_FLOOR_DBC` (−200 dBc). In the 540 cases above that floor the filter lowered the
+total every time (by 0.006 dB at least). That is a measurement of the total, not a
+proof for each line: |H| ≤ 1 before decimation does not by itself bound every output bin, since components from
+several internal frequencies can fold onto one bin and their filtered phases change how they add. The dBc figures rise
+because the filter cuts the fundamental too (14.9 dB at 19 kHz in 7k, 22.8 dB in 4k). The source split (`internal` /
+`resampler` / `other` per position, and `abs_other_db`) is in every record: "other" (energy on no harmonic fold, e.g. a
+settling transient) reads ≤ −184.1 dB re the unfiltered fundamental at every point (≤ −194.6 dB at 0.1–0.45 mA), so the
 sweep measures aliasing, not the startup. For comparison, the research's figures (−102.2 dBc off, −106.9 dB abs with 7k
 on, #102 values) sit close to the 48 kHz, 0.45 mA, 8 V row (−101.0 / −104.4).
 

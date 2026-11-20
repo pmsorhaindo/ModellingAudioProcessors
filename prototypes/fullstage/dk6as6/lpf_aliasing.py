@@ -1,7 +1,8 @@
 """Aliasing of the 6AS6 stage with the post-distortion low-pass (#103) off / 4k / 7k: dk/aliasing.py's metric and full
-sweep (SWEEP_HZ, WINDOW_S window), standard 8x, FIR resampler, 2 V and 8 V, at 48 and 44.1 kHz, at both reference
-biases (dk6as6.aliasing.BIASES), after dk6as6.aliasing.SETTLE_S (1.25 s, validated there for the #102 stage's slow
-coupling caps: dk's 0.2-0.25 s leaves the startup drift at -82 dBc in a 0.1 s window, -128 dBc in 1 s).
+sweep (SWEEP_HZ, WINDOW_S window), standard 8x, FIR resampler, 2 V and 8 V, at 48 and 44.1 kHz, at every reference
+bias (dk6as6.aliasing.BIASES, 0.1-0.6 mA since #110), after dk6as6.aliasing.SETTLE_S (1.25 s, validated there for
+the #102 stage's slow coupling caps: dk's 0.2-0.25 s leaves the startup drift at -82 dBc in a 0.1 s window, -128 dBc
+in 1 s).
 
 One stage run per point: the stage's internal output is decimated directly ("off") and through each PostFilter
 position, which is what lpf.Stage does (test_lpf.py checks the equivalence). Reported per point and position:
