@@ -31,9 +31,11 @@ will not use a brand or device name.
   11.1–14.3 % of one core, depending on level and math path. A stereo instance (`StereoStage`, two SIMD lanes) costs
   1.25–1.35 × one mono instance with fast math and 1.57–1.67 × with libm, over the three quality settings.
 - **6AS6.** A datasheet fit that covers the low-current region (`prototypes/fit6as6/README.md`), and a Python DK
-  stage with the circuit values inferred in #102 (HT 200 V, Ra 270k, unbypassed cathode set by a target current,
-  P1 wiring). It passes the 12AX7 stage's criteria at standard and hq at 0.25 and 0.45 mA, and its aliasing at
-  standard 8× / 48 kHz is ≤ −101 dBc at 8 V (`prototypes/fullstage/dk6as6/RESULTS.md`). It is not ported to C++.
+  stage with the circuit values inferred in #102 (HT 200 V, Ra 270k, unbypassed cathode set by a target current over
+  0.1–0.6 mA) and the T / P1 / P2 Distortion-switch wirings of #111 (inferred; P2 is our hypothesis). It passes the
+  12AX7 stage's criteria against same-model ngspice references in every mode, except where #111 records why not (T
+  at high current and drive is outside the valve law; P2's burst τ at 0.6 mA). P1's aliasing at standard 8× / 48 kHz
+  is ≤ −98 dBc at 8 V; P2's is not yet acceptable (`prototypes/fullstage/dk6as6/RESULTS.md`). It is not ported to C++.
 - **Plugin, first loadable build** (`plugin/README.md`, #22). AU v2 and VST 3 wrappers of the stereo 12AX7 stage,
   under the code name Gyre (#116). Parameters: Drive, Bias, Output, Quality and Bypass. On the M1 it passes the
   Steinberg validator and `auval`, and offline renders through both plugins null exactly against the C++ core.
