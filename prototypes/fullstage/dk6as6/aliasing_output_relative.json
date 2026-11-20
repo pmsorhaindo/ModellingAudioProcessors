@@ -1,0 +1,262 @@
+[
+ {
+  "mode": "P1",
+  "bias_ma": 0.1,
+  "drive": 2.0,
+  "tone": 19037,
+  "supported": true,
+  "total_dbc": -140.30618760102124,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -140.30618760102124
+ },
+ {
+  "mode": "P1",
+  "bias_ma": 0.1,
+  "drive": 8.0,
+  "tone": 19037,
+  "supported": true,
+  "total_dbc": -112.503884572022,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -112.503884572022
+ },
+ {
+  "mode": "P1",
+  "bias_ma": 0.25,
+  "drive": 2.0,
+  "tone": 19037,
+  "supported": true,
+  "total_dbc": -147.99239060809032,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -147.99239060809032
+ },
+ {
+  "mode": "P1",
+  "bias_ma": 0.25,
+  "drive": 8.0,
+  "tone": 19037,
+  "supported": true,
+  "total_dbc": -107.17748881091913,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -107.17748881091913
+ },
+ {
+  "mode": "P1",
+  "bias_ma": 0.45,
+  "drive": 2.0,
+  "tone": 19037,
+  "supported": true,
+  "total_dbc": -130.37328809940195,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -130.37328809940195
+ },
+ {
+  "mode": "P1",
+  "bias_ma": 0.45,
+  "drive": 8.0,
+  "tone": 19037,
+  "supported": true,
+  "total_dbc": -100.95851281918004,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -100.95851281918004
+ },
+ {
+  "mode": "P1",
+  "bias_ma": 0.6,
+  "drive": 2.0,
+  "tone": 19037,
+  "supported": true,
+  "total_dbc": -123.59377391314823,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -123.59377391314823
+ },
+ {
+  "mode": "P1",
+  "bias_ma": 0.6,
+  "drive": 8.0,
+  "tone": 19037,
+  "supported": true,
+  "total_dbc": -98.44107715531571,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -98.44107715531571
+ },
+ {
+  "mode": "T",
+  "bias_ma": 0.1,
+  "drive": 2.0,
+  "tone": 19037,
+  "supported": true,
+  "total_dbc": -140.73093507568638,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -140.73093507568638
+ },
+ {
+  "mode": "T",
+  "bias_ma": 0.1,
+  "drive": 8.0,
+  "tone": 19037,
+  "supported": true,
+  "total_dbc": -125.25021383961432,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -125.25021383961432
+ },
+ {
+  "mode": "T",
+  "bias_ma": 0.25,
+  "drive": 2.0,
+  "tone": 19037,
+  "supported": true,
+  "total_dbc": -136.54959893777934,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -136.54959893777934
+ },
+ {
+  "mode": "T",
+  "bias_ma": 0.25,
+  "drive": 8.0,
+  "tone": 19037,
+  "supported": true,
+  "total_dbc": -121.08275939893714,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -121.08275939893714
+ },
+ {
+  "mode": "T",
+  "bias_ma": 0.35,
+  "drive": 2.0,
+  "tone": 19037,
+  "supported": true,
+  "total_dbc": -133.34724535848238,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -133.34724535848238
+ },
+ {
+  "mode": "T",
+  "bias_ma": 0.35,
+  "drive": 8.0,
+  "tone": 19037,
+  "supported": true,
+  "total_dbc": -117.97635072067632,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -117.97635072067632
+ },
+ {
+  "mode": "T",
+  "bias_ma": 0.45,
+  "drive": 2.0,
+  "tone": 19037,
+  "supported": false,
+  "total_dbc": -129.32497989410115,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -129.32497989410115
+ },
+ {
+  "mode": "T",
+  "bias_ma": 0.45,
+  "drive": 8.0,
+  "tone": 18037,
+  "supported": false,
+  "total_dbc": -56.71412058866495,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -56.71412058866495
+ },
+ {
+  "mode": "T",
+  "bias_ma": 0.6,
+  "drive": 2.0,
+  "tone": 19037,
+  "supported": false,
+  "total_dbc": -55.379846020186434,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -55.379846020186434
+ },
+ {
+  "mode": "T",
+  "bias_ma": 0.6,
+  "drive": 8.0,
+  "tone": 18037,
+  "supported": false,
+  "total_dbc": -54.77388688063787,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -54.77388688063787
+ },
+ {
+  "mode": "P2",
+  "bias_ma": 0.1,
+  "drive": 2.0,
+  "tone": 19037,
+  "supported": false,
+  "total_dbc": -97.24540123190879,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -97.24540123190879
+ },
+ {
+  "mode": "P2",
+  "bias_ma": 0.1,
+  "drive": 8.0,
+  "tone": 16037,
+  "supported": false,
+  "total_dbc": -81.21433920922593,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -81.21433920922593
+ },
+ {
+  "mode": "P2",
+  "bias_ma": 0.25,
+  "drive": 2.0,
+  "tone": 19037,
+  "supported": false,
+  "total_dbc": -91.23662291051794,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -91.23662291051794
+ },
+ {
+  "mode": "P2",
+  "bias_ma": 0.25,
+  "drive": 8.0,
+  "tone": 19037,
+  "supported": false,
+  "total_dbc": -61.552642130168316,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -61.552642130168316
+ },
+ {
+  "mode": "P2",
+  "bias_ma": 0.45,
+  "drive": 2.0,
+  "tone": 19037,
+  "supported": false,
+  "total_dbc": -89.00849986951202,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -89.00849986951202
+ },
+ {
+  "mode": "P2",
+  "bias_ma": 0.45,
+  "drive": 8.0,
+  "tone": 19037,
+  "supported": false,
+  "total_dbc": -63.50368400112429,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -63.50368400112429
+ },
+ {
+  "mode": "P2",
+  "bias_ma": 0.6,
+  "drive": 2.0,
+  "tone": 19037,
+  "supported": false,
+  "total_dbc": -89.53450665416739,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -89.53450665416739
+ },
+ {
+  "mode": "P2",
+  "bias_ma": 0.6,
+  "drive": 8.0,
+  "tone": 19037,
+  "supported": false,
+  "total_dbc": -65.77139671826039,
+  "harmonics_re_fund_db": 0.0,
+  "total_re_output_db": -65.77139671826039
+ }
+]
