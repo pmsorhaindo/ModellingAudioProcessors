@@ -1,0 +1,116 @@
+{
+ "format_version": 2,
+ "reason": "Initial 6AS6 baseline (#113): shipped resampler, CI window, settled #102/#110/#111 circuit",
+ "updated": "2026-11-21",
+ "git_rev": "dfc1edb",
+ "tolerance_db": 1.5,
+ "method": {
+  "fs_base": 44100,
+  "stage": "dk6as6.stage.Stage",
+  "filt": "fir",
+  "lpf": "off",
+  "tones": {
+   "P1/0.6mA/4x/fir/2V": [
+    19037
+   ],
+   "P1/0.6mA/4x/fir/8V": [
+    19037,
+    18037,
+    17037,
+    16037
+   ],
+   "P1/0.6mA/standard/fir/2V": [
+    19037
+   ],
+   "P1/0.6mA/standard/fir/8V": [
+    19037
+   ],
+   "T/0.3mA/standard/fir/8V": [
+    19037
+   ],
+   "P1/0.6mA/hq/fir/2V": [
+    19037
+   ],
+   "P1/0.6mA/hq/fir/8V": [
+    19037
+   ]
+  },
+  "settle_s": 1.25,
+  "window_s": 0.1,
+  "band_hz": [
+   20.0,
+   20000.0
+  ],
+  "mask_bins": 3
+ },
+ "values": {
+  "P1/0.6mA/hq/fir/2V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -126.61171226801198,
+     "f_hz": 19040.0
+    }
+   }
+  },
+  "P1/0.6mA/hq/fir/8V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -109.68670192318336,
+     "f_hz": 19040.0
+    }
+   }
+  },
+  "P1/0.6mA/standard/fir/2V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -126.61238851620908,
+     "f_hz": 19040.0
+    }
+   }
+  },
+  "P1/0.6mA/standard/fir/8V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -90.8439138747492,
+     "f_hz": 19040.0
+    }
+   }
+  },
+  "T/0.3mA/standard/fir/8V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -121.69018005643723,
+     "f_hz": 19040.0
+    }
+   }
+  },
+  "P1/0.6mA/4x/fir/2V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -126.60432181117655,
+     "f_hz": 19040.0
+    }
+   }
+  },
+  "P1/0.6mA/4x/fir/8V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -59.73609673013651,
+     "f_hz": 19040.0
+    },
+    "18037": {
+     "total_dbc": -62.38947227450016,
+     "f_hz": 18030.0
+    },
+    "17037": {
+     "total_dbc": -59.63495296206184,
+     "f_hz": 17040.0
+    },
+    "16037": {
+     "total_dbc": -60.897027466493505,
+     "f_hz": 16040.0
+    }
+   }
+  }
+ }
+}
