@@ -313,69 +313,87 @@ stage. The test runs 19037 Hz in the 0.1 s CI window (within 0.11 dB of the full
 resampler's stopband are in "Aliasing at every quality … (#113)" below (IIR is not offered, so not swept).
 
 ## Aliasing at every quality, the resampler's stopband, and the eco / quality decision (#113, 21 Nov 2026)
-On the settled circuit (#102 values, #110 bias, #111 modes, #103 post-filter). Files:
-`python -m dk6as6.aliasing_quality` → `aliasing_quality.json` (the sweeps), `python -m dk6as6.validate_4x` →
-`results_4x.json` (plain 4× against the references), `python -m dk6as6.resampler_study` → `resampler_study.json`
-(the FIR stopband study, with `resampler_cost.cpp`), `python -m dk6as6.aliasing_guard` (the CI guard, baselines
-`aliasing_baseline.json` and `aliasing_baseline_44100.json`). Tests: `dk6as6/tests/test_dk6as6_aliasing_quality.py`
-and `test_dk6as6_aliasing_guard.py` (they read the committed results; the measurements take hours).
+On the settled circuit (#102 values, #110 bias, #111 modes, #103 post-filter), revised after the PR #129 review (band
+edge, hq coverage, k140 at every factor). Files: `python -m dk6as6.aliasing_quality` → `aliasing_quality.json` (the
+sweeps, the band-edge scan, the hq bound, the settle check), `python -m dk6as6.validate_4x` → `results_4x.json` (plain 4×
+against the references), `python -m dk6as6.resampler_study` → `resampler_study.json` (the FIR stopband study, with
+`resampler_cost.cpp`), `python -m dk6as6.aliasing_guard` (the CI guard; baselines `aliasing_baseline.json`,
+`aliasing_baseline_44100.json`). Tests: `dk6as6/tests/test_dk6as6_aliasing_quality.py` and
+`test_dk6as6_aliasing_guard.py` (they read the committed results; the measurements take hours).
 
 ### Decision (the numbers are below)
-1. **Eco: Gyre does not offer an eco setting on the 6AS6 path (recommendation).** Plain 4× is accurate (it passes
-   every `dk/validate.CRIT` criterion at all seven references, worst small-signal error 0.00091 dB), and its aliasing is
-   inside the shipped 12AX7 eco budget by ≥ 29.9 dB and even inside the 12AX7 *standard* budget (by 10.9 dB at 8 V; at
-   2 V by the same 5.3 dB as standard, both on the resampler's floor). But against standard **its worst 8 V total rises
-   by 38.9 dB at 48 kHz and 31.2 dB at 44.1 kHz** (−59.5 / −59.6 dBc, against −98.4 / −90.8 dBc at 8×), the
-   post-filter at 4× misses its own discretisation tolerance (0.265 dB / 1.19° against `test_lpf.py`'s 0.15 dB /
-   0.35°, and no pre-warp frequency fixes that), and what it buys is about half the stage's CPU (the 12AX7 C++ core,
-   the only one ported: eco 0.53–0.56× standard). With accuracy first and aliasing to be reduced wherever possible,
-   that trade is not worth offering. **Michael's call** (below): if CPU becomes the constraint, plain 4× is
-   the candidate, and it needs a 4×-accurate post-filter first.
+1. **Eco: Gyre does not offer an eco setting on the 6AS6 path (recommendation).** Plain 4× is accurate (every
+   `dk/validate.CRIT` criterion at all seven references, worst small-signal error 0.00091 dB). Its aliasing is inside the
+   shipped 12AX7 eco budget by ≥ 26.4 dB and inside the 12AX7 *standard* budget at 8 V (by 10.9 / 9.2 dB at 48 /
+   44.1 kHz); at 2 V it sits on the same resampler floor as standard. But its **worst 8 V total is 37.5 dB above
+   standard's at 48 kHz and 34.8 dB at 44.1 kHz** (−59.5 / −56.0 dBc against −97.0 / −90.8 dBc, on the grid with the
+   band edge), the post-filter at 4× misses its own discretisation tolerance (0.265 dB / 1.19° against `test_lpf.py`'s
+   0.15 dB / 0.35°, and no pre-warp frequency fixes that), and what it buys is about half the stage's CPU (the 12AX7
+   C++ core, the only one ported: eco 0.53–0.56× standard). With accuracy first and aliasing to be reduced wherever
+   possible, that trade is not worth offering. **Michael's call**: if CPU becomes the constraint, plain 4× is the
+   candidate, and it needs a 4×-accurate post-filter first.
 2. **Standard stays 8× with no pre-warp.** 8× passes every criterion with 0.00085 dB worst small-signal error
    (`results.json`), and even 4× leaves only 0.00091 dB, so a pre-warp has nothing to correct; on the 12AX7 it cost
-   harmonic accuracy (#45). No 6AS6 pre-warp was derived (the issue allows one only if derived; there is no error for it
-   to minimise), and the 12AX7's `PREWARP_HZ` is not used.
-3. **hq stays 16×.** At 8 V it removes the internal folding that limits 8× (internal share at most −98.7 / −90.9 dBc
-   at 8×, 48 / 44.1 kHz; at most −154.6 dBc at 16×) and is then at the resampler's floor (−111.5 / −109.6 dBc worst,
-   equal to the 64× ground truth).
-4. **FIR resampler: k140 at every quality and both rates (recommendation, not implemented here).** Kaiser β = 14.47,
-   first stage 123 taps at 48 kHz and 219 at 44.1 kHz, later stages 47 taps: ≥ 140.4 dB one-pass stopband against the
-   shipped 89.3–94.2 dB. Every supported 2 V point and T at 8 V sit on the resampler's floor today; k140 lowers that
-   floor by 36–50 dB at the measured points (P1 0.6 mA, 2 V: −123.6 → −173.7 dBc at 48 kHz, −126.3 → −165.8 dBc at
-   44.1 kHz) and brings **P2 at 2 V inside the gate at both rates** (full sweep: worst −129.5 dBc at 48 kHz,
-   −131.2 dBc at 44.1 kHz, against −118.3 and the shipped −89.0 / −91.7). Cost: +4 to +9 base samples of latency at
-   48 kHz (+0.08 to +0.19 ms), +8 to +13 at 44.1 kHz (+0.18 to +0.29 ms), and 1.20–1.73× the resampler's multiply-adds,
-   the resampler being a small part of the stage (below). Selection rule (written after the k120 / k140 subset results
-   and before the full P2 sweeps that confirmed it): the lowest-latency derived candidate with which every measured
-   supported point and every measured P2 2 V point meets
-   the quality gate with at least `dk.aliasing.MARGIN_DB` (3 dB) at both rates; k120 fails it (P2 0.45 mA 2 V −109.9 dBc
-   at 48 kHz), k140 is the first that passes. Implementing it changes the stage's resampler and so every committed
-   6AS6 result, and it belongs with the C++ port: follow-up (end of this section). The baselines and the guard here are
-   for the **shipped** resampler.
+   harmonic accuracy (#45). No 6AS6 pre-warp was derived (there is no error for one to minimise), and the 12AX7's
+   `PREWARP_HZ` is not used.
+3. **hq stays 16×.** It removes the internal folding that limits 8× at 8 V (internal at most −98.7 / −90.9 dBc at 8×,
+   48 / 44.1 kHz; at most −154.6 dBc at 16×) and then reads the 64× ground truth to ≤ 0.02 dB at all 14 ground-truth
+   points, both rates: its figures are the resampler's (worst −111.5 / −105.4 dBc at 8 V on the grid; −108.0 / −104.2
+   in the band-edge scan).
+4. **FIR resampler: k140 is the preferred candidate among the designs tested, for the conditions measured
+   (recommendation, not implemented here).** Kaiser β = 14.47, first stage 123 taps at 48 kHz and 219 at 44.1 kHz, later
+   stages 47 taps: ≥ 140.4 dB one-pass stopband against the shipped 89.3–94.2 dB.
+   - Measured at every factor for the supported modes (P1 0.1 / 0.6 mA, T 0.3 mA; 2 and 8 V; 16037 / 19037 / 19937 Hz;
+     both rates; 108 checkpoints): never more than 0.005 dB above the shipped FIR, every 2 V point 20.7–56.5 dB lower;
+     at 8 V the gain is 0–0.3 dB at 4× (internal folding), 0–11.2 dB for P1 and 36.1–54.3 dB for T at 8×, and
+     35.9–56.1 dB at 16×, where the resampler was the floor.
+   - **The band edge makes this more than a margin question.** With the shipped FIR, P1 0.6 mA (supported) at 2 V and
+     44.1 kHz reads **−117.1 dBc at 19987 Hz, 1.2 dB above the −118.3 dBc gate**, at every factor, and the
+     image-rejection bound for 15–20 kHz is −114.8 dBc; with k140 the same point reads −163.7 dBc and the bound is
+     −160.4 dBc ("The band edge" below). On the #6 grid alone this was invisible (19037 Hz: −126.3 dBc).
+   - P2 (current #55 fit, experimental): with k140 its full 2 V grid is inside the gate at both rates (worst −129.5 /
+     −131.2 dBc, from −89.0 / −91.7; 11.2 / 12.9 dB of margin), and at its two measured 8 V points it reads −59.6 to
+     −63.8 dBc at 8× (internal) and −106.2 to −116.6 dBc at 16×. Whether aliasing still keeps P2 experimental must be
+     re-checked at both drives on the #123 refit; nothing here clears it.
+   - Choice: the lowest-latency derived candidate with which every measured supported point and every measured P2 2 V
+     point meets the gate with at least `dk.aliasing.MARGIN_DB` (3 dB), at both rates. The rule was written after the
+     first k120 / k140 subset results, against the pre-existing 12AX7 budget, and before the full P2 sweeps and the
+     every-factor checkpoints that confirmed it. k120 fails it (P2 0.45 mA 2 V −109.9 dBc at 48 kHz); the review's
+     k130 spot checks at the worst k140 P2 points read −119.67 / −120.29 dBc (48 / 44.1 kHz, reviewer's measurement),
+     1.4 / 2.0 dB inside the gate, so k130 would also fail it.
+   - Implementing it changes the stage's resampler and so every committed 6AS6 result, and belongs with the C++ port:
+     follow-up. The baselines and the guard here are for the **shipped** resampler.
 
 ### Method
-- `dk/aliasing.py`'s metric and sweep (offset tones 1037…19037 Hz, coherent periodic-Hann 1 s window, total
-  non-harmonic energy 20 Hz–20 kHz in dBc, split internal / resampler / other) after `dk6as6.aliasing.SETTLE_S` (1.25 s,
-  the #102 coupling caps). "other" (energy on no harmonic fold, e.g. a settling tail) is ≤ −184.1 dBc at every point,
-  so the sweeps measure aliasing, not the start-up.
+- `dk/aliasing.py`'s metric (coherent periodic-Hann 1 s window, total non-harmonic energy 20 Hz–20 kHz in dBc) after
+  `dk6as6.aliasing.SETTLE_S` (1.25 s, the #102 coupling caps). The **grid** is the #6 tones (1037…19037 Hz) and a
+  **band-edge tone, 19937 Hz** (`aliasing_quality.BAND_EDGE_HZ`; the review's probe): the interpolator's image of a tone
+  f is at fs − f, which nears the FIR's stopband edge (fs − 20 kHz) as f nears 20 kHz. A **band-edge scan** (19237,
+  19437, 19637, 19837, 19987 Hz) at the worst keys shows what the grid misses there.
+- The internal / resampler / other split is an attribution diagnostic (each bin is credited to the lowest harmonic
+  order that folds onto it, before the spectrum is looked at; the review counted ~96 % of the band's bins given a
+  harmonic origin at 48 kHz, 16037 Hz, 1 s, and coherent paths can share a bin). The measured total is the evidence; the split is used only where a separate check
+  supports it (the up/down split, the 64× ground truth, the hq bound below). "other" reads ≤ −184.1 dBc everywhere,
+  and re-measuring three of the deepest floors after a 2.5 s settle instead of 1.25 s moves their totals by < 0.1 dB
+  (P1 0.25 mA 2 V: 4× 48 kHz 19037 Hz −147.94; 8× 44.1 kHz 8037 Hz −149.90; T 0.1 mA hq 44.1 kHz 19037 Hz −143.66 dBc).
 - Each point is one stage run, decimated directly ("off") and through each post-filter position (`lpf_aliasing.measure`,
-  which now takes `quality` and `mode`; "off" is bit for bit `dk6as6.aliasing.measure`). With the filter on, "abs" is the
-  total relative to the **unfiltered** fundamental (the filter cuts the fundamental too, so its dBc rises).
+  which now takes `quality`, `mode` and FIR designs; "off" is bit for bit `dk6as6.aliasing.measure`). With the filter on,
+  "abs" is the total relative to the **unfiltered** fundamental.
 - Cases: every supported mode / reference bias, P1 0.1 / 0.25 / 0.45 / 0.6 mA and T 0.1 / 0.25 / 0.3 mA
-  (`stage.SUPPORTED_MA`). P2 (experimental, #123) is in the resampler study only.
-- Settings: plain 4×, standard 8×, hq 16×, and 64× as ground truth; none pre-warped. FIR only: the plugin has no IIR
-  option (`plugin/src/map_params.h`: Drive, Bias, Output, Quality), so IIR was not measured.
-- Tones. 4×: the full sweep at both rates (266 points each). Standard: P1 is `lpf_aliasing.json` (#119; the same
-  function and arguments, 304 records reused, not rerun; `aliasing_quality verify-reuse` re-measured three of them bit
-  for bit); T is the full sweep at 44.1 kHz and 16037–19037 Hz at 48 kHz
-  (its filter-off full sweep is `aliasing_T.json`, which those records reproduce). hq (16×, ~140 CPU-s a point on the
-  shared M1): 8 V at 15037–19037 Hz, 2 V at 8037 and 15037–19037 Hz (44.1 kHz) and 16037 / 18037 / 19037 Hz (48 kHz).
-  Why a subset is enough: at 2 V every setting's internal share is ≤ −162.7 dBc, so the total is the resampler's, whose
-  tone pattern is set by the first-stage FIR that every factor shares (16× reads 8×'s 2 V total to 0.018 dB at all 63
-  common points), and every full 4× and 8× sweep's worst tone is in hq's set (`test_hq_tones_cover…`).
+  (`stage.SUPPORTED_MA`). Settings: plain 4×, standard 8×, hq 16×, and 64× as ground truth; none pre-warped. FIR only:
+  the plugin has no IIR option (`plugin/src/map_params.h`).
+- Coverage. 4× and 8×: the full grid at both rates (P1 8× is `lpf_aliasing.json`, #119, the same function: 304 records
+  reused, six of them re-measured bit for bit at both rates). hq (16×, ~110–140 CPU-s a point here) is measured at 6–7
+  tones per key, and its grid maxima are **bounded**, not swept
+  (`aliasing_quality.hq_bound`): at 16× the total is the resampler's, and it equals the 8× point's resampler share to
+  −0.11 / +0.02 dB at all 189 common points (both rates and drives, band edge included). So each key's grid maximum is
+  at most the 8× resampler share's grid maximum + 0.02 dB; that predicted maximum falls on a measured hq tone at every
+  key and lies 0–0.063 dB above the measured maximum (`test_hq_bound…`). The tables label hq as a tone subset with this
+  bound; hq's bracketed filter-on figures are subset maxima too, at most the filter-off bound (the filter only lowers
+  the absolute total).
 - Gate (`aliasing.QUALITY_GATE_DBC`, PR #121's rule): the shipped 12AX7 stage's committed budget for the same setting,
-  FIR and rate (`dk/aliasing.limits_for_rate`); 4× is compared with the 12AX7's eco (its 4× setting) and, for the
-  decision, with its standard. It is an engineering budget, not an audibility threshold (#96 declined to invent one).
+  FIR and rate; 4× against the 12AX7's eco (its 4× setting) and, for the decision, its standard. It is an engineering
+  budget measured on the #6 grid, not an audibility threshold (#96 declined to invent one).
 
 ### Plain 4× against the references (`results_4x.json`)
 Every case passes every criterion (op, small-signal stage and chain, harmonics, burst, Newton):
@@ -397,81 +415,122 @@ prototype, 20 Hz–20 kHz, its worst error is 0.0456–0.0638 dB at 8×, 0.0113�
 4× rates returns 15 696 Hz (−30.1 dB complex error), the same frequency, so re-choosing the pre-warp cannot fix it.
 
 ### Aliasing per setting and rate (`aliasing_quality.json`)
-**48 kHz, 2 V**: worst over the sweep, dBc, filter off (tone); [4k / 7k on: worst dB re the unfiltered fundamental]
+**48 kHz, 2 V**: worst over the 20-tone grid (the #6 tones and 19937 Hz), dBc, filter off (tone); [4k / 7k on: worst dB re the unfiltered fundamental]; a tone count is shown only where the grid is not complete
 | case | 4x | standard | hq |
 |---|---|---|---|
-| P1 0.1 mA | -140.3 (19037; 19 tones) [-153.8 / -147.9] | -140.3 (19037; 19 tones) [-154.0 / -148.0] | -140.3 (19037; 3 tones) [-154.0 / -148.0] |
-| P1 0.25 mA | -147.9 (19037; 19 tones) [-153.0 / -153.0] | -148.0 (19037; 19 tones) [-153.0 / -153.0] | -148.0 (19037; 3 tones) [-153.0 / -153.0] |
-| P1 0.45 mA | -130.4 (19037; 19 tones) [-143.9 / -138.0] | -130.4 (19037; 19 tones) [-144.0 / -138.1] | -130.4 (19037; 3 tones) [-144.0 / -138.1] |
-| P1 0.6 mA | -123.6 (19037; 19 tones) [-137.2 / -131.2] | -123.6 (19037; 19 tones) [-137.3 / -131.3] | -123.6 (19037; 3 tones) [-137.3 / -131.3] |
-| T 0.1 mA | -140.7 (19037; 19 tones) [-154.3 / -148.3] | -140.7 (19037; 4 tones) [-154.4 / -148.5] | -140.7 (19037; 3 tones) [-154.5 / -148.5] |
-| T 0.25 mA | -136.5 (19037; 19 tones) [-150.1 / -144.2] | -136.5 (19037; 4 tones) [-150.3 / -144.3] | -136.6 (19037; 3 tones) [-150.3 / -144.3] |
-| T 0.3 mA | -135.0 (19037; 19 tones) [-148.6 / -142.7] | -135.0 (19037; 4 tones) [-148.7 / -142.8] | -135.0 (19037; 3 tones) [-148.8 / -142.8] |
+| P1 0.1 mA | -140.3 (19037) [-153.8 / -147.9] | -140.3 (19037) [-154.0 / -148.0] | -140.3 (19037; 7 of 20 tones, grid bound -140.3) [-154.0 / -148.0] |
+| P1 0.25 mA | -147.9 (19037) [-153.0 / -153.0] | -148.0 (19037) [-153.0 / -153.0] | -148.0 (19037; 7 of 20 tones, grid bound -148.0) [-153.0 / -153.0] |
+| P1 0.45 mA | -130.4 (19037) [-143.9 / -138.0] | -130.4 (19037) [-144.0 / -138.1] | -130.4 (19037; 7 of 20 tones, grid bound -130.4) [-144.0 / -138.1] |
+| P1 0.6 mA | -123.6 (19037) [-137.2 / -131.2] | -123.6 (19037) [-137.3 / -131.3] | -123.6 (19037; 6 of 20 tones, grid bound -123.6) [-137.3 / -131.3] |
+| T 0.1 mA | -140.7 (19037) [-154.3 / -148.3] | -140.7 (19037) [-154.4 / -148.5] | -140.7 (19037; 6 of 20 tones, grid bound -140.7) [-154.5 / -148.5] |
+| T 0.25 mA | -136.5 (19037) [-150.1 / -144.2] | -136.5 (19037) [-150.3 / -144.3] | -136.6 (19037; 6 of 20 tones, grid bound -136.5) [-150.3 / -144.3] |
+| T 0.3 mA | -135.0 (19037) [-148.6 / -142.7] | -135.0 (19037) [-148.7 / -142.8] | -135.0 (19037; 6 of 20 tones, grid bound -135.0) [-148.8 / -142.8] |
 
-**48 kHz, 8 V**: worst over the sweep, dBc, filter off (tone); [4k / 7k on: worst dB re the unfiltered fundamental]
+**48 kHz, 8 V**: worst over the 20-tone grid (the #6 tones and 19937 Hz), dBc, filter off (tone); [4k / 7k on: worst dB re the unfiltered fundamental]; a tone count is shown only where the grid is not complete
 | case | 4x | standard | hq |
 |---|---|---|---|
-| P1 0.1 mA | -71.6 (18037; 19 tones) [-74.7 / -73.9] | -112.5 (19037; 19 tones) [-122.5 / -118.7] | -113.8 (19037; 5 tones) [-123.7 / -121.3] |
-| P1 0.25 mA | -67.1 (18037; 19 tones) [-77.2 / -72.5] | -107.2 (19037; 19 tones) [-115.2 / -112.3] | -113.1 (19037; 5 tones) [-120.9 / -120.5] |
-| P1 0.45 mA | -62.5 (18037; 19 tones) [-71.4 / -68.5] | -101.0 (19037; 19 tones) [-106.8 / -104.4] | -112.5 (19037; 5 tones) [-117.6 / -117.6] |
-| P1 0.6 mA | -59.5 (18037; 19 tones) [-66.2 / -65.2] | -98.4 (19037; 19 tones) [-103.8 / -101.4] | -111.5 (19037; 5 tones) [-115.9 / -115.9] |
-| T 0.1 mA | -114.8 (19037; 19 tones) [-116.6 / -115.8] | -125.3 (19037; 4 tones) [-138.7 / -132.9] | -125.3 (19037; 5 tones) [-138.8 / -133.0] |
-| T 0.25 mA | -105.2 (19037; 19 tones) [-106.7 / -105.9] | -121.1 (19037; 4 tones) [-134.6 / -128.8] | -121.1 (19037; 5 tones) [-134.6 / -128.8] |
-| T 0.3 mA | -103.0 (19037; 19 tones) [-104.5 / -103.7] | -119.6 (19037; 4 tones) [-133.2 / -127.3] | -119.6 (19037; 5 tones) [-133.2 / -127.4] |
+| P1 0.1 mA | -60.6 (19937) [-74.7 / -69.5] | -109.0 (19937) [-117.1 / -113.2] | -113.8 (19037; 7 of 20 tones, grid bound -113.8) [-123.7 / -121.3] |
+| P1 0.25 mA | -61.0 (19937) [-76.7 / -70.4] | -103.0 (19937) [-110.6 / -106.8] | -113.1 (19037; 7 of 20 tones, grid bound -113.1) [-120.9 / -120.5] |
+| P1 0.45 mA | -61.9 (19937) [-71.4 / -68.5] | -99.4 (19937) [-106.8 / -103.2] | -112.5 (19037; 7 of 20 tones, grid bound -112.5) [-117.6 / -117.6] |
+| P1 0.6 mA | -59.5 (18037) [-66.2 / -65.2] | -97.0 (19937) [-103.8 / -100.7] | -111.5 (19037; 7 of 20 tones, grid bound -111.5) [-115.9 / -115.9] |
+| T 0.1 mA | -103.4 (19937) [-116.6 / -112.6] | -125.3 (19037) [-138.7 / -132.9] | -125.3 (19037; 7 of 20 tones, grid bound -125.2) [-138.8 / -133.0] |
+| T 0.25 mA | -96.2 (19937) [-106.7 / -105.2] | -121.1 (19037) [-134.6 / -128.8] | -121.1 (19037; 7 of 20 tones, grid bound -121.1) [-134.6 / -128.8] |
+| T 0.3 mA | -95.0 (19937) [-104.5 / -103.7] | -119.6 (19037) [-133.2 / -127.3] | -119.6 (19037; 7 of 20 tones, grid bound -119.6) [-133.2 / -127.4] |
 
-**44.1 kHz, 2 V**: worst over the sweep, dBc, filter off (tone); [4k / 7k on: worst dB re the unfiltered fundamental]
+**44.1 kHz, 2 V**: worst over the 20-tone grid (the #6 tones and 19937 Hz), dBc, filter off (tone); [4k / 7k on: worst dB re the unfiltered fundamental]; a tone count is shown only where the grid is not complete
 | case | 4x | standard | hq |
 |---|---|---|---|
-| P1 0.1 mA | -143.1 (19037; 19 tones) [-152.3 / -148.1] | -143.1 (19037; 19 tones) [-152.5 / -148.3] | -143.1 (19037; 6 tones) [-152.5 / -148.3] |
-| P1 0.25 mA | -149.9 (8037; 19 tones) [-156.9 / -156.5] | -149.9 (8037; 19 tones) [-156.9 / -156.5] | -149.9 (8037; 6 tones) [-156.9 / -156.5] |
-| P1 0.45 mA | -133.1 (19037; 19 tones) [-142.3 / -138.2] | -133.1 (19037; 19 tones) [-142.5 / -138.3] | -133.1 (19037; 6 tones) [-142.5 / -138.3] |
-| P1 0.6 mA | -126.3 (19037; 19 tones) [-135.4 / -131.3] | -126.3 (19037; 19 tones) [-135.5 / -131.4] | -126.3 (19037; 6 tones) [-135.6 / -131.4] |
-| T 0.1 mA | -143.6 (19037; 19 tones) [-152.5 / -148.4] | -143.7 (19037; 19 tones) [-152.7 / -148.6] | -143.7 (19037; 6 tones) [-152.8 / -148.6] |
-| T 0.25 mA | -139.3 (19037; 19 tones) [-148.3 / -144.2] | -139.4 (19037; 19 tones) [-148.5 / -144.3] | -139.4 (19037; 6 tones) [-148.5 / -144.4] |
-| T 0.3 mA | -137.8 (19037; 19 tones) [-146.8 / -142.7] | -137.8 (19037; 19 tones) [-147.0 / -142.8] | -137.8 (19037; 6 tones) [-147.0 / -142.8] |
+| P1 0.1 mA | -135.9 (19937) [-141.5 / -138.5] | -136.0 (19937) [-141.7 / -138.6] | -136.0 (19937; 7 of 20 tones, grid bound -135.9) [-141.7 / -138.7] |
+| P1 0.25 mA | -143.2 (19937) [-156.9 / -154.6] | -143.7 (19937) [-156.9 / -155.2] | -143.7 (19937; 7 of 20 tones, grid bound -143.7) [-156.9 / -155.3] |
+| P1 0.45 mA | -126.0 (19937) [-131.6 / -128.6] | -126.0 (19937) [-131.7 / -128.7] | -126.0 (19937; 7 of 20 tones, grid bound -126.0) [-131.7 / -128.7] |
+| P1 0.6 mA | -119.2 (19937) [-124.6 / -121.7] | -119.2 (19937) [-124.7 / -121.7] | -119.2 (19937; 7 of 20 tones, grid bound -119.2) [-124.8 / -121.8] |
+| T 0.1 mA | -136.4 (19937) [-141.7 / -138.8] | -136.5 (19937) [-141.9 / -138.9] | -136.5 (19937; 7 of 20 tones, grid bound -136.4) [-142.0 / -138.9] |
+| T 0.25 mA | -132.2 (19937) [-137.5 / -134.6] | -132.2 (19937) [-137.7 / -134.7] | -132.2 (19937; 7 of 20 tones, grid bound -132.2) [-137.7 / -134.7] |
+| T 0.3 mA | -130.7 (19937) [-136.0 / -133.0] | -130.7 (19937) [-136.1 / -133.1] | -130.7 (19937; 7 of 20 tones, grid bound -130.6) [-136.2 / -133.1] |
 
-**44.1 kHz, 8 V**: worst over the sweep, dBc, filter off (tone); [4k / 7k on: worst dB re the unfiltered fundamental]
+**44.1 kHz, 8 V**: worst over the 20-tone grid (the #6 tones and 19937 Hz), dBc, filter off (tone); [4k / 7k on: worst dB re the unfiltered fundamental]; a tone count is shown only where the grid is not complete
 | case | 4x | standard | hq |
 |---|---|---|---|
-| P1 0.1 mA | -61.3 (18037; 19 tones) [-71.3 / -67.7] | -109.8 (18037; 19 tones) [-122.8 / -117.0] | -113.5 (19037; 5 tones) [-125.9 / -121.0] |
-| P1 0.25 mA | -61.1 (18037; 19 tones) [-69.7 / -66.0] | -104.8 (19037; 19 tones) [-115.0 / -110.8] | -113.2 (19037; 5 tones) [-124.4 / -121.2] |
-| P1 0.45 mA | -61.3 (19037; 19 tones) [-68.7 / -65.0] | -95.2 (19037; 19 tones) [-108.1 / -102.4] | -112.0 (19037; 5 tones) [-121.0 / -120.5] |
-| P1 0.6 mA | -59.6 (17037; 19 tones) [-67.5 / -63.8] | -90.8 (19037; 19 tones) [-103.9 / -98.2] | -109.6 (19037; 5 tones) [-119.1 / -118.5] |
-| T 0.1 mA | -103.8 (19037; 19 tones) [-110.9 / -107.3] | -127.0 (19037; 19 tones) [-137.3 / -132.9] | -127.1 (19037; 5 tones) [-137.4 / -133.0] |
-| T 0.25 mA | -95.6 (18037; 19 tones) [-108.6 / -104.2] | -122.9 (19037; 19 tones) [-133.0 / -128.7] | -123.0 (19037; 5 tones) [-133.1 / -128.7] |
-| T 0.3 mA | -93.8 (18037; 19 tones) [-106.7 / -102.3] | -121.5 (19037; 19 tones) [-131.5 / -127.2] | -121.5 (19037; 5 tones) [-131.6 / -127.2] |
+| P1 0.1 mA | -61.3 (18037) [-71.3 / -67.7] | -99.1 (19937) [-111.0 / -106.4] | -108.4 (19937; 7 of 20 tones, grid bound -108.4) [-116.2 / -112.8] |
+| P1 0.25 mA | -60.1 (19937) [-67.3 / -65.1] | -93.1 (19937) [-107.0 / -101.7] | -107.8 (19937; 7 of 20 tones, grid bound -107.8) [-116.5 / -113.0] |
+| P1 0.45 mA | -56.9 (19937) [-65.0 / -62.6] | -91.8 (19937) [-107.6 / -101.6] | -107.0 (19937; 7 of 20 tones, grid bound -107.0) [-119.9 / -115.2] |
+| P1 0.6 mA | -56.0 (19937) [-62.9 / -60.7] | -90.8 (19037) [-103.9 / -98.2] | -105.4 (19937; 7 of 20 tones, grid bound -105.4) [-119.1 / -114.6] |
+| T 0.1 mA | -94.7 (19937) [-108.6 / -104.9] | -120.6 (19937) [-126.8 / -123.7] | -120.7 (19937; 6 of 20 tones, grid bound -120.6) [-126.9 / -123.7] |
+| T 0.25 mA | -92.0 (19937) [-106.3 / -102.5] | -116.4 (19937) [-122.5 / -119.4] | -116.5 (19937; 6 of 20 tones, grid bound -116.4) [-122.5 / -119.4] |
+| T 0.3 mA | -90.8 (19937) [-105.4 / -101.4] | -115.0 (19937) [-121.0 / -117.9] | -115.0 (19937; 6 of 20 tones, grid bound -115.0) [-121.0 / -117.9] |
 
 Reading the tables:
-- **2 V: every setting is at the resampler's floor**, 4× included: 16× matches 8× to 0.018 dB and 4× to 0.46 dB at
-  every common point; the internal share is ≤ −162.7 dBc even at 4×. The worst supported point is P1 0.6 mA, −123.6 dBc at 48 kHz (−126.3 at 44.1 kHz), 5.3 dB
-  inside the gate.
-- **8 V: the factor matters.** 4× is limited by internal folding (P1 −59.5 dBc at 48 kHz, −59.6 at 44.1 kHz; T 0.3 mA
-  −103.0 / −93.8), 8× too (P1 −98.4 / −90.8), and 16× reaches the resampler's floor (P1 −111.5 / −109.6 dBc, internal
-  ≤ −154.6). T at 8× and 16× is at the resampler floor already.
+- **2 V: the resampler's floor.** At 8× and 16× the internal share is ≤ −197.0 dBc; at 4× internal folding is at
+  least 10 dB under the total everywhere above −160 dBc (closest 10.5 dB, P1 0.25 mA, 44.1 kHz, 19937 Hz). 16× matches
+  8× to 0.018 dB. The worst supported point on the grid is P1 0.6 mA: −123.6 dBc at 48 kHz (5.3 dB inside the gate)
+  and **−119.2 dBc at 44.1 kHz (19937 Hz, 0.9 dB inside)**; in the band-edge scan, −120.5 dBc (48 kHz, 19637 Hz) and
+  −117.1 dBc (44.1 kHz, 19987 Hz, **1.2 dB above**).
+- **8 V: the factor matters.** 4× is limited by internal folding (P1 −59.5 / −56.0 dBc; T 0.3 mA −95.0 / −90.8), 8×
+  too for P1 (−97.0 / −90.8), and 16× reaches the resampler's floor (P1 −111.5 / −105.4). T at 8× and 16× is at the
+  resampler floor.
 - **The post-filter only lowers the absolute alias energy**, at every point above the analysis floor
-  (`test_post_filter_lowers…`), by 0.006–29 dB depending on where the aliases fold (the bracketed figures above are
-  each case's worst with the filter on).
-- **64× ground truth** (P1 0.6 mA and T 0.3 mA, 16037 and 19037 Hz, 48 kHz): the 64× total equals 16×'s to 0.01 dB at all eight points (the 64× internal
-  share is ≤ −184.3 dBc), so hq has no measurable internal folding left and its figures are the resampler's. 8× is on
-  the ground truth for T and at 2 V, and 7.6 / 13.1 dB above it for P1 at 8 V (16037 / 19037 Hz); 4× is 11.3–50.4 dB
-  above it at 8 V.
+  (`test_post_filter_lowers…`), by 0.006–29 dB depending on where the aliases fold.
 
-| point (48 kHz) | 4× | 8× | 16× | 64× | 64× internal / resampler |
+### The band edge (`aliasing_quality.json` band_edge_scan; `resampler_study.band_edge_bound`)
+Shipped FIR, P1 0.6 mA, total dBc (19037 and 19937 Hz are grid tones):
+
+| P1 0.6 mA, shipped FIR | 19037 | 19237 | 19437 | 19637 | 19837 | 19937 | 19987 |
+|---|---|---|---|---|---|---|---|
+| 48 kHz, 4x, 8 V | -61.1 | -60.6 | -62.8 | -62.4 | -61.8 | -61.5 | -61.4 |
+| 48 kHz, hq, 8 V | -111.5 | -122.3 | -109.4 | -108.0 | -119.6 | -117.2 | -112.0 |
+| 48 kHz, standard, 2 V | -123.6 | -136.8 | -121.5 | -120.5 | -130.7 | -131.7 | -125.2 |
+| 44.1 kHz, 4x, 2 V | -126.3 | — | — | — | — | -119.2 | -117.1 |
+| 44.1 kHz, hq, 2 V | -126.3 | — | — | — | — | -119.2 | -117.1 |
+| 44.1 kHz, hq, 8 V | -109.6 | -107.0 | -108.6 | -105.2 | -109.2 | -105.4 | -104.2 |
+| 44.1 kHz, standard, 2 V | -126.3 | -121.7 | -131.4 | -119.8 | -144.7 | -119.2 | -117.1 |
+| 44.1 kHz, standard, 8 V | -90.8 | -91.9 | -93.3 | -93.2 | -92.0 | -91.2 | -90.9 |
+
+Between 19 and 20 kHz the floor moves by up to 27.6 dB from tone to tone (−144.7 to −117.1 dBc at 44.1 kHz), so a few
+tones cannot give the band's maximum. At 44.1 kHz the mechanism is simple enough to bound it: the image at fs − f,
+rejected by A(fs − f) (the interpolator's one-pass response), mixes with the tone in the stage's second-order term,
+so the resampler share + A(fs − f) is a coefficient K of the stage alone. Measured at 15037–19987 Hz it varies by at
+most 3.9 dB for every 2 V case, so the share of any tone in 15–20 kHz is at most max K − min A:
+
+| 2 V, standard, 44.1 kHz | K over 15037–19987 Hz, dB | bound, shipped FIR (min A 94.77 dB) | measured max | bound, k140 (min A 140.4 dB) |
+|---|---|---|---|---|
+| P1 0.1 mA | -40.4 … -37.0 | -131.7 dBc | -136.0 dBc | -177.3 dBc |
+| P1 0.25 mA | -46.8 … -46.1 | -140.9 dBc | -143.7 dBc | -186.4 dBc |
+| P1 0.45 mA | -30.6 … -26.8 | -121.6 dBc | -126.0 dBc | -167.2 dBc |
+| P1 0.6 mA | -23.9 … -20.0 | -114.8 dBc | -117.1 dBc | -160.4 dBc |
+| T 0.1 mA | -40.9 … -37.4 | -132.2 dBc | -136.5 dBc | -177.8 dBc |
+| T 0.25 mA | -36.8 … -33.1 | -127.8 dBc | -132.2 dBc | -173.4 dBc |
+| T 0.3 mA | -35.3 … -31.5 | -126.3 dBc | -130.7 dBc | -171.9 dBc |
+
+At 48 kHz K varies by up to 12.1 dB across the same tones (a second path contributes), so no bound is claimed there:
+the 48 kHz figures are the measured tones only. The guard (below) includes the scan's tones at the scanned keys.
+
+### 64× ground truth
+| point | 4× | 8× | 16× | 64× | 64× internal / resampler |
 |---|---|---|---|---|---|
-| P1 0.6 mA 2 V 16037 | −125.57 | −125.57 | −125.56 | −125.56 | −197.1 / −125.6 |
-| P1 0.6 mA 2 V 19037 | −123.60 | −123.59 | −123.59 | −123.59 | −205.3 / −123.6 |
-| P1 0.6 mA 8 V 16037 | −68.86 | −107.15 | −114.76 | −114.76 | −184.3 / −114.8 |
-| P1 0.6 mA 8 V 19037 | −61.12 | −98.44 | −111.50 | −111.50 | −199.4 / −111.5 |
-| T 0.3 mA 2 V 16037 | −137.02 | −137.04 | −137.04 | −137.04 | −215.4 / −137.0 |
-| T 0.3 mA 2 V 19037 | −135.00 | −135.02 | −135.02 | −135.02 | −219.2 / −135.0 |
-| T 0.3 mA 8 V 16037 | −110.75 | −122.00 | −122.01 | −122.01 | −202.9 / −122.0 |
-| T 0.3 mA 8 V 19037 | −102.99 | −119.64 | −119.65 | −119.65 | −207.5 / −119.6 |
+| 48 kHz, P1 0.6 mA, 2 V, 16037 | -125.57 | -125.57 | -125.56 | -125.56 | -197.1 / -125.6 |
+| 48 kHz, P1 0.6 mA, 2 V, 19037 | -123.60 | -123.59 | -123.59 | -123.59 | -205.3 / -123.6 |
+| 48 kHz, P1 0.6 mA, 8 V, 16037 | -68.86 | -107.15 | -114.76 | -114.76 | -184.3 / -114.8 |
+| 48 kHz, P1 0.6 mA, 8 V, 19037 | -61.12 | -98.44 | -111.50 | -111.50 | -199.4 / -111.5 |
+| 48 kHz, P1 0.6 mA, 8 V, 19937 | -61.55 | -97.01 | -117.17 | -117.18 | -184.3 / -117.2 |
+| 48 kHz, T 0.3 mA, 2 V, 16037 | -137.02 | -137.04 | -137.04 | -137.04 | -215.4 / -137.0 |
+| 48 kHz, T 0.3 mA, 2 V, 19037 | -135.00 | -135.02 | -135.02 | -135.02 | -219.2 / -135.0 |
+| 48 kHz, T 0.3 mA, 8 V, 16037 | -110.75 | -122.00 | -122.01 | -122.01 | -202.9 / -122.0 |
+| 48 kHz, T 0.3 mA, 8 V, 19037 | -102.99 | -119.64 | -119.65 | -119.65 | -207.5 / -119.6 |
+| 48 kHz, T 0.3 mA, 8 V, 19937 | -94.99 | -127.15 | -127.18 | -127.18 | -202.8 / -127.2 |
+| 44.1 kHz, P1 0.6 mA, 8 V, 19037 | -59.74 | -90.83 | -109.62 | -109.63 | -189.1 / -109.6 |
+| 44.1 kHz, P1 0.6 mA, 8 V, 19937 | -55.99 | -91.24 | -105.40 | -105.40 | -188.7 / -105.4 |
+| 44.1 kHz, T 0.3 mA, 8 V, 19037 | -102.87 | -121.46 | -121.51 | -121.52 | -210.0 / -121.5 |
+| 44.1 kHz, T 0.3 mA, 8 V, 19937 | -90.76 | -114.99 | -115.01 | -115.02 | -204.8 / -115.0 |
+
+16× equals 64× to ≤ 0.02 dB at all 14 points, both rates: no measurable internal folding is left at hq. 8× is on the
+ground truth for T and at 2 V, and 7.6–20.2 dB above it for P1 at 8 V; 4× is 11.3–55.6 dB above it at 8 V.
 
 ### The floor: the FIR resampler's stopband (`resampler_study.json`)
 The shipped half-bands (Kaiser β = 9) are limited by β, not length: at 127 taps a larger β reaches about 157 dB. The
 candidates are derived, not picked (`resampler_study.design_for`): for a target stopband A, β = 0.1102 (A − 8.7)
-(Kaiser's formula, Oppenheim & Schafer, *Discrete-Time Signal Processing*, 3rd ed., eq. 7.62), and each stage gets the
-shortest 4m + 3 length at least A dB down over its folding band with ≤ 0.005 dB passband ripple to 20 kHz.
+(Kaiser's formula, Oppenheim & Schafer, *Discrete-Time Signal Processing*, 3rd ed., Sec. 7.5, eq. 7.75, p. 542), and
+each stage gets the shortest 4m + 3 length at least A dB down over its folding band with ≤ 0.005 dB passband ripple to
+20 kHz.
 
 | candidate | rate | first stage taps / beta | later taps / beta | one-pass stopband 4x / 8x / 16x, dB | chain ripple, dB | latency 4x / 8x / 16x, base samples | C++ MACs per sample 4x / 8x / 16x |
 |---|---|---|---|---|---|---|---|
@@ -484,7 +543,7 @@ shortest 4m + 3 length at least A dB down over its folding band with ≤ 0.005 d
 | k150 | 48 kHz | 131 / 15.57 | 51 / 15.57 | 150.4 / 150.4 / 150.4 | <= 1.1e-06 | 78 / 84 / 87 | 469 / 881 / 1705 |
 | k150 | 44.1 kHz | 235 / 15.57 | 51 / 15.57 | 150.1 / 150.2 / 150.2 | <= 1.0e-06 | 130 / 136 / 139 | 677 / 1089 / 1913 |
 
-Aliasing, standard 8×, 1 s windows (dBc, filter off; the resampler share in brackets):
+Aliasing at the study's points, standard 8×, 1 s windows (dBc, filter off; the resampler share in brackets):
 
 | point | rate | shipped | k120 | k140 | k150 |
 |---|---|---|---|---|---|
@@ -517,81 +576,128 @@ Aliasing, standard 8×, 1 s windows (dBc, filter off; the resampler share in bra
 | T 0.3 mA 2 V 19037 | 44.1 kHz | -137.8 [-137.8] | -163.5 [-163.5] | -177.2 [-177.2] | -190.6 [-190.6] |
 | T 0.3 mA 8 V 19037 | 44.1 kHz | -121.5 [-121.5] | -147.6 [-147.7] | -161.5 [-161.9] | -170.8 [-174.9] |
 
+Supported-mode k140 checkpoints at every factor (dBc, filter off; shipped → k140):
+
+| rate | setting | case, drive | 16037 Hz: shipped → k140 | 19037 Hz: shipped → k140 | 19937 Hz: shipped → k140 |
+|---|---|---|---|---|---|
+| 48 kHz | 4x | P1 0.1 mA, 2 V | -142.5 → -181.2 | -140.3 → -187.1 | -148.1 → -170.4 |
+| 48 kHz | 4x | P1 0.1 mA, 8 V | -79.3 → -79.3 | -73.2 → -73.2 | -60.6 → -60.6 |
+| 48 kHz | 4x | P1 0.6 mA, 2 V | -125.6 → -164.2 | -123.6 → -172.6 | -131.7 → -163.8 |
+| 48 kHz | 4x | P1 0.6 mA, 8 V | -68.9 → -68.9 | -61.1 → -61.1 | -61.5 → -61.5 |
+| 48 kHz | 4x | T 0.3 mA, 2 V | -137.0 → -175.6 | -135.0 → -185.1 | -143.1 → -178.6 |
+| 48 kHz | 4x | T 0.3 mA, 8 V | -110.7 → -111.1 | -103.0 → -103.1 | -95.0 → -95.0 |
+| 48 kHz | standard | P1 0.1 mA, 2 V | -142.5 → -181.2 | -140.3 → -190.0 | -148.1 → -183.9 |
+| 48 kHz | standard | P1 0.1 mA, 8 V | -116.4 → -127.6 | -112.5 → -118.3 | -109.0 → -109.3 |
+| 48 kHz | standard | P1 0.6 mA, 2 V | -125.6 → -164.2 | -123.6 → -173.7 | -131.7 → -167.2 |
+| 48 kHz | standard | P1 0.6 mA, 8 V | -107.1 → -108.0 | -98.4 → -98.7 | -97.0 → -97.1 |
+| 48 kHz | standard | T 0.3 mA, 2 V | -137.0 → -175.7 | -135.0 → -185.2 | -143.1 → -178.6 |
+| 48 kHz | standard | T 0.3 mA, 8 V | -122.0 → -160.8 | -119.6 → -168.6 | -127.2 → -163.2 |
+| 48 kHz | hq | P1 0.1 mA, 2 V | -142.5 → -181.2 | -140.3 → -190.0 | -148.1 → -183.9 |
+| 48 kHz | hq | P1 0.1 mA, 8 V | -116.8 → -155.9 | -113.8 → -160.6 | -120.3 → -157.3 |
+| 48 kHz | hq | P1 0.6 mA, 2 V | -125.6 → -164.2 | -123.6 → -173.7 | -131.7 → -167.2 |
+| 48 kHz | hq | P1 0.6 mA, 8 V | -114.8 → -155.2 | -111.5 → -155.4 | -117.2 → -153.0 |
+| 48 kHz | hq | T 0.3 mA, 2 V | -137.0 → -175.7 | -135.0 → -185.2 | -143.1 → -178.6 |
+| 48 kHz | hq | T 0.3 mA, 8 V | -122.0 → -160.8 | -119.6 → -168.7 | -127.2 → -163.2 |
+| 44.1 kHz | 4x | P1 0.1 mA, 2 V | -153.0 → -188.2 | -143.1 → -174.6 | -135.9 → -156.6 |
+| 44.1 kHz | 4x | P1 0.1 mA, 8 V | -72.8 → -72.7 | -63.6 → -63.6 | -70.0 → -70.0 |
+| 44.1 kHz | 4x | P1 0.6 mA, 2 V | -136.1 → -172.4 | -126.3 → -165.2 | -119.2 → -146.9 |
+| 44.1 kHz | 4x | P1 0.6 mA, 8 V | -62.5 → -62.4 | -59.7 → -59.7 | -56.0 → -56.0 |
+| 44.1 kHz | 4x | T 0.3 mA, 2 V | -147.5 → -183.9 | -137.8 → -177.2 | -130.7 → -180.6 |
+| 44.1 kHz | 4x | T 0.3 mA, 8 V | -117.6 → -117.8 | -102.9 → -102.9 | -90.8 → -90.8 |
+| 44.1 kHz | standard | P1 0.1 mA, 2 V | -153.0 → -189.3 | -143.1 → -182.5 | -136.0 → -192.4 |
+| 44.1 kHz | standard | P1 0.1 mA, 8 V | -121.3 → -123.7 | -110.4 → -113.4 | -99.1 → -99.7 |
+| 44.1 kHz | standard | P1 0.6 mA, 2 V | -136.1 → -172.4 | -126.3 → -165.8 | -119.2 → -175.6 |
+| 44.1 kHz | standard | P1 0.6 mA, 8 V | -104.9 → -105.1 | -90.8 → -90.9 | -91.2 → -91.4 |
+| 44.1 kHz | standard | T 0.3 mA, 2 V | -147.6 → -183.9 | -137.8 → -177.2 | -130.7 → -187.1 |
+| 44.1 kHz | standard | T 0.3 mA, 8 V | -131.8 → -168.7 | -121.5 → -161.5 | -115.0 → -169.3 |
+| 44.1 kHz | hq | P1 0.1 mA, 2 V | -153.0 → -189.3 | -143.1 → -182.5 | -136.0 → -192.4 |
+| 44.1 kHz | hq | P1 0.1 mA, 8 V | -125.0 → -163.3 | -113.5 → -156.1 | -108.4 → -162.6 |
+| 44.1 kHz | hq | P1 0.6 mA, 2 V | -136.1 → -172.4 | -126.3 → -165.8 | -119.2 → -175.6 |
+| 44.1 kHz | hq | P1 0.6 mA, 8 V | -119.0 → -161.1 | -109.6 → -151.2 | -105.4 → -148.1 |
+| 44.1 kHz | hq | T 0.3 mA, 2 V | -147.6 → -183.9 | -137.8 → -177.2 | -130.7 → -187.1 |
+| 44.1 kHz | hq | T 0.3 mA, 8 V | -131.9 → -168.7 | -121.5 → -161.9 | -115.0 → -171.1 |
+
 - **What limits P2 at 2 V is the interpolator, not the decimator.** At P2 0.45 mA, 2 V, 19037 Hz, 48 kHz: k140 up with
   the shipped decimator reads −133.7 dBc; the shipped interpolator with the k140 decimator reads −89.0, the shipped
-  value. P2's strong second-order term mixes the tone with the interpolator's residual image at 48 kHz − f straight
-  into the audio band, so higher oversampling (whose first stage is the same) cannot help; only image rejection does.
-- **P2 at 2 V, full sweep with k140** (19 tones × 4 currents): worst −129.5 dBc (0.45 mA, 16037 Hz) at 48 kHz,
-  −131.2 dBc (0.45 mA, 19037 Hz) at 44.1 kHz. P2 at 8 V is internal folding at 8× (−59.6 to −63.8 dBc whatever the FIR); at hq (0.25 / 0.45 mA, 19037 Hz) the
-  internal share falls to −118.0 to −130.6 dBc and the resampler's takes over: −66.9 / −75.0 dBc at 48 kHz and
-  −57.7 / −65.9 at 44.1 kHz with the shipped FIR (why PR #121 found hq no fix), −106.2 / −114.3 and −109.3 / −116.6
-  with k140. So aliasing no longer has to keep P2 experimental once a k140-class resampler ships; its device fit (#123)
-  still does.
+  value. P2's strong second-order term mixes the tone with the interpolator's residual image at fs − f straight into
+  the audio band, which is why higher oversampling (whose first stage is the same) does not help.
+- **P2 with k140** (current fit): full 2 V grid (19 tones × 4 currents, the #6 tones) worst −129.5 dBc (0.45 mA,
+  16037 Hz) at 48 kHz and −131.2 dBc (0.45 mA, 19037 Hz) at 44.1 kHz. At 8 V only 0.25 / 0.45 mA at 19037 Hz were
+  measured: −59.6 to −63.8 dBc at 8× whatever the FIR (internal), and at hq −66.9 / −75.0 (48 kHz) and −57.7 / −65.9
+  (44.1 kHz) with the shipped FIR (why PR #121 found hq no fix), −106.2 / −114.3 and −109.3 / −116.6 with k140.
 - **Cost.** Latency and multiply-adds are in the design table (MACs counted as `cpp/dk_core.h`'s `FirHalfBand`
   implements them, zero taps included). Measured with `resampler_cost.cpp` (the core's `FirHalfBand`, mono double,
-  `-O3`, candidates in alternating order, 11 rounds of 0.5 s per candidate, rate and factor on the shared M1, best of the rounds quoted because
-  the medians are 1.0–2.2× the minima with other jobs running): shipped → k140, ns per base sample, 48 kHz 95.5 → 115.7 (4×), 162.2 → 205.6 (8×),
-  281.2 → 471.6 (16×); 44.1 kHz 132.6 → 155.0, 195.0 → 259.6, 311.7 → 477.5: 1.17–1.68×, in line with the 1.20–1.73×
-  multiply-add ratio. For scale, the whole 12AX7 C++ core at standard
-  costs 2.55–2.97 µs per sample on the same M1 (`cpp/bench_apple_m1.json`), so the shipped resampler is a few percent of
-  a stage and k140 adds a few percent more; the 6AS6 core (#104) is not ported yet, and its Newton solve is larger.
-  Most of k140's extra work is in the later stages (47 taps run at 2–8× the base rate); giving each later stage its own
-  length would recover part of it (follow-up).
+  `-O3`, candidates in alternating order, 11 rounds of 0.5 s per candidate, rate and factor on the shared M1; best of
+  the rounds quoted because the medians are 1.0–2.2× the minima with other jobs running): shipped → k140, ns per base
+  sample, 48 kHz 95.5 → 115.7 (4×), 162.2 → 205.6 (8×), 281.2 → 471.6 (16×); 44.1 kHz 132.6 → 155.0, 195.0 → 259.6,
+  311.7 → 477.5: 1.17–1.68×, in line with the 1.20–1.73× multiply-add ratio. For scale, the whole 12AX7 C++ core at
+  standard costs 2.55–2.97 µs per sample on the same M1 (`cpp/bench_apple_m1.json`); the 6AS6 core (#104) is not ported
+  yet. Most of k140's extra work is in the later stages (47 taps at 2–8× the base rate); per-stage later lengths would
+  recover part of it.
 
-### Limits, baselines and the CI guard (`dk6as6/aliasing_guard.py`, CI job `aliasing (6as6)`)
+### Limits, baselines and the CI guard (`dk6as6/aliasing_guard.py`, CI job `aliasing (6as6, <rate> Hz)`)
 Per rate, the subset is each setting's worst supported case at each drive, plus T 0.3 mA (the top of T's envelope) at
-standard, 8 V; each key's tones are its full sweep's worst and every tone within 3 dB of it (#98 N1). Limit = the
-full sweep's worst + 3 dB, rounded up to 0.1 dB; the per-tone ratchet is the #98 format (`format_version` 2,
-`values[key].tones[tone] = {total_dbc, f_hz}`, 1.5 dB tolerance), measured in the 0.1 s CI window after the 1.25 s
-settle. 4× is guarded although it is not a shipped setting, so the eco evidence cannot drift unseen.
+standard, 8 V. Each key's limit is the worst total over every tone measured there (the grid, and the band-edge scan at
+the scanned keys) + 3 dB, rounded up to 0.1 dB; its tones are the worst and every tone within 3 dB of it (#98 N1). The
+per-tone ratchet is the #98 format (`format_version` 2, `values[key].tones[tone] = {total_dbc, f_hz}`, 1.5 dB
+tolerance), measured in the 0.1 s CI window after the 1.25 s settle; 19 points at 48 kHz and 20 at 44.1 kHz, one CI job
+per rate. 4× is guarded although it is not a shipped setting, so the eco evidence cannot drift unseen. The limits are
+regression ceilings on these points, not a listening threshold.
 
-| rate | key | limit dBc (full-sweep worst + 3 dB) | tone Hz: CI-window baseline dBc (margin dB) |
+| rate | key | limit dBc | tone Hz: CI-window baseline dBc (margin dB) |
 |---|---|---|---|
 | 48 kHz | P1/0.6mA/4x/fir/2V | -120.5 | 19037: -123.71 (3.21); 16037: -125.59 (5.09) |
-| 48 kHz | P1/0.6mA/4x/fir/8V | -56.5 | 19037: -61.14 (4.64); 18037: -59.52 (3.02) |
-| 48 kHz | P1/0.6mA/standard/fir/2V | -120.5 | 19037: -123.71 (3.21); 16037: -125.59 (5.09) |
-| 48 kHz | P1/0.6mA/standard/fir/8V | -95.4 | 19037: -98.45 (3.05) |
+| 48 kHz | P1/0.6mA/4x/fir/8V | -56.5 | 19987: -61.39 (4.89); 19937: -61.54 (5.04); 19837: -61.83 (5.33); 19637: -62.39 (5.89); 19237: -60.61 (4.11); 19037: -61.14 (4.64); 18037: -59.52 (3.02) |
+| 48 kHz | P1/0.6mA/standard/fir/2V | -117.4 | 19637: -120.53 (3.13); 19437: -121.46 (4.06) |
+| 48 kHz | P1/0.6mA/standard/fir/8V | -94.0 | 19937: -96.98 (2.98); 19037: -98.45 (4.45) |
 | 48 kHz | T/0.3mA/standard/fir/8V | -116.6 | 19037: -119.75 (3.15); 16037: -122.03 (5.43) |
 | 48 kHz | P1/0.6mA/hq/fir/2V | -120.5 | 19037: -123.71 (3.21); 16037: -125.58 (5.08) |
-| 48 kHz | P1/0.6mA/hq/fir/8V | -108.5 | 19037: -111.59 (3.09); 18037: -113.62 (5.12) |
-| 44.1 kHz | P1/0.6mA/4x/fir/2V | -123.3 | 19037: -126.60 (3.30) |
-| 44.1 kHz | P1/0.6mA/4x/fir/8V | -56.6 | 19037: -59.74 (3.14); 18037: -62.39 (5.79); 17037: -59.63 (3.03); 16037: -60.90 (4.30) |
-| 44.1 kHz | P1/0.6mA/standard/fir/2V | -123.3 | 19037: -126.61 (3.31) |
-| 44.1 kHz | P1/0.6mA/standard/fir/8V | -87.8 | 19037: -90.84 (3.04) |
-| 44.1 kHz | T/0.3mA/standard/fir/8V | -118.4 | 19037: -121.69 (3.29) |
-| 44.1 kHz | P1/0.6mA/hq/fir/2V | -123.3 | 19037: -126.61 (3.31) |
-| 44.1 kHz | P1/0.6mA/hq/fir/8V | -106.6 | 19037: -109.69 (3.09) |
+| 48 kHz | P1/0.6mA/hq/fir/8V | -104.9 | 19637: -108.01 (3.11); 19437: -109.32 (4.42) |
+| 44.1 kHz | P1/0.6mA/4x/fir/2V | -114.1 | 19987: -117.07 (2.97); 19937: -118.99 (4.89) |
+| 44.1 kHz | P1/0.6mA/4x/fir/8V | -52.9 | 19937: -55.99 (3.09) |
+| 44.1 kHz | P1/0.6mA/standard/fir/2V | -114.1 | 19987: -117.07 (2.97); 19937: -119.00 (4.90); 19637: -119.70 (5.60) |
+| 44.1 kHz | P1/0.6mA/standard/fir/8V | -87.8 | 19987: -90.85 (3.05); 19937: -91.22 (3.42); 19837: -92.02 (4.22); 19637: -93.15 (5.35); 19437: -93.31 (5.51); 19237: -91.87 (4.07); 19037: -90.84 (3.04) |
+| 44.1 kHz | T/0.3mA/standard/fir/8V | -111.9 | 19937: -114.81 (2.91) |
+| 44.1 kHz | P1/0.6mA/hq/fir/2V | -114.1 | 19987: -117.07 (2.97); 19937: -119.00 (4.90) |
+| 44.1 kHz | P1/0.6mA/hq/fir/8V | -101.1 | 19987: -104.14 (3.04); 19937: -105.29 (4.19); 19637: -105.14 (4.04); 19237: -106.95 (5.85) |
 
-The guard is its own job (20 min limit) because the `test (fullstage 6as6)` shard has no room: on main after #121 it
-ran past its 20 minutes (follow-up). The 6AS6 standard points already in `test_dk6as6_aliasing.py` are unchanged.
+### Merge gate and CI headroom (#127)
+- The workflow cannot block a merge: `main` has no branch protection or rulesets (`GET
+  /repos/.../rules/branches/main` is empty, PR #129 review). The `ci gate` job (`.github/workflows/ci.yml`) fails when
+  any CI job fails, is cancelled or times out, or is skipped where it should have run; **making `ci gate` a required
+  status check on `main` is a repository setting for Michael** (Settings → Branches / Rulesets).
+- #127 (every fullstage shard ≤ 60 % of its limit) is being done in PR #128 (commit f6169fd: the 6AS6 tests in three
+  shards on Linux and macOS). This PR does not duplicate it: it adds no test to the fullstage jobs beyond two JSON-only
+  modules (~5 s), and its measurement runs in its own job. Merge order: #128 first, then this PR rebased on it, with
+  the resulting shard timings cited.
 
 ### A/B samples (not committed; `~/Developer/MAP-wt-113-samples`)
 A 3 s exponential chirp 4–20 kHz from silence, 48 kHz, every file in a pair at one gain (the reference at −1 dBFS),
 with difference files (and +40 dB copies). P1 0.6 mA at 8 V: 4× − 16× is −73.4 dBFS below 18 kHz against a −4.4 dBFS
 signal (−69 dB), 8× − 16× −95.3 dBFS (−91 dB). P2 0.45 mA at 2 V, shipped − k140 FIR: −96.7 dBFS below 18 kHz
 (−85 dB re the signal); its −47.7 dBFS above 20 kHz is the two filters' different transition bands, not aliasing.
-No listening test was run, and none is claimed.
+No listening test was run, and none is claimed; audibility stays open for production validation.
 
 ### For Michael (choices to revisit)
-1. **No eco on the 6AS6 path.** Revisit if CPU per instance becomes the constraint; plain 4× is accurate for the stage
-   and inside the 12AX7 standard budget, but needs a 4×-accurate post-filter (e.g. a matched or higher-order
-   discretisation) and costs 31–39 dB of 8 V aliasing.
-2. **k140 vs k150.** k150 lowers P2's 2 V floor another ~20 dB at 48 kHz (−149.9 dBc worst measured) for +5 samples
-   (8×, 48 kHz) and 8 % more multiply-adds; for P1 / T at 8 V the stage's own folding dominates either way. The rule
-   above picks k140; k150 is the choice if the margin matters more than ~0.1 ms.
-3. **The plugin's Quality menu** offers Eco / Standard / HQ for the 12AX7 stage; a 6AS6 Gyre without eco is a UI
+1. **No eco on the 6AS6 path.** Revisit if CPU per instance becomes the constraint; plain 4× is accurate for the stage,
+   but needs a 4×-accurate post-filter and costs 34.8–37.5 dB of worst 8 V aliasing.
+2. **k140 soon, not only "later".** The shipped FIR leaves a supported setting (P1 0.6 mA, 2 V, 44.1 kHz) above the
+   gate near 20 kHz (−117.1 dBc at 19987 Hz; bound −114.8). Neither figure has been compared with a listening
+   threshold, but the gate is the repo's only budget.
+3. **k140 vs k150.** k150 lowers P2's 2 V floor another ~20 dB at 48 kHz (−149.9 dBc worst measured) and T's 8 V floor
+   at 8× (−168.6 → −186.3 dBc at 19037 Hz, 48 kHz) for +5 samples (8×, 48 kHz) and 8 % more multiply-adds. P1 at 8 V is
+   folding-limited at 4× and 8× either way; at 16× deeper stopband would lower it further.
+4. **The plugin's Quality menu** offers Eco / Standard / HQ for the 12AX7 stage; a 6AS6 Gyre without eco is a UI
    question for #104 / #115.
-4. **The 12AX7 path has the same floor**: its 2 V limits (−118.2 / −118.3 dBc) are the same shipped resampler's;
-   a k140-class resampler would lower them too (not measured here).
+5. **The 12AX7 path has the same floor and the same blind spot**: its 2 V limits (−118.2 / −118.3 dBc) are the same
+   shipped resampler's, measured on the #6 grid; it has not been measured near 20 kHz or with k140.
 
 ### Follow-ups (evidence above)
 - Implement the k140 resampler for the 6AS6 path (Python stage and #104's C++), then regenerate the 6AS6 results,
   sweeps and baselines; optionally per-stage later lengths.
+- Measure the 12AX7 stage at the band edge (19937 / 19987 Hz, 44.1 kHz) and with a k140-class resampler.
+- After #128 (grid current on by default, T supported to 0.5 mA): re-run this assessment's T cases above 0.3 mA.
 - A 4×-accurate post-filter, if eco is ever wanted.
-- The `test (fullstage 6as6)` shard timed out on main after #121 (run 44833344773, cancelled at 20 min 16 s, 59 %
-  done; 11 min 15 s on the PR run): it needs sharding or its serial aliasing / validation points moving to a parallel
-  job.
-- Measure the 12AX7 stage with a k140-class resampler.
 
 ## #51 vs #55 valve fit: harmonic profile (informational; `python -m dk6as6.compare_fits` → `fit_comparison.json`)
 Same circuit, method, quality (standard 8×) and target current (0.45 mA, so Rk is solved per fit: 9.8729 kΩ for #55,

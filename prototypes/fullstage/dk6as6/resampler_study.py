@@ -9,10 +9,10 @@ over every band that folds onto 0-20 kHz. Its first stage is limited by beta, no
 beta reaches ~157 dB.
 
 Candidates (CANDIDATES), derived, not chosen by hand: for a target stopband A (dB), beta = 0.1102 (A - 8.7) (Kaiser's
-formula, Oppenheim & Schafer, Discrete-Time Signal Processing, 3rd ed., eq. 7.62), and each stage (the first, and the
-later ones, which share one design) gets the shortest half-band length 4m + 3 whose one-pass response is at least A dB
-down over its folding band (R/2 - 20 kHz .. R/2 at that stage's high rate R) with passband ripple <= 0.005 dB to
-20 kHz (the module's resampler spec is 0.01 dB for the whole chain). design_for() is the search.
+formula, Oppenheim & Schafer, Discrete-Time Signal Processing, 3rd ed., Sec. 7.5, eq. 7.75, p. 542), and each stage
+(the first, and the later ones, which share one design) gets the shortest half-band length 4m + 3 whose one-pass
+response is at least A dB down over its folding band (R/2 - 20 kHz .. R/2 at that stage's high rate R) with passband
+ripple <= 0.005 dB to 20 kHz (the module's resampler spec is 0.01 dB for the whole chain). design_for() is the search.
 
 Commands (from prototypes/fullstage):
   python -m dk6as6.resampler_study design        -> table of every candidate: lengths, beta, ripple, stopband, latency,
@@ -117,6 +117,33 @@ def design_table():
                 rows.append(dict(candidate=name, fs=fs, os=os_, first_taps=n0, first_beta=b0, later_taps=n1,
                                  later_beta=b1, **chain_metrics(fs, os_, by_rate[fs])))
     return rows
+
+
+# ---- the band edge: an image-rejection bound (#113 review) -------------------------------------------------------
+# Where a point sits on the resampler's floor, its resampler share follows the interpolator's image of the tone: the
+# image at fs - f, rejected by A(fs - f) (the one-pass response, Resampler.up_response), mixes with the tone in the
+# stage's second-order term and lands on |fs - 2f| in the audio band. So share + A(fs - f) = K, a coefficient of the
+# stage alone; measured at 15037-19987 Hz (P1 0.6 mA, 2 V, 44.1 kHz) K spans -23.9 to -20.0 dB. Then for any tone in
+# [f_lo, 20 kHz] the share is at most max K - min A over the images of that band: a bound between the sampled tones,
+# up to the band edge, valid where the floor is this mechanism (the 2 V points; checked by the spread of K).
+BOUND_LO_HZ = 15000.0
+
+
+def image_rejection_db(fs, os_, f, fir=None):
+    """A(fs - f): the interpolator's one-pass rejection (dB) of the image of tone(s) f."""
+    r = Resampler(fs, os_, "fir", fir=fir)
+    return -20 * np.log10(np.abs(r.up_response(fs - np.atleast_1d(np.asarray(f, float)))))
+
+
+def band_edge_bound(records, fs, os_, fir=None, f_lo=BOUND_LO_HZ, f_hi=PASS_HZ):
+    """records: one key's points (dicts with tone and off.resampler_dbc) at tones in [f_lo, f_hi]. Returns
+    dict(k_min, k_max, min_rejection_db, bound_dbc): the image-rejection bound on the resampler share of any tone in
+    [f_lo, f_hi], from the measured coefficients K = share + A(fs - f) and the design's minimum A over those images."""
+    pts = [r for r in records if f_lo <= r["tone"] <= f_hi]
+    k = [r["off"]["resampler_dbc"] + float(image_rejection_db(fs, os_, r["tone"], fir)[0]) for r in pts]
+    a_min = float(np.min(image_rejection_db(fs, os_, np.linspace(f_lo, f_hi, 20001), fir)))
+    return dict(tones=sorted(r["tone"] for r in pts), k_min=min(k), k_max=max(k), min_rejection_db=a_min,
+                bound_dbc=max(k) - a_min)
 
 
 # ---- aliasing points -------------------------------------------------------------------------------------------
@@ -263,6 +290,31 @@ def tables(path=OUT_JSON):
     return "\n".join(out)
 
 
+CHECKPOINT_CASES = (("P1", 0.1), ("P1", 0.6), ("T", 0.3))
+CHECKPOINT_HZ = (16037, 19037, 19937)
+
+
+def checkpoint_table(path=OUT_JSON):
+    """Markdown: the supported-mode k140 checkpoints (#113 review) at every factor and rate, against the shipped FIR's
+    total at the same point (aliasing_quality.json / lpf_aliasing.json), filter off, dBc."""
+    from dk6as6 import aliasing_quality as Q
+    ship = {(r["setting"], r["fs"], r["mode"], r["bias_ma"], r["drive"], r["tone"]): r["off"]["total_dbc"]
+            for r in Q.records()}
+    k = {(r["setting"], r["fs"], r["mode"], r["bias_ma"], r["drive"], r["tone"]): r["off"]["total_dbc"]
+         for r in json.load(open(path))["records"] if r["candidate"] == r["up"] == r["down"] == "k140"}
+    out = ["| rate | setting | case, drive | " + " | ".join(f"{f} Hz: shipped → k140" for f in CHECKPOINT_HZ) + " |",
+           "|---" * (3 + len(CHECKPOINT_HZ)) + "|"]
+    for fs in RATES:
+        for st in ("4x", "standard", "hq"):
+            for m, b in CHECKPOINT_CASES:
+                for d in (2.0, 8.0):
+                    cells = [f"{ship[st, fs, m, b, d, f]:.1f} → {k[st, fs, m, b, d, f]:.1f}"
+                             if (st, fs, m, b, d, f) in k and (st, fs, m, b, d, f) in ship else "—"
+                             for f in CHECKPOINT_HZ]
+                    out.append(f"| {fs / 1000:g} kHz | {st} | {m} {b:g} mA, {d:g} V | " + " | ".join(cells) + " |")
+    return "\n".join(out)
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -305,5 +357,7 @@ if __name__ == "__main__":
         print(open(a.out).read())
     elif a.cmd == "tables":
         print(tables())
+        print()
+        print(checkpoint_table())
     else:
         collect(a.jsonl, a.cost)
