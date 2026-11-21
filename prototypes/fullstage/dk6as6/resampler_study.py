@@ -119,14 +119,16 @@ def design_table():
     return rows
 
 
-# ---- the band edge: an image-rejection bound (#113 review) -------------------------------------------------------
-# Where a point sits on the resampler's floor, its resampler share follows the interpolator's image of the tone: the
-# image at fs - f, rejected by A(fs - f) (the one-pass response, Resampler.up_response), mixes with the tone in the
-# stage's second-order term and lands on |fs - 2f| in the audio band. So share + A(fs - f) = K, a coefficient of the
-# stage alone; measured at 15037-19987 Hz (P1 0.6 mA, 2 V, 44.1 kHz) K spans -23.9 to -20.0 dB. Then for any tone in
-# [f_lo, 20 kHz] the share is at most max K - min A over the images of that band: a bound between the sampled tones,
-# up to the band edge, valid where the floor is this mechanism (the 2 V points; checked by the spread of K).
-BOUND_LO_HZ = 15000.0
+# ---- the band edge: an image-rejection estimate (#113 review; an estimate, not a bound) ---------------------------
+# Where a point sits on the resampler's floor, its resampler share mostly follows the interpolator's image of the tone:
+# the image at fs - f, rejected by A(fs - f) (the one-pass response, Resampler.up_response), mixes with the tone in the
+# stage's second-order term and lands on |fs - 2f| in the audio band, so share + A(fs - f) = K, roughly a coefficient
+# of the stage alone. K is FITTED to the measured tones and nothing bounds it elsewhere: where A has a deep notch
+# another path dominates and K departs from the fit (P1 0.6 mA, 2 V, 44.1 kHz, 19831 Hz: K = +7.8 dB against -23.9
+# to -20.0 dB at the other tones; the PR #129 re-review's probe, re-measured in the band-edge scan). So max K - min A
+# over a band is an empirical ESTIMATE of the band's worst share, not an upper bound; the conclusions rest on the
+# measured tones.
+ESTIMATE_LO_HZ = 15000.0
 
 
 def image_rejection_db(fs, os_, f, fir=None):
@@ -135,15 +137,17 @@ def image_rejection_db(fs, os_, f, fir=None):
     return -20 * np.log10(np.abs(r.up_response(fs - np.atleast_1d(np.asarray(f, float)))))
 
 
-def band_edge_bound(records, fs, os_, fir=None, f_lo=BOUND_LO_HZ, f_hi=PASS_HZ):
+def band_edge_estimate(records, fs, os_, fir=None, f_lo=ESTIMATE_LO_HZ, f_hi=PASS_HZ, k_min_db=None):
     """records: one key's points (dicts with tone and off.resampler_dbc) at tones in [f_lo, f_hi]. Returns
-    dict(k_min, k_max, min_rejection_db, bound_dbc): the image-rejection bound on the resampler share of any tone in
-    [f_lo, f_hi], from the measured coefficients K = share + A(fs - f) and the design's minimum A over those images."""
+    dict(tones, k (per tone), k_min, k_max, min_rejection_db, estimate_dbc): the fitted K = share + A(fs - f) at each
+    tone and the estimate max K - min A over [f_lo, f_hi] (an estimate: see above). k_min_db: drop tones whose K is
+    above this outlier threshold from the fit (None: use every tone)."""
     pts = [r for r in records if f_lo <= r["tone"] <= f_hi]
-    k = [r["off"]["resampler_dbc"] + float(image_rejection_db(fs, os_, r["tone"], fir)[0]) for r in pts]
+    k = {r["tone"]: r["off"]["resampler_dbc"] + float(image_rejection_db(fs, os_, r["tone"], fir)[0]) for r in pts}
+    fit = [v for v in k.values() if k_min_db is None or v <= k_min_db]
     a_min = float(np.min(image_rejection_db(fs, os_, np.linspace(f_lo, f_hi, 20001), fir)))
-    return dict(tones=sorted(r["tone"] for r in pts), k_min=min(k), k_max=max(k), min_rejection_db=a_min,
-                bound_dbc=max(k) - a_min)
+    return dict(tones=sorted(k), k=k, k_min=min(fit), k_max=max(fit), min_rejection_db=a_min,
+                estimate_dbc=max(fit) - a_min)
 
 
 # ---- aliasing points -------------------------------------------------------------------------------------------

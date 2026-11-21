@@ -66,23 +66,6 @@ def test_post_filter_lowers_the_absolute_alias_total_above_the_analysis_floor():
                 assert r[p]["abs_db_re_off_fund"] < r["off"]["total_dbc"], (Q.point_key(r), p)
 
 
-def test_hq_tones_cover_every_worst_tone_of_the_full_4x_and_8x_sweeps():
-    """hq (16x) is swept on a tone subset (RESULTS.md says why); it must include the worst tone of the full 4x and 8x
-    sweeps at every case, rate and drive."""
-    full = {}
-    for r in Q.records():
-        if r["setting"] in ("4x", "standard"):
-            full.setdefault((r["mode"], r["bias_ma"], r["fs"], r["drive"], r["setting"]), []).append(r)
-    hq = {}
-    for r in Q.records():
-        if r["setting"] == "hq":
-            hq.setdefault((r["mode"], r["bias_ma"], r["fs"], r["drive"]), set()).add(r["tone"])
-    for (m, b, fs, d, s), rs in full.items():
-        if len(rs) == len(AL.SWEEP_HZ):
-            w = max(rs, key=lambda r: r["off"]["total_dbc"])["tone"]
-            assert w in hq[m, b, fs, d], (m, b, fs, d, s, w)
-
-
 def test_candidates_are_the_derived_designs():
     for name, by_rate in RS.CANDIDATES.items():
         for fs in RS.RATES:
@@ -124,13 +107,19 @@ def _worst(setting, fs, drive):
                if r["setting"] == setting and r["fs"] == fs and r["drive"] == drive)
 
 
-def test_16x_reaches_the_64x_ground_truth():
-    """At every ground-truth point hq reads the 64x total to 0.02 dB: no measurable internal folding is left at 16x."""
+def test_16x_against_the_64x_ground_truth():
+    """No-grid cases: hq reads the 64x total to 0.02 dB at every ground-truth point (no measurable internal folding
+    left at 16x). T 0.5 mA with grid current: hq is 23.5-30.4 dB above the 64x total at 8 V (internal folding of the
+    grid-current law that 16x does not remove)."""
     idx = {(r["setting"], r["fs"], r["mode"], r["bias_ma"], r["drive"], r["tone"]): r for r in Q.records()}
     gt = [k for k in idx if k[0] == Q.GROUND_TRUTH]
-    assert len(gt) == 14 and {k[1] for k in gt} == set(Q.RATES)
+    assert len(gt) == 18 and {k[1] for k in gt} == set(Q.RATES)
     for k in gt:
-        assert abs(idx[("hq",) + k[1:]]["off"]["total_dbc"] - idx[k]["off"]["total_dbc"]) <= 0.02, k
+        d = idx[("hq",) + k[1:]]["off"]["total_dbc"] - idx[k]["off"]["total_dbc"]
+        if Q.hardness(idx[k]) == 0.0:
+            assert abs(d) <= 0.02, k
+        else:
+            assert 23.0 <= d <= 31.0, (k, d)
 
 
 def test_2v_is_the_resampler_floor():
@@ -138,7 +127,8 @@ def test_2v_is_the_resampler_floor():
     internal folding is at least 10 dB under the total at every point above -160 dBc (closest: 10.5 dB, P1 0.25 mA,
     44.1 kHz, 19937 Hz, -143.2 dBc), so every reported 2 V maximum is the resampler's."""
     for r in Q.records():
-        if r["drive"] != 2.0 or r["setting"] == Q.GROUND_TRUTH or r["off"]["total_dbc"] <= AL.ANALYSIS_FLOOR_DBC:
+        if (r["drive"] != 2.0 or r["setting"] == Q.GROUND_TRUTH or r["off"]["total_dbc"] <= AL.ANALYSIS_FLOOR_DBC
+                or Q.hardness(r) > 0):           # the no-grid cases; grid-current T: test_grid_current_t_...
             continue
         if r["setting"] in ("standard", "hq"):
             assert r["off"]["internal_dbc"] <= -197.0, Q.point_key(r)
@@ -147,42 +137,75 @@ def test_2v_is_the_resampler_floor():
                 assert r["off"]["internal_dbc"] <= r["off"]["total_dbc"] - 10.0, Q.point_key(r)
 
 
-@pytest.mark.parametrize("fs, rise_db", [(48000, 37.5), (44100, 34.8)])
-def test_the_eco_trade_quoted_in_results(fs, rise_db):
-    """RESULTS.md: plain 4x raises the worst 8 V total over standard by 37.5 dB (48 kHz) / 34.8 dB (44.1 kHz), on the
-    grid with the band edge, and stays inside the 12AX7 standard budget at both drives."""
-    assert round(_worst("4x", fs, 8.0) - _worst("standard", fs, 8.0), 1) == rise_db
+def _case_worst(setting, fs, drive, mode, bias):
+    return max(r["off"]["total_dbc"] for r in Q.records() if (r["setting"], r["fs"], r["drive"], r["mode"],
+                                                                  r["bias_ma"]) == (setting, fs, drive, mode, bias))
+
+
+@pytest.mark.parametrize("fs, p1_rise, t_rise", [(48000, 37.5, 19.6), (44100, 34.8, 16.6)])
+def test_the_eco_trade_quoted_in_results(fs, p1_rise, t_rise):
+    """RESULTS.md: plain 4x raises the worst 8 V total over standard by 37.5 / 34.8 dB for P1 0.6 mA and 19.6 / 16.6 dB
+    for T 0.5 mA with grid current (48 / 44.1 kHz); every 4x maximum is inside the 12AX7 eco budget, and T 0.5 mA with
+    grid current at 4x is above the 12AX7 standard budget at both drives."""
+    for (m, b), rise in ((("P1", 0.6), p1_rise), (("T", 0.5), t_rise)):
+        assert round(_case_worst("4x", fs, 8.0, m, b) - _case_worst("standard", fs, 8.0, m, b), 1) == rise
     for d in (2.0, 8.0):
-        assert _worst("4x", fs, d) <= gate("standard", fs, d)
+        assert _worst("4x", fs, d) <= gate("4x", fs, d)
+        assert _case_worst("4x", fs, d, "T", 0.5) > gate("standard", fs, d)
 
 
-def test_every_maximum_is_on_the_full_grid_or_a_validated_bound():
-    """Every reported row covers GRID_HZ (the #6 tones and the band edge), except hq, whose rows carry the bound."""
+def test_grid_current_t_is_internal_folding_at_8v_at_every_factor():
+    """T 0.35-0.5 mA with grid current, 8 V: the worst point of every factor and rate is internal folding (internal
+    share within 1 dB of the total), so no resampler change moves it; at 4x the same holds at 2 V for T 0.5 mA."""
+    for fs in Q.RATES:
+        for s in ("4x", "standard", "hq"):
+            for b in (0.45, 0.5):
+                rs = [r for r in Q.records() if (r["fs"], r["setting"], r["mode"], r["bias_ma"], r["drive"])
+                      == (fs, s, "T", b, 8.0)]
+                w = max(rs, key=lambda r: r["off"]["total_dbc"])
+                assert w["off"]["internal_dbc"] >= w["off"]["total_dbc"] - 1.0, (fs, s, b)
+        rs = [r for r in Q.records() if (r["fs"], r["setting"], r["mode"], r["bias_ma"], r["drive"])
+              == (fs, "4x", "T", 0.5, 2.0)]
+        w = max(rs, key=lambda r: r["off"]["total_dbc"])
+        assert w["off"]["internal_dbc"] >= w["off"]["total_dbc"] - 1.0, fs
+
+
+def test_every_maximum_is_on_the_full_grid():
+    """Every reported row (every case, setting, rate, drive; 64x is the ground truth, a few points) covers GRID_HZ."""
     for r in AQ["summary"]:
-        if r["setting"] == Q.GROUND_TRUTH:
-            continue
-        assert r["full_grid"] or (r["setting"] == "hq" and "grid_bound_dbc" in r["off"]), r
+        if r["setting"] != Q.GROUND_TRUTH:
+            assert r["full_grid"] and r["tones"] == len(Q.GRID_HZ), r
 
 
-def test_hq_bound_from_the_8x_resampler_share():
-    """hq's total is the 8x point's resampler share to within -0.15 / +0.05 dB at every common point; each key's
-    predicted maximum is on a measured hq tone and the bound is within 0.15 dB above the measured maximum, so the subset
-    maxima are the grid's to that accuracy."""
-    hb = AQ["hq_bound"]
-    assert -0.15 <= hb["excess_db"] <= 0.05
-    sh = Q.standard_resampler_shares(Q.records())
+def test_reproduce_plans_exactly_the_committed_points():
+    """REPRODUCE (the `reproduce` command) yields exactly the committed records, scan, settle and model points."""
+    plan = {}
+    for which, args in Q.REPRODUCE:
+        plan.setdefault(which, set()).update(Q.plan(args))
+    got = dict(grid=AQ["records"], scan=AQ["band_edge_scan"], settle=AQ["settle_check"], model=AQ["model_check"])
+    for which, recs in got.items():
+        assert {Q.point_key(r) for r in recs} == plan[which], which
+
+
+def test_every_record_carries_its_model():
+    """Each record says which stage it is (grid hardness); each case is measured with its own."""
+    own = {(m, b): g for m, b, g in Q.CASES}
     for r in Q.records():
-        k = (r["fs"], r["mode"], r["bias_ma"], r["drive"], r["tone"])
-        if r["setting"] == "hq" and k in sh:
-            assert -0.15 <= r["off"]["total_dbc"] - sh[k] <= hb["excess_db"] + 1e-12, k
-    assert len(hb["keys"]) == 2 * 2 * len(Q.CASES)
-    for k in hb["keys"]:
-        assert k["bound_dbc"] >= k["measured_dbc"] and k["bound_dbc"] - k["measured_dbc"] <= 0.15, k
-        tones = {r["tone"] for r in Q.records() if r["setting"] == "hq" and (r["fs"], r["mode"], r["bias_ma"],
-                                                                                 r["drive"]) == (k["fs"], k["mode"],
-                                                                                                 k["bias_ma"],
-                                                                                                 k["drive"])}
-        assert k["bound_tone"] in tones and k["measured_tone"] == k["bound_tone"], k
+        if (r["mode"], r["bias_ma"]) in own:
+            assert Q.hardness(r) == own[r["mode"], r["bias_ma"]], Q.point_key(r)
+    assert {g for _, _, g in Q.CASES_NO_GRID} == {0.0} and {g for _, _, g in Q.CASES_GRID} == {Q.HARDNESS}
+
+
+def test_default_stage_equals_the_no_grid_sweeps():
+    """model_check: the production default (grid current) at points of the no-grid cases, every factor and rate,
+    against the no-grid record: within 1e-3 dB (largest 4.4e-4 dB, 4x, T 0.3 mA, 8 V), so the no-grid sweeps stand for
+    the default stage there."""
+    idx = {Q.point_key(dict(r, grid_hardness=0.0)): r for r in Q.records()}
+    assert len(AQ["model_check"]) == 48
+    for r in AQ["model_check"]:
+        assert Q.hardness(r) == Q.HARDNESS
+        ref = idx[Q.point_key(dict(r, grid_hardness=0.0))]
+        assert abs(r["off"]["total_dbc"] - ref["off"]["total_dbc"]) <= 1e-3, Q.point_key(r)
 
 
 def _k140(setting=None):
@@ -214,8 +237,8 @@ def _scan(fs, setting, drive, tone, mode="P1", bias=0.6):
 
 def test_shipped_fir_exceeds_the_gate_near_20khz_at_441_and_k140_does_not():
     """RESULTS.md, "The band edge": P1 0.6 mA (supported), 2 V, 44.1 kHz, 19987 Hz reads above the standard gate with
-    the shipped FIR at every factor, and the image-rejection bound says so for the whole 15-20 kHz band; k140 is far
-    inside it, measured and bounded."""
+    the shipped FIR at every factor (measured); k140 reads far inside it there. The image-rejection estimate is only
+    an estimate: its fitted K does not hold at the 19831 Hz notch."""
     for s in ("4x", "standard", "hq"):
         assert _scan(44100, s, 2.0, 19987)["off"]["total_dbc"] > gate("standard", 44100, 2.0)
     k = next(r for r in RSJ["records"] if r["candidate"] == r["up"] == "k140" and r["fs"] == 44100
@@ -224,11 +247,10 @@ def test_shipped_fir_exceeds_the_gate_near_20khz_at_441_and_k140_does_not():
     assert k["off"]["total_dbc"] <= gate("standard", 44100, 2.0) - AL.MARGIN_DB
     key = [r for r in Q.records() + AQ["band_edge_scan"] if (r["fs"], r["setting"], r["mode"], r["bias_ma"],
                                                               r["drive"]) == (44100, "standard", "P1", 0.6, 2.0)]
-    b = RS.band_edge_bound(key, 44100, 8)
-    assert b["k_max"] - b["k_min"] <= 5.0 and b["bound_dbc"] > gate("standard", 44100, 2.0)
-    assert b["k_max"] - float(np.min(RS.image_rejection_db(44100, 8, np.linspace(15000, 20000, 20001),
-                                                           RS.CANDIDATES["k140"][44100]))) \
-        <= gate("standard", 44100, 2.0) - AL.MARGIN_DB
+    e = RS.band_edge_estimate(key, 44100, 8)
+    assert e["k"][19831] > e["k_max"] - 1e-9 and e["k"][19831] > 0.0      # the notch: K far outside the other tones
+    rest = RS.band_edge_estimate(key, 44100, 8, k_min_db=0.0)
+    assert rest["k_max"] - rest["k_min"] <= 5.0
 
 
 def test_longer_settle_reads_the_same():
@@ -238,4 +260,17 @@ def test_longer_settle_reads_the_same():
     idx = {Q.point_key(r): r for r in Q.records()}
     for r in chk:
         assert r["settle_s"] == 2.5
-        assert abs(r["off"]["total_dbc"] - idx[Q.point_key(r)]["off"]["total_dbc"]) < 0.1, Q.point_key(r)
+        ref = idx[Q.point_key(dict(r, settle_s=Q.SETTLE_S))]      # the same point after the standard settle
+        assert abs(r["off"]["total_dbc"] - ref["off"]["total_dbc"]) < 0.1, Q.point_key(r)
+
+
+def test_grid_current_records_reproduce_the_pr128_sweeps():
+    """The grid-current T cases at standard 8x / 48 kHz, filter off, against #112's own sweeps of the default stage
+    (dk6as6/aliasing_grid_T.json: the same stage and metric through dk6as6.aliasing.measure) at every common point."""
+    ref = {(r["bias_ma"], r["drive"], r["tone"]): r["total_dbc"]
+           for r in json.load(open(os.path.join(HERE, "aliasing_grid_T.json")))}
+    mine = [r for r in Q.records() if Q.hardness(r) == Q.HARDNESS and r["setting"] == "standard" and r["fs"] == 48000]
+    common = [r for r in mine if (r["bias_ma"], r["drive"], r["tone"]) in ref]
+    assert len(common) >= 3 * 2 * 5
+    for r in common:
+        assert abs(r["off"]["total_dbc"] - ref[r["bias_ma"], r["drive"], r["tone"]]) <= 1e-5, Q.point_key(r)
