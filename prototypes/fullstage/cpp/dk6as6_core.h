@@ -814,9 +814,9 @@ inline Status cathode_resistor(double bias_ma, const PentodeParams& par, const N
     if (!(bias_ma > 0.0) || !std::isfinite(bias_ma)) return Status::bad_argument;
     const double ik = bias_ma * 1e-3;
     auto err = [&](double lg, double& e) {
-        OperatingPoint op;
+        OperatingPoint op{};
         const Status st = detail::operating_point(std::pow(10.0, lg), par, nw, mode, use_grid, g, vals, op);
-        e = op.ik / ik - 1.0;
+        e = st == Status::ok ? op.ik / ik - 1.0 : NAN;
         return st;
     };
     double elo, ehi;

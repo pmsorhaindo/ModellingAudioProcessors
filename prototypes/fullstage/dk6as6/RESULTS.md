@@ -8,6 +8,10 @@ reference (ii), ngspice running the same valve law. The bias control (#110) is i
 "Modes (#111)" at the end (everything above it is P1, the default, unchanged by #111). History: #26 validated the same method on placeholder values
 (the 12AX7 stage's passives, HT 300 V, Ra 100k, Rk 1.5k bypassed by 22 µF, g3 at 0 V); those are replaced here.
 
+> **#104: the C++ port** (`cpp/dk6as6_core.h`, [cpp/README-6as6.md](../cpp/README-6as6.md)) reproduces every result
+> file below through `dk6as6.validate` (`cpp/validate_cpp_6as6.py`, all 44 standard / hq settings: every criterion
+> reads the same, every supported setting passes), with its own aliasing sweep and guard at 44.1 and 48 kHz.
+
 > **#112: the default stage now models g1 grid current** (an unvalidated, borrowed Dempwolf–Zölzer law with a
 > `grid_hardness` control; "Grid current (#112)" at the end). Every result above "Grid current (#112)" is the stage at
 > `grid_hardness=0`, reproduced bit for bit. With grid current P1 is unchanged to rounding, and T is supported to
