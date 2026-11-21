@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 from dk.aliasing import tone_bin, alias_dbc, MASK_BINS, SWEEP_HZ, WINDOW_S  # noqa: E402 -- sys.path
 from dk.resample import Resampler  # noqa: E402 -- after the sys.path setup
 from dk6as6 import lpf, stage  # noqa: E402 -- after the sys.path setup
-from dk6as6.aliasing import SETTLE_S, BIASES, BIAS_MA  # noqa: E402 -- after the sys.path setup
+from dk6as6.aliasing import SETTLE_S, BIASES, BIAS_MA, MODE  # noqa: E402 -- after the sys.path setup
 
 RATES, DRIVES = (48000, 44100), (2.0, 8.0)
 SOURCES = ("total", "internal", "resampler", "other")
@@ -38,16 +38,22 @@ def fundamental_db(y, m):
     return float(10 * np.log10(P[m - MASK_BINS:m + MASK_BINS + 1].sum()))
 
 
-def measure(fs, drive, f, bias=BIAS_MA, window=WINDOW_S, settle=SETTLE_S):
+def measure(fs, drive, f, bias=BIAS_MA, window=WINDOW_S, settle=SETTLE_S, quality="standard", mode=MODE,
+            fir_up=None, fir_down=None):
+    """One stage run, decimated directly ("off") and through each PostFilter position. quality / mode as Stage
+    (settings outside stage.SUPPORTED_MA run with experimental=True). fir_up / fir_down: experimental interpolator /
+    decimator designs (dk.resample.design's fir=; None = the shipped FIR), for #113's stopband study."""
     n, n0 = int(round(window * fs)), int(round(settle * fs))
     m = tone_bin(f, n, fs)
-    st = stage.Stage(fs, bias=bias)
-    L = st.latency_samples
+    st = stage.Stage(fs, bias=bias, quality=quality, mode=mode, experimental=True)
+    if fir_up is not None:
+        st.rs = Resampler(fs, st.os, "fir", fir=fir_up)
+    L = max(st.latency_samples, Resampler(fs, st.os, "fir", fir=fir_down).latency_samples)
     x = drive * np.sin(2 * np.pi * m * np.arange(n0 + n + L) / n)
     yi = st.process_internal(st.rs.up(x))["out"]
     out = dict(fs=fs, bias_ma=bias, drive=drive, tone=f, f_hz=m * fs / n, window_s=window, settle_s=settle)
     for p in lpf.POSITIONS:
-        y = Resampler(fs, st.os, "fir").down(lpf.PostFilter(st.fs, p).process(yi))[n0 + L:n0 + L + n]
+        y = Resampler(fs, st.os, "fir", fir=fir_down).down(lpf.PostFilter(st.fs, p).process(yi))[n0 + L:n0 + L + n]
         a = alias_dbc(y, m, fs, st.os)
         out[p] = {f"{s}_dbc": a[f"{s}_dbc"] for s in SOURCES}
         out[p].update(worst_dbc=a["worst_dbc"], worst_hz=a["worst_hz"], fund_db=fundamental_db(y, m))

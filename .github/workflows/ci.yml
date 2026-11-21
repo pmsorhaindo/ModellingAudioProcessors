@@ -140,6 +140,43 @@ jobs:
             prototypes/fullstage/aliasing_guard_44100_results.json
           if-no-files-found: warn
 
+  # Blocking 6AS6 aliasing guard (#113): the same method as `aliasing` on dk6as6.stage.Stage, a lean subset of the
+  # full sweeps (dk6as6/aliasing_quality.json) against each key's limit (worst + 3 dB) and each tone's own committed
+  # baseline (dk6as6/aliasing_baseline[_44100].json, format version 2, 1.5 dB tolerance). Its own job: the 6AS6 stage
+  # is pure Python and slow, and the `test (fullstage 6as6)` shard has no room for it. To update intentionally:
+  # python -m dk6as6.aliasing_guard [--fs 44100] --update-baseline --reason "..."
+  aliasing-6as6:
+    name: aliasing (6as6, ${{ matrix.fs }} Hz)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # One job per host rate (#113 review): the subset grew with the band-edge tones; split, each rate stays well under
+    # 60 % of its limit (#127's target).
+    strategy:
+      fail-fast: false
+      matrix:
+        fs: [48000, 44100]
+    defaults:
+      run:
+        working-directory: prototypes/fullstage
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: prototypes/fullstage/requirements.txt
+      - name: Install requirements
+        run: python -m pip install -r requirements.txt
+      - name: 6AS6 aliasing guard (limits + baseline ratchet)
+        run: python -m dk6as6.aliasing_guard --fs ${{ matrix.fs }} --workers "$(nproc)" --json aliasing6as6_guard_${{ matrix.fs }}_results.json
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aliasing-6as6-guard-results-${{ matrix.fs }}
+          path: prototypes/fullstage/aliasing6as6_guard_${{ matrix.fs }}_results.json
+          if-no-files-found: warn
+
   # Blocking lint (#87). Settings (line length 120, select E and F) are in ruff.toml at the repo root, shared with
   # the pre-commit hook (.pre-commit-config.yaml); keep the ruff version here and the hook's rev the same.
   lint:
@@ -154,3 +191,33 @@ jobs:
       - run: python -m pip install ruff==0.17.3
       - name: Ruff (pyflakes + pycodestyle, settings from ruff.toml)
         run: ruff check --output-format github prototypes
+
+  # Merge gate (#113 review). One stable check name for main's branch protection, independent of job names and shards:
+  # it fails if any job above failed or was cancelled (a timeout too), or was skipped where it should have run (the
+  # macOS jobs are skipped by design on drafts and pushes to main). The workflow cannot block a merge by itself: making
+  # "ci gate" a required status check on main is a repository setting (Settings -> Branches / Rulesets).
+  ci-gate:
+    name: ci gate
+    if: always()
+    needs: [test, test-macos, plugin-macos, aliasing, aliasing-6as6, lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          MACOS_EXPECTED: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          needs = json.loads(os.environ["NEEDS"])
+          macos_expected = os.environ["MACOS_EXPECTED"] == "true"
+          bad = []
+          for job, v in sorted(needs.items()):
+              r = v["result"]
+              ok = r == "success" or (r == "skipped" and job in ("test-macos", "plugin-macos") and not macos_expected)
+              print(f"{job}: {r}" + ("" if ok else "  <- not passed"))
+              if not ok:
+                  bad.append(job)
+          sys.exit(f"ci gate: {', '.join(bad)} did not pass" if bad else 0)
+          PY
