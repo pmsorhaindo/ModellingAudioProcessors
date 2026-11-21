@@ -95,7 +95,8 @@ hunk), so the exporter writes k140 vectors.
 
 The 6AS6 stage runs **`DEFAULT_FIR`, one line in `dk6as6_core.h`, now `SHIPPED_FIR`**: the Python reference on
 `main` has no k140, and #129 is not merged. Adopting k140 is that one line, then the guard's baselines
-(`aliasing_6as6 guard --update-baseline`) and the Python side (#129's follow-up). `Settings::fir` selects either at
+(`aliasing_6as6 guard --update-baseline`) and the Python side: #134. The shipped FIR is over the gate at the
+44.1 kHz band edge ("Antialiasing" below), which k140 fixes. `Settings::fir` selects either at
 run time for measurements. The stage's resampler instance holds either design (`ResamplerT<double, 219, 47>`).
 
 ## Tests and tolerances
@@ -170,11 +171,135 @@ vectors):
 
 ## Antialiasing: oversampling alone, or with ADAA (#104), and the guard (#98)
 
-PENDING: filled in from `aliasing_6as6.json`.
+**Method** (`aliasing_6as6.py`, `aliasing_6as6.json`). `dk/aliasing.py`'s metric on the C++ core: offset tones on
+coherent bins, periodic-Hann analysis, the total non-harmonic energy in 20 Hz–20 kHz relative to the fundamental
+(dBc), split by source: *internal* (harmonics above the internal Nyquist folded inside the stage, what oversampling and
+ADAA act on), *resampler* (in-band harmonics reaching 0–20 kHz through the half-band filters) and *other* (no fold,
+e.g. settling). 1.25 s settle (`dk6as6.aliasing.SETTLE_S`, the #102 coupling caps), then a 1 s window; one C++ run per
+point, 256-sample blocks. The supported envelope with the default grid current: P1 at 0.1 / 0.25 / 0.45 / 0.6 mA, T at
+0.1 / 0.25 / 0.5 mA; standard and hq; 2 and 8 V; filter off (the post-filter only lowers absolute alias energy,
+`dk6as6/RESULTS-lpf.md`); the 19 sweep tones plus the band edge, 19937 Hz; 48 and 44.1 kHz. The shipped FIR at all
+1120 points, k140 at each setting / quality / drive's three worst shipped tones (168). The gate is the one the Python
+stage's supported envelope uses: the shipped 12AX7 stage's committed budget for the same quality and drive
+(`dk.aliasing.limits_for_rate`, FIR), an engineering budget, not an audibility threshold (the repo has none).
+
+**Parity.** On the 98 points it shares with the committed Python sweeps (`dk6as6/aliasing_grid[_T].json`, 48 kHz,
+standard, shipped), the C++ core reads the same to 1.1e-5 dB.
+
+**Results**: the worst total over every supported setting and tone, its split, and the worst once the internal term
+is removed from every point (what an ideal ADAA would leave):
+
+| rate | quality | drive | design | worst total dBc (where) | internal / resampler there, dBc | worst with internal removed, dBc | an ideal ADAA lowers the worst by, dB | gate dBc | margin dB |
+|---|---|---|---|---|---|---|---|---|---|
+| 48 kHz | standard | 2 V | shipped | −123.6 (P1 0.6 mA 19037 Hz) | −205.3 / −123.6 | −123.6 | 0.0 | −118.3 | 5.3 |
+| 48 kHz | standard | 2 V | k140 | −164.2 (P1 0.6 mA 16037 Hz) | −197.1 / −164.2 | −164.2 | 0.0 | −118.3 | 45.9 |
+| 48 kHz | standard | 8 V | shipped | −63.5 (T 0.5 mA 19937 Hz) | −63.5 / −116.5 | −110.9 | 47.5 | −48.6 | 14.9 |
+| 48 kHz | standard | 8 V | k140 | −63.5 (T 0.5 mA 19937 Hz) | −63.5 / −154.2 | −152.4 | 88.9 | −48.6 | 14.9 |
+| 48 kHz | hq | 2 V | shipped | −123.6 (P1 0.6 mA 19037 Hz) | −205.3 / −123.6 | −123.6 | 0.0 | −118.2 | 5.4 |
+| 48 kHz | hq | 2 V | k140 | −164.2 (P1 0.6 mA 16037 Hz) | −197.1 / −164.2 | −164.2 | 0.0 | −118.2 | 46.0 |
+| 48 kHz | hq | 8 V | shipped | −84.9 (T 0.5 mA 19037 Hz) | −84.9 / −110.9 | −110.9 | 26.0 | −63.0 | 21.9 |
+| 48 kHz | hq | 8 V | k140 | −84.9 (T 0.5 mA 19037 Hz) | −84.9 / −156.1 | −152.9 | 68.1 | −63.0 | 21.9 |
+| 44.1 kHz | standard | 2 V | shipped | −119.2 (P1 0.6 mA 19937 Hz) | −200.4 / −119.2 | −119.2 | 0.0 | −118.3 | 0.9 |
+| 44.1 kHz | standard | 2 V | k140 | −155.7 (T 0.5 mA 19937 Hz) | −155.7 / −178.9 | −165.8 | 10.1 | −118.3 | 37.4 |
+| 44.1 kHz | standard | 8 V | shipped | −59.9 (T 0.5 mA 19037 Hz) | −59.9 / −108.8 | −104.6 | 44.7 | −46.8 | 13.1 |
+| 44.1 kHz | standard | 8 V | k140 | −59.9 (T 0.5 mA 19037 Hz) | −59.9 / −153.3 | −153.3 | 93.4 | −46.8 | 13.1 |
+| 44.1 kHz | hq | 2 V | shipped | −119.2 (P1 0.6 mA 19937 Hz) | −200.4 / −119.2 | −119.2 | 0.0 | −118.2 | 1.0 |
+| 44.1 kHz | hq | 2 V | k140 | −165.8 (P1 0.6 mA 19037 Hz) | −202.7 / −165.8 | −165.8 | 0.0 | −118.2 | 47.6 |
+| 44.1 kHz | hq | 8 V | shipped | −80.5 (T 0.5 mA 19937 Hz) | −80.5 / −104.6 | −104.6 | 24.2 | −63.0 | 17.5 |
+| 44.1 kHz | hq | 8 V | k140 | −80.5 (T 0.5 mA 19937 Hz) | −80.5 / −159.1 | −153.2 | 72.7 | −63.0 | 17.5 |
+
+No point had a non-converged or out-of-law sample, and "other" (settling) stays at or below −178.2 dBc.
+
+**Band-edge scan** (#113 review; `python -m cpp.aliasing_6as6 scan`): P1 0.6 mA, 2 V, above the band edge.
+
+| rate | quality | design | 19937 Hz | 19947 | 19957 | 19967 | 19977 | 19987 | gate dBc |
+|---|---|---|---|---|---|---|---|---|---|
+| 48 kHz | standard | shipped | −131.7 | −129.9 | −128.5 | −127.2 | −126.1 | −125.2 | −118.3 |
+| 48 kHz | standard | k140 | −167.2 | −166.1 | −165.2 | −164.5 | −163.8 | −163.3 | −118.3 |
+| 44.1 kHz | standard | shipped | −119.2 | −118.6 | **−118.1** | **−117.7** | **−117.4** | **−117.1** | −118.3 |
+| 44.1 kHz | standard | k140 | −175.6 | −171.1 | −168.3 | −166.2 | −164.7 | −163.7 | −118.3 |
+| 44.1 kHz | hq | shipped | −119.2 | −118.6 | **−118.1** | **−117.7** | **−117.4** | **−117.1** | −118.2 |
+| 44.1 kHz | hq | k140 | −175.6 | −171.1 | −168.3 | −166.2 | −164.7 | −163.7 | −118.2 |
+
+This reproduces #113's finding on the C++ core: **with the shipped FIR, P1 0.6 mA at 2 V and 44.1 kHz is over the
+gate from 19957 Hz up, by up to 1.2 dB, at both qualities** (bold). It is the resampler's (the internal term there is
+≤ −199.9 dBc), so neither more oversampling nor ADAA changes it; k140 puts the same points 45–57 dB inside the gate.
+
+**Decision (recommendation, for Michael):** oversampling alone, no ADAA, for this stage.
+- The cases that bind are at 2 V, and all of them are the resampler's: internal folding is ≤ −155.7 dBc at 2 V at
+  every point, and an ideal ADAA lowers no 2 V worst case with the shipped FIR (0.0 dB). The thin and failing 44.1 kHz
+  band edge is fixed by the resampler: k140, a one-line change here (`DEFAULT_FIR`), pending #113 / PR #129.
+- At 8 V the worst cases are internal folding (T 0.5 mA near 19–20 kHz). Oversampling alone is already 13.1–14.9 dB
+  inside the gate at standard and 17.5–21.9 dB at hq. An ideal ADAA could lower those worst cases by 44.7–47.5 dB at
+  standard (with the shipped FIR; more with k140), and hq already lowers them by 20.6–21.4 dB at the measured CPU cost
+  ("CPU" below).
+- What this measures: oversampling alone at every point, and ADAA's ceiling at every point (the internal term, which is
+  all ADAA acts on). It does not measure an ADAA implementation: none was built, so its CPU cost and its effect on the
+  validated small-signal and harmonic accuracy are not known. If an implementation is wanted for the 8 V internal
+  folding, that is its own piece of work.
+
+**Guard (CI, `aliasing (6as6 C++ core, 48000 / 44100 Hz)`).** Per rate, every supported setting × standard / hq ×
+2 / 8 V at its full sweep's worst tone and 19037 Hz, on the design the core runs (shipped), with full 1 s windows after
+the 1.25 s settle (33 points at 48 kHz, 54 at 44.1 kHz; ~1 min each on CI). Two checks per tone, as `dk.aliasing_guard`:
+the gate above, and each tone's own committed baseline (`aliasing_6as6_baseline[_44100].json`, #98 per-tone format,
+`format_version` 2, 1.5 dB). Smallest margins: 5.3 dB at 48 kHz (P1 0.6 mA, 2 V, 19037 Hz) and **0.9 dB at 44.1 kHz**
+(P1 0.6 mA, 2 V, 19937 Hz): the shipped FIR's band edge above. The scan tones above 19937 Hz are not guard tones (they
+fail the gate with the shipped FIR, as #113 measured); they are recorded and asserted as they are
+(`test_aliasing_records`), and adopting k140 (#134) is the fix. To update a baseline intentionally:
+`python -m cpp.aliasing_6as6 guard --fs N --update-baseline --reason "..."`.
 
 ## CPU
 
-PENDING: filled in from `bench_6as6_*.json`.
+**Method**: the #20 / #67 harness and method unchanged (`cpp/BENCHMARK.md`): `bench_6as6.cpp` shares `bench.cpp`'s
+signal (the Karplus–Strong guitar phrase), counters, clocks, warm-up, round-robin passes, determinism check and
+percentiles through `bench_common.h`, and is run by `python -m cpp.bench --core 6as6`, which records the host, the
+build and the host state before and after. `-O3`, no `-march` (x86-64: the SSE2 baseline; Apple clang: apple-m1).
+Configurations: the default setting (P1, 0.45 mA, grid current, filter off, shipped FIR) at standard / hq × 0.5 / 2 /
+8 V × blocks 64 / 512 × one instance (x1) or two on one thread (x2, the stereo cost: there is no 6AS6 SIMD kernel),
+plus x1 / block-64 rows that change one thing: T 0.5 mA, P1 0.1 and 0.6 mA, no grid current, the 7k filter, k140.
+No cycle budget is set (none exists for this stage; the Octatrack figure is for a later cut-down model).
+
+**x86-64: GitHub's ubuntu-latest runner** (AMD EPYC 7763, 4 vCPU VM, g++ 15.2, 5 × 1 s passes;
+`bench_6as6_x86_64_linux_ci.json`, from `.github/workflows/bench-6as6.yml`; load 0.7 before the run; no hardware
+counters on the VM, so cycles are null). % of one core at 48 kHz real time, median over the passes, block 64:
+
+| quality | instances | 0.5 V | 2 V | 8 V | ns per sample (2 V) | Newton it. per internal sample (2 V) |
+|---|---|---|---|---|---|---|
+| standard 8× | x1 | 32.3 % | 35.8 % | 38.9 % | 7450 | 2.59 |
+| standard 8× | x2 (stereo) | 64.5 % | 71.6 % | 77.2 % | 14919 | 2.59 |
+| hq 16× | x1 | 61.1 % | 63.2 % | 69.0 % | 13159 | 2.16 |
+| hq 16× | x2 (stereo) | **121.7 %** | **126.1 %** | **137.2 %** | 26269 | 2.16 |
+
+Block 512 is within 1 % of block 64. One change from the default (x1, b64, ns / default over both qualities and the
+three peaks): T 0.5 mA 0.97–0.98; P1 0.1 mA 0.91–0.95; P1 0.6 mA 1.00–1.02; no grid current 0.82–0.84; the 7k filter
+0.99–1.00; k140 0.99–1.00. **hq stereo needs more than one core of this VM.**
+
+**Apple M1** (MacBookAir10,1, macOS 15.6.1, Apple clang 17, 11 × 2 s passes; `bench_6as6_apple_m1_loaded.json`).
+This run is **not a clean timing**: the machine was shared with other work (load average 69 before, 51 after, on 8
+cores), the thread was on a CPU for only 53–56 % of the wall time, and 44–48 % of its cycles were counted on
+E-cores (2.15–2.17 GHz average). Its wall times (standard x1 87–107 % of a core) and cycle counts (marked * in the
+tables) therefore overstate the cost, and are not quoted as the stage's. What does not depend on the core type or on
+preemption is the instruction count, and against the 12AX7 core's committed M1 record
+(`bench_apple_m1_simd_math.json`, libm, x1, block 64, same harness) it gives the relative cost:
+
+| quality | peak | 6AS6 instructions / sample | without grid current | 12AX7 instructions / sample | 6AS6 / 12AX7 |
+|---|---|---|---|---|---|
+| standard | 0.5 V | 53 108 | 44 948 | 21 139 | 2.51 (2.13 without grid) |
+| standard | 2 V | 56 828 | 48 096 | 21 750 | 2.61 (2.21) |
+| standard | 8 V | 62 360 | 52 780 | 23 467 | 2.66 (2.25) |
+| hq | 0.5 V | 102 002 | 86 145 | 40 989 | 2.49 (2.10) |
+| hq | 2 V | 104 383 | 88 127 | 41 107 | 2.54 (2.14) |
+| hq | 8 V | 110 335 | 93 214 | 42 510 | 2.60 (2.19) |
+
+The grid current adds 18 % of instructions (1.182–1.184: the third current and the 3×3 step); the filter and k140
+change nothing measurable (wall-time ratios 0.98–1.03 on the M1, 0.99–1.00 on x86-64). A clean M1 timing needs a quiet machine: `python -m cpp.bench --core 6as6 --out
+cpp/bench_6as6_apple_m1.json` (`cpp/BENCHMARK.md`, "Running the official benchmark").
+
+**Why no SIMD or fast path here.** #104 asks for SIMD only where it measurably pays, and none was measured: the core
+mirrors the Python reference's libm arithmetic (that is what makes the law and solvers bit-exact), and a two-lane
+kernel would have to carry the per-lane Newton and restart contract. The one change made for speed keeps the bits:
+`softplus` and `sigmoid` share their `exp(-|x|)` (~4 % fewer instructions). Fast maths, a lazier Jacobian and a
+two-lane kernel are #135.
 
 ## Limitations
 
