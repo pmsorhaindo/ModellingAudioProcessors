@@ -4,12 +4,17 @@
                 isolates METHOD error. The pass criteria are dk/validate.CRIT, unchanged, tested against this only.
   There is no (i): no independent 6AS6 SPICE model in this repo's sources.
 Same measurements as dk/validate.py (op point, small signal 20 Hz-20 kHz over the whole resampler chain, H2-H5 of 1 kHz
-sines at spice/run_refs.AMPS, the 4 V tone-burst bias shift and recovery). Recovery tau is tested only where the
-reference has one: with no cathode bypass cap and no grid current (#102) the cycle-mean Vgk returns with the burst's
-end, and what is left is a ~0.07 % coupling-cap tail that ngspice's own trace does not take to 1/e in the 120 ms
-window (recovery_tau_s = nan; dk6as6/RESULTS.md). The shift and trajectory criteria are unchanged.
+sines at spice/run_refs.AMPS, the 4 V tone-burst bias shift and recovery). The shift and trajectory criteria are
+unchanged. Recovery (#124, resolved for this stage in #112): CRIT's burst_tau_rel (1 %) compares the tail tau, the
+decay constant of the post-burst recovery fitted on full-window cycle-mean samples only (burst_compare, below; the
+shared burst_metrics' crossing tau read the zero-padded end of the trace). Without grid current that tail is the
+~0.07 % coupling-cap tail; with it, grid blocking. `python -m dk6as6.validate --rescore` re-evaluates every committed
+results[_grid][_<mode>].json burst comparison from the stored trajectories (no simulation).
 run(model="r51") checks the DK stage with the #51 parameters against reference_r51_0.45mA.json the same way (for
 dk6as6/compare_fits.py; informational).
+Grid current (#112): model "dual" is the stage at grid_hardness=0 (Ig1 = 0, the #111 law); model "dualg" is the stage's
+default, with the UNVALIDATED g1 grid current (pentode.grid at pentode.HARDNESS), against reference_dualg_*.json, which
+run the same law (run_refs.HARDNESS). Same criteria, same signals.
 bias: the target cathode current in mA (dk6as6/stage.py); references exist at spice6as6/run_refs.BIASES.
 mode: the Distortion switch (#111, dk6as6/circuit.MODES); T and P2 references exist at run_refs.MODE_BIASES[mode].
 Where the reference is not the same law: ngspice clamps a B-source exp() argument at SPICE_EXP_CAP, so the subckt's
@@ -21,9 +26,12 @@ reported but not compared, and that criterion reads None ("not compared"), so th
 never "passed". Settings outside stage.SUPPORTED_MA are run as experimental and marked "supported": False; the
 command fails if any supported setting does not pass.
 Aliasing: dk6as6/aliasing.py.
-Run: python -m dk6as6.validate [P1] [T] [P2]   (from prototypes/fullstage; every mode if none given). Writes, per mode,
-dk6as6/results.json (P1) / results_<mode>.json: per reference bias, "standard" and "hq" against (ii), and for P1 at
-the default bias "plain_4x": the same run at 4x without pre-warp, for information only (no 4x setting).
+Run: python -m dk6as6.validate [P1] [T] [P2] [--grid] [--workers N]   (from prototypes/fullstage; every mode if none
+given; --grid: model "dualg", the modes with grid references, run_refs.GRID_BIASES). Writes, per mode,
+dk6as6/results.json (P1) / results_<mode>.json (dual), results_grid.json / results_grid_<mode>.json (dualg): per
+reference bias, "standard" and
+"hq" against (ii), and for P1 dual at the default bias "plain_4x": the same run at 4x without pre-warp, for information
+only (no 4x setting).
 """
 import json
 import os
@@ -39,10 +47,10 @@ from dk.validate import CRIT, aligned  # noqa: E402 -- after the sys.path setup
 from dk6as6.stage import Stage, QUALITY, BIAS_MA  # noqa: E402 -- after the sys.path setup
 from dk6as6 import linear, pentode  # noqa: E402 -- after the sys.path setup
 from dk6as6.circuit import MODE  # noqa: E402 -- after the sys.path setup
-from spice6as6.run_refs import BIASES, MODE_BIASES, ref_file  # noqa: E402 -- after the sys.path setup
+from spice6as6.run_refs import MODE_BIASES, GRID_BIASES, HARDNESS, ref_file, biases_of  # noqa: E402,F401
 
 FS = 48000.0
-PARAMS = {"dual": pentode.DUAL_CONTROL, "r51": pentode.REFIT_51}
+PARAMS = {"dual": pentode.DUAL_CONTROL, "r51": pentode.REFIT_51, "dualg": pentode.DUAL_CONTROL}
 OP_KEYS = ("va", "vk", "ia", "ig2", "ik", "vgk")
 SPICE_EXP_CAP = 227.9559242   # ngspice 41 B-source exp() argument limit: ln(1 + exp(300)) evaluates to 227.9559
 
@@ -58,8 +66,14 @@ def ref(model, bias=BIAS_MA, mode=MODE):
     return json.load(open(ref_file(model, bias, mode)))
 
 
-def results_file(mode=MODE):
-    return os.path.join(HERE, "results.json" if mode == "P1" else f"results_{mode}.json")
+def results_file(mode=MODE, model="dual"):
+    g = "_grid" if model == "dualg" else ""
+    return os.path.join(HERE, f"results{g}.json" if mode == "P1" else f"results{g}_{mode}.json")
+
+
+def stage(model="dual", **kw):
+    """The DK stage of `model`: its valve parameters and grid hardness (run_refs.HARDNESS), experimental allowed."""
+    return Stage(FS, pentode=PARAMS[model], grid_hardness=HARDNESS[model], experimental=True, **kw)
 
 
 def small_signal(stage, f):
@@ -91,7 +105,7 @@ def sines(quality="standard", filt="fir", model="dual", T=0.5, amps=AMPS, bias=B
     out, times, its = {}, {}, {}
     n = int(T * FS)
     for a in amps:
-        s = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model], mode=mode, experimental=True)
+        s = stage(model, bias=bias, quality=quality, filt=filt, mode=mode)
         t = np.arange(n + s.latency_samples) / FS
         t0 = time.perf_counter()
         r = aligned(s, float(a) * np.sin(2 * np.pi * 1000 * t), record=("out", "vgk", "vg2k"))
@@ -104,10 +118,11 @@ def sines(quality="standard", filt="fir", model="dual", T=0.5, amps=AMPS, bias=B
     return out, times, its
 
 
-def burst(quality="standard", filt="fir", model="dual", bias=BIAS_MA, mode=MODE):
-    """The 4 V 1 kHz tone burst (10-30 ms, 120 ms) through Stage.process: (burst_metrics of Vgk, iteration stats)."""
-    s = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model], mode=mode, experimental=True)
-    nb = int(0.12 * FS)
+def burst(quality="standard", filt="fir", model="dual", bias=BIAS_MA, mode=MODE, t_stop=0.12, raw=False):
+    """The 4 V 1 kHz tone burst (10-30 ms, t_stop = 120 ms as the references) through Stage.process: (burst_metrics of
+    Vgk, iteration stats); raw=True adds the internal-rate (t, Vgk) as m["raw"]."""
+    s = stage(model, bias=bias, quality=quality, filt=filt, mode=mode)
+    nb = int(t_stop * FS)
     tb = np.arange(nb + s.latency_samples) / FS
     xb = 4 * np.sin(2 * np.pi * 1000 * tb) * ((tb > 10e-3) & (tb < 30e-3))
     rb = aligned(s, xb, record=("out", "vgk", "vg2k"))
@@ -115,18 +130,78 @@ def burst(quality="standard", filt="fir", model="dual", bias=BIAS_MA, mode=MODE)
     ti = (np.arange(len(vg)) - s.rs.up_delay_internal) / s.fs   # Vgk is seen after the interpolator only
     keep = (ti >= 0) & (ti < nb / FS)
     m = burst_metrics(ti[keep], vg[keep])
+    if raw:
+        m["raw"] = (ti[keep], vg[keep], s.fs)
     if exp_capped(s, rb["_internal"]):
         m["spice_exp_capped"] = True
     return m, s.iteration_stats()
 
 
-def tail_tau(burst, t0=31e-3, t1=118e-3):
-    """Decay constant (s) of the burst's recovery tail: a log-linear fit of its 0.5 ms trajectory over t0..t1, after
-    the cycle-mean window has left the burst (informational, beside CRIT's recovery tau, which starts at the 30.5 ms
-    sample: that sample straddles the burst's end)."""
+# The burst recovery measure (#124, resolved here for the 6AS6 stage; PR #128 review). spice/run_refs.burst_metrics'
+# recovery_tau (kept in every record as "padded" tau, informational) starts on the 30.5 ms sample, whose one-cycle mean
+# still straddles the burst's end, and searches the cycle mean right up to the end of the 120 ms trace, where
+# np.convolve(..., "same") pads with zeros: where the true 1/e crossing lies beyond the trace it reports the padded edge
+# (T 0.5 mA with grid current: 89.0 ms on the 120 ms trace, 106.0 ms on a 250 ms one). Both measures below use only the
+# stored 0.5 ms trajectory (traj_t / traj_vgk: the cycle mean at 0-118.5 ms, every sample a full one-cycle window inside
+# the trace) from TAIL_T0 = 31 ms, the first sample whose window has left the burst (10-30 ms):
+#   tail tau   the decay constant of a log-linear fit of |Vgk - rest| over 31-118 ms (the tail single-signed: above
+#              rest for the coupling-cap tail without grid current, below it for grid blocking). THE CRITERION: CRIT's
+#              burst_tau_rel (1 %), unchanged, compares it with the reference's.
+#   cross tau  the time from 31 ms for |Vgk - rest| to fall to 1/e of its 31 ms value, on the same samples; NaN
+#              ("unobserved") if it does not within the trace. Reported, compared where both are observed.
+TAIL_T0, TAIL_T1 = 31e-3, 118e-3
+
+
+def _tail(burst, t0=TAIL_T0, t1=TAIL_T1):
     t, v = np.array(burst["traj_t"]), np.array(burst["traj_vgk"]) - burst["rest_vgk"]
-    m = (t >= t0) & (t <= t1)
-    return float(-1.0 / np.polyfit(t[m], np.log(v[m]), 1)[0])
+    m = (t >= t0 - 1e-9) & (t <= t1 + 1e-9)
+    return t[m], v[m]
+
+
+def tail_tau(burst, t0=TAIL_T0, t1=TAIL_T1):
+    """The tail tau (s) above; NaN if the tail crosses rest (no single decay constant)."""
+    t, v = _tail(burst, t0, t1)
+    sgn = np.sign(np.mean(v))
+    if not np.all(sgn * v > 0):
+        return float("nan")
+    return float(-1.0 / np.polyfit(t, np.log(sgn * v), 1)[0])
+
+
+def cross_tau(burst, t0=TAIL_T0):
+    """The cross tau (s) above; NaN where the 1/e crossing is not observed in the full-window trajectory."""
+    t, v = _tail(burst, t0, burst["traj_t"][-1])
+    j = np.nonzero(v / v[0] < np.exp(-1))[0] if v[0] != 0 else []
+    return float(t[j[0]] - t[0]) if len(j) else float("nan")
+
+
+def _rel(a, b):
+    return abs(a / b - 1) if np.isfinite(a) and np.isfinite(b) else None
+
+
+def burst_compare(dk, ref):
+    """The burst criteria of a DK burst record against its reference's (both burst_metrics dicts): shift, trajectory
+    and the tail tau (CRIT), the cross tau and the padded tau for information."""
+    shift_ref = ref["min_vgk"] - ref["rest_vgk"]
+    tr = np.array(dk["traj_vgk"]) - dk["rest_vgk"]
+    rr = np.array(ref["traj_vgk"]) - ref["rest_vgk"]
+    td, trf = tail_tau(dk), tail_tau(ref)
+    cd, crf = cross_tau(dk), cross_tau(ref)
+    return dict(min_rel=abs((dk["min_vgk"] - dk["rest_vgk"]) / shift_ref - 1),
+                traj_rel=float(np.sqrt(np.mean((tr - rr) ** 2)) / abs(shift_ref)),
+                tau_tested=bool(np.isfinite(trf)),
+                tau_rel=abs(td / trf - 1) if np.isfinite(trf) else None,       # tail tau; inf-safe: NaN DK fails
+                tail_tau_s=dict(dk=td, ref=trf),
+                cross_tau_s=dict(dk=cd, ref=crf), cross_tau_rel=_rel(cd, crf),
+                padded_tau_s=dict(dk=dk["recovery_tau_s"], ref=ref["recovery_tau_s"]),
+                **({"spice_exp_capped": True} if dk.get("spice_exp_capped") else {}),
+                t_min_diff_ms=1e3 * (dk["t_min"] - ref["t_min"]),
+                ref=dict(rest=ref["rest_vgk"], min=ref["min_vgk"]))
+
+
+def burst_ok(b):
+    tau_ok = not b["tau_tested"] or (b["tau_rel"] is not None and np.isfinite(b["tau_rel"])
+                                     and b["tau_rel"] < CRIT["burst_tau_rel"])
+    return b["min_rel"] < CRIT["burst_min_rel"] and b["traj_rel"] < CRIT["burst_traj_rel"] and tau_ok
 
 
 def harm_dev(sine, r):
@@ -149,9 +224,11 @@ def harm_dev(sine, r):
 
 
 def run(T=0.5, quality="standard", filt="fir", model="dual", bias=BIAS_MA, mode=MODE):
-    st = Stage(FS, bias=bias, quality=quality, filt=filt, pentode=PARAMS[model], mode=mode, experimental=True)
+    st = stage(model, bias=bias, quality=quality, filt=filt, mode=mode)
     out = dict(criteria=CRIT, fs_base=FS, quality=quality, oversampling=st.os, prewarp_hz=st.prewarp_hz, filter=filt,
                model=model, params=PARAMS[model], bias_ma=bias, rk=st.rk)
+    if st.grid is not None:
+        out["grid"] = st.grid
     if mode != "P1":
         out["mode"] = mode
     out["resampler"] = dict(latency_samples=st.latency_samples, latency_ms=st.rs.latency_ms,
@@ -168,19 +245,7 @@ def run(T=0.5, quality="standard", filt="fir", model="dual", bias=BIAS_MA, mode=
     o["harm"] = harm_dev(out["sine"], r)
 
     out["burst"], its["burst"] = burst(quality, filt, model, bias, mode)
-    rb_ = r["burst"]
-    shift_ref = rb_["min_vgk"] - rb_["rest_vgk"]
-    tr = np.array(out["burst"]["traj_vgk"]) - out["burst"]["rest_vgk"]
-    rr = np.array(rb_["traj_vgk"]) - rb_["rest_vgk"]
-    o["burst"] = dict(min_rel=abs((out["burst"]["min_vgk"] - out["burst"]["rest_vgk"]) / shift_ref - 1),
-                      tau_rel=abs(out["burst"]["recovery_tau_s"] / rb_["recovery_tau_s"] - 1),
-                      traj_rel=float(np.sqrt(np.mean((tr - rr) ** 2)) / abs(shift_ref)),
-                      tau_tested=bool(np.isfinite(rb_["recovery_tau_s"])),
-                      **({"spice_exp_capped": True} if out["burst"].get("spice_exp_capped") else {}),
-                      **({"tail_tau_fit_rel": abs(tail_tau(out["burst"]) / tail_tau(rb_) - 1)}
-                         if np.isfinite(rb_["recovery_tau_s"]) else {}),
-                      t_min_diff_ms=1e3 * (out["burst"]["t_min"] - rb_["t_min"]),
-                      ref=dict(rest=rb_["rest_vgk"], min=rb_["min_vgk"], tau=rb_["recovery_tau_s"]))
+    o["burst"] = burst_compare(out["burst"], r["burst"])
     out["vs"] = {model: o}
     out["iterations"] = its
     out["cpu"] = dict(method=f"time.perf_counter around Stage.process (pure Python, one core, 48 kHz base, "
@@ -191,17 +256,36 @@ def run(T=0.5, quality="standard", filt="fir", model="dual", bias=BIAS_MA, mode=
                   if isinstance(h, dict) and h["tested"])
     harm_uncompared = any(o["harm"][a].get("spice_exp_capped") and any(
         isinstance(h, dict) and h["ref_dBc"] > CRIT["harm_floor_dbc"] for h in o["harm"][a].values()) for a in AMPS)
-    burst_ok = (o["burst"]["min_rel"] < CRIT["burst_min_rel"] and o["burst"]["traj_rel"] < CRIT["burst_traj_rel"]
-                and (not o["burst"]["tau_tested"] or o["burst"]["tau_rel"] < CRIT["burst_tau_rel"]))
     out["passed"] = dict(   # True / False per criterion; None where the reference is not the same law (not compared)
         op=all(v < CRIT["op_rel"] for v in o["op_rel"].values()),
         ac_stage=o["ac_maxdev_db_stage"] < CRIT["ac_db"],
         ac_chain=o["ac_maxdev_db_chain"] < CRIT["ac_db"],
         harmonics=False if not harm_ok else (None if harm_uncompared else True),
-        burst=None if o["burst"].get("spice_exp_capped") else burst_ok,
+        burst=None if o["burst"].get("spice_exp_capped") else burst_ok(o["burst"]),
         newton=all(v["converged"] for v in its.values()))
     if not st.supported:
         out["supported"] = False
+    return out
+
+
+def rescore():
+    """Re-evaluate the burst comparison of every committed results[_grid][_<mode>].json case with burst_compare (#124),
+    from its stored DK burst record and its reference's, and rewrite the files. Returns {file: {bias: {quality:
+    (status before, status after)}}}."""
+    out = {}
+    for model, modes in (("dual", MODE_BIASES), ("dualg", GRID_BIASES)):
+        for mode in modes:
+            fn = results_file(mode, model)
+            res = json.load(open(fn))
+            rep = out.setdefault(os.path.basename(fn), {})
+            for b, rb in res.items():
+                for q, r in rb.items():
+                    before = status(r)
+                    o = r["vs"][r["model"]]
+                    o["burst"] = burst_compare(r["burst"], ref(r["model"], float(b), mode)["burst"])
+                    r["passed"]["burst"] = None if o["burst"].get("spice_exp_capped") else burst_ok(o["burst"])
+                    rep.setdefault(b, {})[q] = (before, status(r))
+            json.dump(res, open(fn, "w"), indent=1, default=float)
     return out
 
 
@@ -226,12 +310,25 @@ def summary(res):
     return "\n".join(lines)
 
 
-def main(mode=MODE):
-    biases = BIASES["dual"] if mode == "P1" else MODE_BIASES[mode]
-    res = {f"{b:g}": {q: run(quality=q, bias=b, mode=mode) for q in QUALITY} for b in biases}
-    if mode == "P1":
-        res[f"{BIAS_MA:g}"]["plain_4x"] = run(quality=(4, None))
-    json.dump(res, open(results_file(mode), "w"), indent=1, default=float)
+def _run(a):
+    q, b, mode, model = a
+    return run(quality=q, bias=b, mode=mode, model=model)
+
+
+def main(mode=MODE, model="dual", workers=1):
+    jobs = [(q, b, mode, model) for b in biases_of(model, mode) for q in QUALITY]
+    if mode == "P1" and model == "dual":
+        jobs.append(((4, None), BIAS_MA, mode, model))
+    if workers > 1:
+        from concurrent.futures import ProcessPoolExecutor
+        with ProcessPoolExecutor(workers) as ex:
+            out = list(ex.map(_run, jobs))
+    else:
+        out = [_run(j) for j in jobs]
+    res = {}
+    for (q, b, _, _), r in zip(jobs, out):
+        res.setdefault(f"{b:g}", {})["plain_4x" if isinstance(q, tuple) else q] = r
+    json.dump(res, open(results_file(mode, model), "w"), indent=1, default=float)
     for b, rb in res.items():
         for q, r in rb.items():
             print(f"== {mode}, {b} mA, {q}: {r['oversampling']}x, Rk {r['rk']:.6g} ohm, resampler {r['resampler']}")
@@ -240,7 +337,17 @@ def main(mode=MODE):
 
 
 if __name__ == "__main__":
-    st = {m: main(m) for m in (sys.argv[1:] or MODE_BIASES)}
+    import argparse
+    if sys.argv[1:] == ["--rescore"]:
+        print(json.dumps(rescore(), indent=1))
+        sys.exit(0)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("modes", nargs="*")
+    ap.add_argument("--grid", action="store_true", help='model "dualg": the default stage, with grid current (#112)')
+    ap.add_argument("--workers", type=int, default=1, help="processes (CPU time per run is then not one-core time)")
+    a = ap.parse_args()
+    st = {m: main(m, "dualg" if a.grid else "dual", a.workers)
+          for m in (a.modes or list(GRID_BIASES if a.grid else MODE_BIASES))}
     print(json.dumps(st))
     # Every supported setting must pass; unsupported (experimental) ones are recorded, never counted as passes.
     bad = {m: {b: v for b, v in sm.items() if any(s != "passed" and ok for s, ok in v.values())}

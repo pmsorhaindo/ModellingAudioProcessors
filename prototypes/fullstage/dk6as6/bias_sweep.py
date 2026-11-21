@@ -26,6 +26,9 @@ FS = 48000.0
 BIASES = tuple(sorted({0.1, 0.15, 0.35, 0.4, 0.45, 0.5, 0.6} | {round(0.2 + 0.005 * k, 3) for k in range(21)}))   # mA
 KNOBS = tuple(range(1, 12))
 OUT_PEAK_V = 3.0
+# grid_hardness=0: the #110 record. With the default g1 grid current (#112) P1 draws Ig1 < 1e-15 A on these
+# signals (g1 stays below -3 V), so the stage is unchanged to rounding (dk6as6/grid.py).
+GRID_HARDNESS = 0.0
 T = 1.0
 
 
@@ -36,7 +39,7 @@ def tone(st, a):
 
 
 def point(bias):
-    st = Stage(FS, bias=bias)
+    st = Stage(FS, bias=bias, grid_hardness=GRID_HARDNESS)
     g = abs(linear.analog_response(st, [1000.0])[0])
     a = OUT_PEAK_V / g
     h = tone(st, a)
@@ -56,7 +59,8 @@ def knob(k):
         newton[q] = dict(samples=sum(s["samples"] for s in its), nonconverged=sum(s["nonconverged"] for s in its),
                          max_iterations=max(s["max"] for s in its))
     p = point(b)
-    return dict(knob=k, meter=bias_point(b), gain_1k_db=p["gain_1k_db"], drive_V_peak=p["drive_V_peak"],
+    return dict(knob=k, meter=bias_point(b, grid_hardness=GRID_HARDNESS), gain_1k_db=p["gain_1k_db"],
+                drive_V_peak=p["drive_V_peak"],
                 H_dBc=p["H_dBc"], thd_pct=p["thd_pct"], newton=newton)
 
 

@@ -31,7 +31,8 @@ so every passive below is INFERRED from the manuals and datasheets, not measured
   Rs 1k, Rgs 68k           NOT in the #102 table: the test bench's source resistance and the grid stopper, kept
                            from the 12AX7 stage (dk/circuit.py, our conventional round values). Ig1 = 0, so neither
                            has any DC effect.
-The valve: pentode.py (fit6as6 dual_control). Ig1 = Ig3 = 0, so g1 and g3 carry no valve current.
+The valve: pentode.py (fit6as6 dual_control). Ig3 = 0. Ig1 (#112, optional, unvalidated: pentode.grid) is a third
+valve current port g -> k (NLI_G1) when grid=True; without it g1 carries no valve current (the #111 netlist exactly).
 
 Derivation: as dk/circuit.py (nodal DK, trapezoidal companion capacitors, Yeh 2009, Holters & Zoelzer), with one
 change: the nonlinear CURRENT ports and the CONTROLLING-VOLTAGE ports differ. The valve injects two currents,
@@ -64,6 +65,7 @@ MODES = {
 MODE = "P1"                                      # the default (#118)
 VALVE_CAPS = ("CG1K", "G1", "K"), ("CPK", "P", "K"), ("CG1P", "G1", "P"), ("CG1G3", "G1", "G3")   # + CG3, per mode
 NLI = [("a", "k"), ("g2", "k")]                  # valve currents Ip (a->k), Ig2 (g2->k)
+NLI_G1 = ("g", "k")                              # + Ig1 (g->k) with grid current (#112)
 OUT_NAMES = ["out", "g", "k", "a", "gl"]
 
 
@@ -90,15 +92,21 @@ def nlv(mode=MODE):
     return [(pins[p], pins["K"]) for p in ("G1", "G2", "G3", "P")]
 
 
-def netlist(rk, v=VALUES, mode=MODE):
-    """(resistors, capacitors, sources, NLV, NLI, outputs) with cathode resistor rk (ohms), wired as `mode`."""
+def nli(grid=False):
+    """The valve current ports: (Ip, Ig2), plus Ig1 with grid current."""
+    return NLI + ([NLI_G1] if grid else [])
+
+
+def netlist(rk, v=VALUES, mode=MODE, grid=False):
+    """(resistors, capacitors, sources, NLV, NLI, outputs) with cathode resistor rk (ohms), wired as `mode`; grid=True
+    adds the g1 current port."""
     R = [("src", "in1", v["Rs"]), ("gl", None, v["Rg"]), ("gl", "g", v["Rgs"]), ("ht", "a", v["Ra"]),
          ("k", None, rk), ("out", None, v["Rl"])]
     if MODES[mode]["screen"] == "strap":
         R.append(("g2", "a", v["Rstrap"]))
     Cs = [("in1", "gl", v["Cin"]), ("a", "out", v["Cout"])] + valve_caps(v, mode)
     OUT = [(n, None) for n in OUT_NAMES]
-    return R, Cs, sources_of(mode), nlv(mode), NLI, OUT
+    return R, Cs, sources_of(mode), nlv(mode), nli(grid), OUT
 
 
 def sources(v=VALUES, mode=MODE):
@@ -125,8 +133,9 @@ def _nu(U):
 
 def analog_response(f, J, rk, mode=MODE):
     """Exact (continuous-time) small-signal response v(out)/v(src) at frequencies f, with the valve linearised to
-    the 2x4 Jacobian J = d(Ip, Ig2)/d(Vg1k, Vg2k, Vg3k, Vak) of its operating point (what ngspice's .ac computes)."""
-    R, Cs, U, NV, NI, OUT = netlist(rk, mode=mode)
+    the Jacobian J = d(Ip, Ig2[, Ig1])/d(Vg1k, Vg2k, Vg3k, Vak) of its operating point (2x4, or 3x4 with grid
+    current; what ngspice's .ac computes)."""
+    R, Cs, U, NV, NI, OUT = netlist(rk, mode=mode, grid=len(J) == 3)
     Nr, Nx, Nv, Ni, Nu = _inc([(p, q) for p, q, _ in R]), _inc([(p, q) for p, q, _ in Cs]), _inc(NV), _inc(NI), _nu(U)
     Y0 = Nr.T @ np.diag([1.0 / r for _, _, r in R]) @ Nr + Ni.T @ np.asarray(J) @ Nv
     Yc = Nx.T @ np.diag([c for _, _, c in Cs]) @ Nx
@@ -140,11 +149,11 @@ def analog_response(f, J, rk, mode=MODE):
     return np.array(out)
 
 
-def build(fs, rk, dc=False, prewarp_hz=None, mode=MODE):
+def build(fs, rk, dc=False, prewarp_hz=None, mode=MODE, grid=False):
     """State-space matrices at sample rate fs with cathode resistor rk (ohms), wired as `mode`. dc=True: capacitors
     open (for the operating point). prewarp_hz: pre-warp the small capacitances to this frequency (None = plain
-    trapezoidal)."""
-    R, Cs, U, NV, NI, OUT = netlist(rk, mode=mode)
+    trapezoidal). grid=True: the g1 current is a third valve port (K 4x3, C and F with three columns)."""
+    R, Cs, U, NV, NI, OUT = netlist(rk, mode=mode, grid=grid)
     Nr, Nx, Nv, Ni, No, Nu = (_inc([(p, q) for p, q, _ in R]), _inc([(p, q) for p, q, _ in Cs]), _inc(NV), _inc(NI),
                               _inc(OUT), _nu(U))
     Gr = np.diag([1.0 / r for _, _, r in R])

@@ -30,6 +30,9 @@ from dk6as6 import linear  # noqa: E402 -- after the sys.path setup
 
 FS = 48000.0
 T = 0.5
+# grid_hardness=0: the #111 record (no g1 grid current). The default stage's grid current (#112) changes T at
+# >= 0.35 mA and high drive (and nothing else above rounding): dk6as6/grid.py, grid.json.
+GRID_HARDNESS = 0.0
 BIASES = (0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6)          # mA
 DRIVES = tuple(sorted({float(a) for a in AMPS} | {1.0, 1.5, 3.0, 4.0, 6.0}))   # V peak at the input
 # The range of the data the #55 fit was fitted to (fit6as6/README.md, "Limitations"): Ec2 60-140 V, Ec1 -5 to 0 V,
@@ -38,7 +41,7 @@ FIT_RANGE = dict(vg1k=(-5.0, 0.0), vg2k=(60.0, 140.0), vg3k=(-9.0, 12.0), vak=(2
 
 
 def dc(mode, bias):
-    st = Stage(FS, bias=bias, mode=mode, experimental=True)
+    st = Stage(FS, bias=bias, mode=mode, experimental=True, grid_hardness=GRID_HARDNESS)
     h, h20 = linear.analog_response(st, [1000.0, 20000.0])
     d = st.dc
     return dict(mode=mode, bias_ma=bias, rk=st.rk, va=d["nodes"]["a"], vk=d["nodes"]["k"],
@@ -64,7 +67,7 @@ def outside(sw):
 
 
 def tone(mode, bias, drive):
-    st = Stage(FS, bias=bias, mode=mode, experimental=True)
+    st = Stage(FS, bias=bias, mode=mode, experimental=True, grid_hardness=GRID_HARDNESS)
     t = np.arange(int(T * FS) + st.latency_samples) / FS
     r = aligned(st, drive * np.sin(2 * np.pi * 1000 * t), record=("out", "a", "k", "vgk"))
     h = harmonics(r["out"], FS, 1000.0, 100)

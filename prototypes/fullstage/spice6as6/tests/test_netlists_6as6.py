@@ -25,8 +25,9 @@ from dk6as6.stage import cathode_resistor, BIAS_MA  # noqa: E402 -- after the sy
 from spice6as6 import run_refs as R  # noqa: E402 -- after the sys.path setup
 
 VALUES = circuit.VALUES
-CASES = R.cases(list(R.PARAMS) + [f"dual/{m}" for m in R.MODE_BIASES if m != "P1"])   # every committed reference:
-RK = {(m, md, b): cathode_resistor(b, R.PARAMS[m], mode=md) for m, md, b in CASES}    # (model, mode, bias mA)
+CASES = R.cases(list(R.PARAMS) + [f"dual/{m}" for m in R.MODE_BIASES if m != "P1"]   # every committed reference:
+                + [f"dualg/{m}" for m in R.GRID_BIASES if m != "P1"])                  # (model, mode, bias mA)
+RK = {(m, md, b): cathode_resistor(b, R.PARAMS[m], mode=md, grid_hardness=R.HARDNESS[m]) for m, md, b in CASES}
 
 
 def with_rk(model, bias=BIAS_MA, values=VALUES, mode="P1"):
@@ -182,6 +183,11 @@ def test_committed_references_were_made_with_these_settings(model, mode, bias):
     assert gen["params"] == R.PARAMS[model]
     assert gen["bias_ma"] == bias and gen["rk"] == pytest.approx(RK[model, mode, bias], rel=1e-9)
     assert gen.get("mode", "P1") == ref.get("mode", "P1") == mode
+    if R.HARDNESS[model]:   # #112: the grid law the reference ran, and the split runs' pieces
+        assert gen["grid"] == pentode.grid(R.HARDNESS[model], R.PARAMS[model])
+        assert gen["split"] == R.split_analyses() + ["burst"] and "ig1" in ref["op"]
+    else:
+        assert "grid" not in gen and "ig1" not in ref["op"]
 
 
 VALUE_KEYS = [k for k in VALUES if k not in {"CG3"} | {c[0] for c in circuit.VALVE_CAPS}] + ["Rk"]
@@ -257,12 +263,12 @@ def _bsources(model, mode="P1"):
 
 
 def _eval(expr, vg1, vg2, vg3, va):
-    env = dict(log=math.log, exp=math.exp, atan=math.atan, max=max,
+    env = dict(log=math.log, exp=math.exp, atan=math.atan, max=max, abs=abs,
                pwr=lambda x, y: math.copysign(abs(x) ** y, x), vg1=vg1, vg2=vg2, vg3=vg3, vp=va)
     return eval(expr, {"__builtins__": {}}, env)
 
 
-@pytest.mark.parametrize("model, mode", R.SUBCKTS)
+@pytest.mark.parametrize("model, mode", [c for c in R.SUBCKTS if not R.HARDNESS[c[0]]])
 def test_subckt_is_the_dk_valve_law(model, mode):
     """The B-sources, evaluated in Python, give pentode.currents (= model6as6.dual_ip_ig2) with the same parameters,
     over the stage's range and beyond (cut-off to positive grid; Va from the knee to HT). Agreement is 1e-12 relative
@@ -278,6 +284,78 @@ def test_subckt_is_the_dk_valve_law(model, mode):
         rel = 1e-12 + (2e-16 / math.exp(x) if x < 0 else 0.0)
         assert _eval(b["BP"][2], *v) == pytest.approx(ip, rel=rel, abs=1e-25), v
         assert _eval(b["BG2"][2], *v) == pytest.approx(ig2, rel=10 * rel, abs=1e-25), v
+
+
+@pytest.mark.parametrize("mode", ["P1", "T"])
+def test_grid_subckt_is_the_dk_valve_law_with_grid_current(mode):
+    """#112: the dualg subckt's three B-sources, evaluated in Python, give pentode.currents_grid (Ip, Ig2, Ig1) at the
+    DK stage's default hardness. Ip and Ig2 are (Ik - Ig1) x share, so as in test_pentode their error is relative to
+    the sum of the magnitudes; Ig1 relative to itself, except where SPICE's ln(1 + exp(-|x|)) (no log1p) loses
+    ~1e-16 / exp(x) relative (deep cut-off, where Ig1 < 1e-22 A; abs 1e-25 A, as test_subckt_is_the_dk_valve_law)."""
+    b = _bsources("dualg", mode)
+    assert set(b) == {"BP", "BG2", "BG1"} and b["BG1"][:2] == ("G1", "K")
+    g = pentode.grid(R.HARDNESS["dualg"])
+    assert g == pentode.GRID
+    for v in itertools.product([-8.0, -3.3, -1.0, -0.3, 0.0, 0.3, 3.0], [60.0, 116.7, 140.0], [-8.0, -3.3, 0.0, 3.0],
+                               [0.3, 20.0, 181.7, 300.0]):
+        ip, ig2, ig1, _ = pentode.currents_grid(*v, pentode.DUAL_CONTROL, g)
+        ip0, ig20, _ = pentode.currents(*v)
+        f = ip0 / (ip0 + ig20)
+        x = pentode.DUAL_CONTROL["KP"] * (1.0 / pentode.DUAL_CONTROL["MU"] + v[0] / v[1])
+        rel = 1e-12 + (2e-16 / math.exp(x) if x < 0 else 0.0)
+        xg = g["CG"] * v[0]
+        relg = 1e-12 + (2e-16 / math.exp(xg) if xg < 0 else 0.0)
+        assert abs(_eval(b["BG1"][2], *v) - ig1) <= relg * ig1 + 1e-25, v
+        assert abs(_eval(b["BP"][2], *v) - ip) <= rel * (abs(ip0) + f * ig1) + 1e-25, v
+        assert abs(_eval(b["BG2"][2], *v) - ig2) <= 10 * rel * (abs(ig20) + (1 - f) * ig1) + 1e-25, v
+
+
+def test_grid_subckt_matches_the_dk_law_through_cutoff():
+    """#112 review: through the cut-off transition (T's strapped screen near the cathode, g1 below it, Ik down to
+    underflow) the dualg B-sources and pentode.currents_grid give the same split, to 1e-12 of the magnitudes plus the
+    SPICE form's ln(1 + exp(-|x|)) loss on Ig1 (~1e-16 / exp(x) relative, as the test above)."""
+    b = _bsources("dualg", "T")
+    g = pentode.GRID
+    for vg1 in (-0.6, -0.8, -1.0, -1.1, -1.2, -1.5):
+        rel = 1e-12 + 2e-16 / math.exp(g["CG"] * vg1)
+        for vs in (0.303, 0.5, 2.0):
+            v = (vg1, vs, vs, vs)
+            ip, ig2, ig1, _ = pentode.currents_grid(*v)
+            ik = pentode.cathode_share(*v)[0]
+            for name, want in (("BP", ip), ("BG2", ig2), ("BG1", ig1)):
+                assert abs(_eval(b[name][2], *v) - want) <= rel * (abs(ik) + ig1) + 1e-300, (name, v)
+
+
+def test_grid_subckts_leave_the_111_ones_alone():
+    """#112 changes the P1 / T subckts only as new files: the dual ones (Ig1 = 0) have no Bg1 and are generated exactly
+    as before (test_committed_files_are_generated_and_current), so every dual reference stays reproducible."""
+    for mode in ("P1", "T"):
+        assert set(_bsources("dual", mode)) == {"BP", "BG2"}
+        assert R.models("dualg", mode)[0] != R.models("dual", mode)[0]
+    assert R.HARDNESS == {"dual": 0.0, "r51": 0.0, "dualg": pentode.HARDNESS}
+
+
+@pytest.mark.parametrize("model, mode", [("dual", "P1"), ("dualg", "T")])
+def test_split_main_is_the_same_analyses(model, mode):
+    """#112: run(split=True) runs 'main' as split_analyses(). Every piece is the main netlist above .control (the
+    sine pieces with their amplitude in Vin's SIN instead of the first one, which 'main' then alters per amplitude);
+    'opac' is main's .op / .ac; each sine piece is one of main's tran + wrdata, written to the same file."""
+    def unnamed(txt):       # the header names the analysis; everything else must match
+        return re.sub(r"^(\* GENERATED by spice6as6/run_refs.py \([^,]+(?:, \w+)?), [\w:.]+,", r"\1, <analysis>,", txt)
+    main = R.netlist(model, "main", BIAS_MA, mode=mode)
+    head, ctl = unnamed(main).split(".control\n")
+    pieces = {a: unnamed(R.netlist(model, a, BIAS_MA, mode=mode)) for a in R.split_analyses()}
+    assert R.split_analyses() == ["opac"] + [f"sine:{a}" for a in R12.AMPS]
+    assert pieces["opac"].split(".control\n")[0] == head
+    assert pieces["opac"].split(".control\n")[1].split("\n.endc")[0] == ctl.split("foreach")[0].rstrip("\n")
+    for a in R12.AMPS:
+        h, c = pieces[f"sine:{a}"].split(".control\n")
+        assert h == head.replace(f"SIN(0 {R12.AMPS[0]} 1000)", f"SIN(0 {a} 1000)")
+        tran = next(ln for ln in ctl.splitlines() if ln.strip().startswith("tran"))
+        assert c.splitlines()[:2] == [tran.strip(),
+                                      f"wrdata out/{R.case(model, BIAS_MA, mode)}_sine_{a}.txt v(out) v(g) v(k)"]
+    with pytest.raises(ValueError):
+        R.netlist(model, "sine:3", BIAS_MA, mode=mode)
 
 
 def test_failed_analysis_stops_the_run(tmp_path, monkeypatch):
@@ -298,6 +376,155 @@ def test_failed_analysis_stops_the_run(tmp_path, monkeypatch):
     assert len(started) == 1 and started[0].endswith("_main.cir"), started
     assert not [f for f in os.listdir(R.HERE) if f.startswith("_gen_") and "_out_" in f and tmp_path.name in f]
     assert os.path.exists(os.path.join(out, f"{R.case('dual', BIAS_MA)}_main_log.txt"))
+
+
+# A stand-in ngspice for the publication tests (PR #128 review): writes parseable traces into every literal wrdata
+# target of the netlist it is given (cwd spice6as6/): the op point with Va = $FAKE_VA, a flat AC response, 1 kHz sines,
+# a burst; skips targets containing $FAKE_SKIP; exits $FAKE_BURST_STATUS on a burst netlist, else 0.
+FAKE_NGSPICE = """#!{python}
+import os, sys
+import numpy as np
+if sys.argv[1] == "--version":
+    print("** ngspice-41 : stand-in")
+    sys.exit(0)
+skip = os.environ.get("FAKE_SKIP") or None
+def pairs(t, cols):
+    return np.column_stack([c for x in cols for c in (t, x)])
+for ln in open(sys.argv[2]):
+    tok = ln.split()
+    if not tok or tok[0] != "wrdata" or "$" in tok[1] or (skip and skip in tok[1]):
+        continue
+    p, nv = tok[1], len(tok) - 2
+    if p.endswith("_op.txt"):
+        d = pairs(np.zeros(1), [float(os.environ["FAKE_VA"])] + [1.0] * (nv - 1))
+    elif "_ac" in p:
+        f = np.logspace(0, 5, 11) if p.endswith("_ac.txt") else np.array([float(p.rsplit("_", 1)[1][:-4])])
+        d = np.column_stack([f, np.full_like(f, 20.0), f, np.zeros_like(f)])
+    elif "_sine_" in p:
+        t = np.arange(0.3, 0.5, 1e-5)
+        d = pairs(t, [np.sin(2 * np.pi * 1000 * t), 0 * t, 0 * t])
+    else:                                                   # burst: g, k, out, gl
+        t = np.arange(0.0, 0.12, 1e-5)
+        d = pairs(t, [-1.0 - 0.2 * ((t > 0.01) & (t < 0.03)), 0 * t, 0 * t, 0 * t])
+    np.savetxt(p, d)
+sys.exit(int(os.environ.get("FAKE_BURST_STATUS", "0")) if sys.argv[2].endswith("_burst.cir") else 0)
+"""
+
+
+def _fake(tmp_path, monkeypatch):
+    fake = tmp_path / "ngspice"
+    fake.write_text(FAKE_NGSPICE.format(python=sys.executable))
+    fake.chmod(0o755)
+    monkeypatch.setattr(R, "NGSPICE", str(fake))
+
+
+def _run(monkeypatch, out, va, burst_status=0, skip="", split=True):
+    monkeypatch.setenv("FAKE_VA", str(va))
+    monkeypatch.setenv("FAKE_BURST_STATUS", str(burst_status))
+    monkeypatch.setenv("FAKE_SKIP", skip)
+    return R.run("dual", BIAS_MA, out=out, write=False, split=split)
+
+
+def _published(out):
+    """(pointer target, {file: bytes} of that run directory, Va re-analysed from it with its own record)."""
+    d = R.run_dir("dual", BIAS_MA, out)
+    files = {f: open(os.path.join(R.HERE, d, f), "rb").read() for f in os.listdir(os.path.join(R.HERE, d))}
+    return d, files, R.analyse_published("dual", BIAS_MA, out, write=False)["op"]["va"]
+
+
+def _no_staging(out):
+    return not [f for f in os.listdir(out) if f.startswith("_staging_")]
+
+
+def test_failed_rerun_leaves_the_published_run_whole(tmp_path, monkeypatch):
+    """PR #128 review (1st): a rerun whose main writes its traces, then whose burst fails, publishes nothing: the
+    pointer, the published run's files and its re-analysis are unchanged, and the staging directory is gone."""
+    _fake(tmp_path, monkeypatch)
+    out = str(tmp_path / "out")
+    _run(monkeypatch, out, 150.0)
+    before = _published(out)
+    with pytest.raises(RuntimeError, match="ngspice failed on burst"):
+        _run(monkeypatch, out, 151.0, burst_status=1, split=False)
+    assert _published(out) == before and before[2] == 150.0 and _no_staging(out)
+
+
+def test_zero_exit_with_a_missing_trace_publishes_nothing(tmp_path, monkeypatch):
+    """PR #128 review (2nd): ngspice exits 0 but one sine trace is missing. The staged run is analysed before
+    publication, so the run fails and the previous complete run stays published, whole and re-analysable."""
+    _fake(tmp_path, monkeypatch)
+    out = str(tmp_path / "out")
+    _run(monkeypatch, out, 150.0)
+    before = _published(out)
+    with pytest.raises(FileNotFoundError, match="_sine_0.05"):
+        _run(monkeypatch, out, 151.0, skip="_sine_0.05")
+    assert _published(out) == before and before[2] == 150.0 and _no_staging(out)
+
+
+def test_complete_rerun_publishes_a_new_run_directory(tmp_path, monkeypatch):
+    """A genuinely complete rerun (real analysis of the stand-in's traces) is published as a new run directory with its
+    own record, the pointer moves to it, the superseded run is kept one generation for readers, older ones go."""
+    _fake(tmp_path, monkeypatch)
+    out = str(tmp_path / "out")
+    _run(monkeypatch, out, 150.0)
+    a = R.run_dir("dual", BIAS_MA, out)
+    assert _run(monkeypatch, out, 151.0)["op"]["va"] == 151.0
+    b, files, va = _published(out)
+    gen = json.loads(files[R.GENERATOR])
+    assert b != a and va == 151.0 and b.endswith(gen["run_id"]) and gen["ngspice"].startswith("ngspice-41")
+    assert os.path.isdir(os.path.join(R.HERE, a))                  # kept for a reader that resolved it
+    _run(monkeypatch, out, 152.0)
+    assert not os.path.exists(os.path.join(R.HERE, a)) and _no_staging(out)
+
+
+def test_reanalysis_overlapping_a_publish_reads_one_run(tmp_path, monkeypatch):
+    """PR #128 review (2nd): a reader resolves the current run (A), then run B is published, then the reader reads.
+    It reads A's record and A's traces from A's directory (never modified), not A's record over B's data."""
+    _fake(tmp_path, monkeypatch)
+    out = str(tmp_path / "out")
+    _run(monkeypatch, out, 150.0)
+    d_a = R.run_dir("dual", BIAS_MA, out)
+    gen_a = json.load(open(os.path.join(R.HERE, d_a, R.GENERATOR)))
+    _run(monkeypatch, out, 151.0)                                  # publication overlaps the read
+    res = R.analyse(*("dual", BIAS_MA), d_a, gen_a, False)
+    assert res["op"]["va"] == 150.0 and res["generator"]["run_id"] == gen_a["run_id"] and d_a.endswith(gen_a["run_id"])
+    assert R.analyse_published("dual", BIAS_MA, out, write=False)["op"]["va"] == 151.0
+
+
+def test_two_publishers_of_one_case_cannot_leave_a_dangling_pointer(tmp_path, monkeypatch):
+    """PR #128 review (3rd), the reviewer's interleaving: A is current; publisher B renames its run directory and is
+    paused there; publisher C publishes. Without the per-case lock C's pruning deleted B, then B pointed .current at
+    it. With it C waits for B; afterwards .current names an existing run directory with its files."""
+    import threading
+    o = str(tmp_path / "out")
+    os.makedirs(o)
+    c = R.case("dual", BIAS_MA)
+    def staged(name):
+        d = os.path.join(o, f"_staging_{name}")
+        os.makedirs(d)
+        open(os.path.join(d, R.GENERATOR), "w").write(name)
+        return d
+    R.publish(staged("A"), o, c, "A")
+    paused, resume = threading.Event(), threading.Event()
+    rename = os.rename
+    def slow_rename(src, dst):
+        rename(src, dst)
+        if src.endswith("_staging_B"):                    # B: paused right after its rename
+            paused.set()
+            resume.wait(10)
+    monkeypatch.setattr(R.os, "rename", slow_rename)
+    tb = threading.Thread(target=R.publish, args=(staged("B"), o, c, "B"))
+    tb.start()
+    assert paused.wait(10)
+    tc = threading.Thread(target=R.publish, args=(staged("C"), o, c, "C"))
+    tc.start()
+    tc.join(0.3)
+    assert tc.is_alive()                                   # C waits for B's lock instead of pruning B
+    resume.set()
+    tb.join(10)
+    tc.join(10)
+    d = R.run_dir("dual", BIAS_MA, o)
+    assert d.endswith("_run_C") and open(os.path.join(R.HERE, d, R.GENERATOR)).read() == "C"
+    assert sorted(f for f in os.listdir(o) if "_run_" in f) == [f"{c}_run_B", f"{c}_run_C"]   # A pruned, B kept
 
 
 def test_ngspice_has_a_wall_clock_limit(tmp_path, monkeypatch):

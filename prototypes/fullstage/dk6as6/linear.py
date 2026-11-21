@@ -6,13 +6,16 @@
 """
 import numpy as np
 from . import circuit
-from .pentode import currents
+from .pentode import currents, currents_grid
 
 
 def jacobian(stage):
-    """d(Ip, Ig2)/d(Vg1k, Vg2k, Vg3k, Vak) at the stage's DC operating point (2x4)."""
+    """d(Ip, Ig2[, Ig1])/d(Vg1k, Vg2k, Vg3k, Vak) at the stage's DC operating point (2x4, 3x4 with grid current)."""
     dc = stage.dc
-    return np.array(currents(dc["vg1k"], dc["vg2k"], dc["vg3k"], dc["vak"], stage.par)[2])
+    v = (dc["vg1k"], dc["vg2k"], dc["vg3k"], dc["vak"])
+    if stage.grid is None:
+        return np.array(currents(*v, stage.par)[2])
+    return np.array(currents_grid(*v, stage.par, stage.grid)[3])
 
 
 def linearised(stage):
