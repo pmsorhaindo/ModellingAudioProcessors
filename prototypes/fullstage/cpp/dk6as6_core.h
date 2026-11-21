@@ -183,6 +183,13 @@ inline double sigmoid(double x) {
     const double e = std::exp(x);
     return e / (1.0 + e);
 }
+// softplus(x) and sigmoid(x) from one exp: pentode.py's sigmoid takes exp(-x) for x >= 0 and exp(x) below, which is
+// exp(-|x|) bit for bit, the value softplus takes too
+inline void softplus_sigmoid(double x, double& sp, double& sg) {
+    const double e = std::exp(-std::fabs(x));
+    sp = (x > 0.0 ? x : 0.0) + std::log1p(e);
+    sg = x >= 0.0 ? 1.0 / (1.0 + e) : e / (1.0 + e);
+}
 // CPython >= 3.12's sum() of four floats from the int start 0 (Neumaier compensated summation, bltinmodule.c): the
 // 2-current solver's dR/di entries use Python's sum(), so this keeps them bit-equal.
 inline double pysum4(double a0, double a1, double a2, double a3) {
@@ -207,7 +214,9 @@ inline void cathode_share(double vg1, double vg2, double vg3, double va, const P
     const bool floor = vg2 <= VG2_FLOOR;
     const double g2 = floor ? VG2_FLOOR : vg2;
     const double a = p.KP * (1.0 / p.MU + vg1 / g2);
-    const double spa = softplus(a);
+    double spa, sa = 0.0;
+    if (JAC) softplus_sigmoid(a, spa, sa);
+    else spa = softplus(a);
     const double e1 = g2 / p.KP * spa;
     const double ik0 = 2.0 * pypow(e1, p.EX, raised) / p.KG1;
     double up, dup = 0.0;
@@ -221,8 +230,9 @@ inline void cathode_share(double vg1, double vg2, double vg3, double va, const P
         if (JAC) dup = va > VA_FLOOR ? xa / x / p.MU3 : 0.0;
     }
     const double z = (vg3 + up - p.V3C - p.RI * ik0) / p.S3;
-    const double s = std::exp(-p.P3 * softplus(-z));
-    const double sm = sigmoid(-z);
+    double spz, sm;
+    softplus_sigmoid(-z, spz, sm);
+    const double s = std::exp(-p.P3 * spz);
     const double knee = va > 0.0 ? 2.0 / PI * std::atan(va / p.KVB) : 0.0;
     f = p.FMAX * knee * s;
     const double kf = 1.0 - p.KR * sm;
@@ -231,7 +241,6 @@ inline void cathode_share(double vg1, double vg2, double vg3, double va, const P
         if (va > 0.0) { const double q = va / p.KVB; if (std::isinf(q * q) && std::isfinite(q)) raised = true; }
         return;
     }
-    const double sa = sigmoid(a);
     const double de1_g1 = sa;
     const double de1_g2 = floor ? 0.0 : spa / p.KP - sa * vg1 / g2;
     const double dik0 = 2.0 * p.EX * pypow(e1, p.EX - 1.0, raised) / p.KG1;
