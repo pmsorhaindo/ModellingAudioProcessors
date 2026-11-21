@@ -27,16 +27,16 @@
 using namespace dk6as6;
 
 // ---- tolerances (cpp/README-6as6.md, "Tolerances") ----------------------------------------------------------------
-// Set from the worst error measured (Apple clang 17 -O2 on arm64, with and without FP contraction; g++ on x86-64
-// Linux in CI) with the margin in brackets (README-6as6.md has the measured values). All are many orders below
+// Set from the worst error measured (Apple clang 17 -O2 on arm64, with and without FP contraction) with the margin in
+// brackets; CI runs them with g++ on x86-64 Linux and Apple clang on macOS (README-6as6.md, "Tests and tolerances"). All are many orders below
 // dk/validate.CRIT (op 1e-3 relative, 0.1 dB) and below what the stage's own Newton tolerance (1e-6 V) moves.
 static const double TOL_LAW = 1e-13;        // per output column / its max |value|; measured 4.3e-16      [230x]
 static const double TOL_SOLVE = 1e-11;      // solvers alone: V abs, currents / 1 mA; measured 6.0e-13     [17x]
-static const double TOL_COEF = 1e-10;       // max |dM| / max |M| per matrix, op point, rest; meas. 9.5e-12 [10x]
-static const double TOL_RK = 1e-11;         // Rk relative (Brent, matrices rounding differently); 3.4e-13 [30x]
+static const double TOL_COEF = 1e-10;       // max |dM| / max |M| per matrix, op point, rest; meas. 9.8e-12 [10x]
+static const double TOL_RK = 1e-11;         // Rk relative (Brent, matrices rounding differently); 1.1e-13 [90x]
 static const double TOL_RS = 1e-13;         // resampler / post-filter alone, / max |output|
 static const double TOL_PINNED_ABS = 1e-9;  // V, stage on the Python pack (per-sample arithmetic); 6.8e-13
-static const double TOL_BUILT_ABS = 1e-5;   // V, stage on the C++-built pack (matrix rounding); 2.9e-8
+static const double TOL_BUILT_ABS = 1e-5;   // V, stage on the C++-built pack (matrix rounding); 4.2e-8
 static const double TOL_ITER_FRAC = 1e-3;   // Newton iteration sums (borderline samples); measured: identical
 
 // ---- small helpers -------------------------------------------------------------------------------------------
