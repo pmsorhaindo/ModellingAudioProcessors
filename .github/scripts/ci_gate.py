@@ -5,7 +5,8 @@ and a matrix leg cancelled before a runner picks it up can leave that aggregate 
 every job is checked by its own name and conclusion:
   1. every name in EXPECTED is present (macOS names only where macOS runs: non-draft PRs and manual dispatch);
   2. every present job concluded "success", except macOS jobs where macOS does not run, which may be "skipped";
-  3. no other job is present (a new job must be added to EXPECTED, so it cannot escape the gate).
+  3. no other job is present (a new job must be added to EXPECTED, so it cannot escape the gate), skipped or not; the
+     one exception is a skipped macOS matrix job listed under its unexpanded name where macOS does not run.
 The gate job itself is excluded. Making the "ci gate" check required on main is a repository setting.
 
 Env: GITHUB_REPOSITORY, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, GITHUB_TOKEN (actions: read), MACOS_EXPECTED
@@ -55,7 +56,11 @@ def check(jobs, macos_expected, expected=EXPECTED):
         skip_ok = is_macos(n) and not macos_expected
         if not (c == "success" or (c == "skipped" and skip_ok)):
             bad.append(f"{n}: {c}")
-        if n not in expected and not skip_ok:
+        # An unlisted name passes only as a skipped macOS matrix job that was never expanded: GitHub lists a skipped
+        # matrix job once, under its unexpanded name ("test (fullstage${{ ... }}, macos arm64)"). Any other unlisted
+        # job fails, skipped or not.
+        template = skip_ok and c == "skipped" and "${{" in n
+        if n not in expected and not template:
             bad.append(f"{n}: not in the gate's expected jobs (add it to .github/scripts/ci_gate.py)")
     for n in expected:
         if n not in names and (macos_expected or not is_macos(n)):
@@ -78,6 +83,10 @@ def run_jobs():
         page += 1
 
 
+# The name GitHub gave the skipped macOS matrix job on main's push run 44887386353 (after #128).
+TEMPLATE = "test (fullstage${{ ((matrix.shard && format(' {0}', matrix.shard)) || '') }}, macos arm64)"
+
+
 def self_test():
     ok = [dict(name=n, conclusion="success") for n in EXPECTED]
     lin = [j for j in ok if not is_macos(j["name"])]
@@ -96,6 +105,13 @@ def self_test():
                        for j in ok], True, False),
         ("still running", [dict(j, conclusion=None) if j["name"] == "ruff" else j for j in ok], True, False),
         ("an unlisted job", ok + [dict(name="test (new)", conclusion="success")], True, False),
+        ("main push: the skipped macOS matrix under its unexpanded name",
+         lin + [dict(name=TEMPLATE, conclusion="skipped"),
+                dict(name="plugin (AU + VST3, macos arm64)", conclusion="skipped")], False, True),
+        ("draft: an unlisted macOS job skipped", lin + [dict(name="test (new, macos arm64)", conclusion="skipped")],
+         False, False),
+        ("ready PR: the unexpanded macOS matrix skipped", ok + [dict(name=TEMPLATE, conclusion="skipped")], True,
+         False),
         ("the gate itself is ignored", ok + [dict(name=GATE, conclusion=None)], True, True),
     ]
     fails = [(name, check(jobs, mac)) for name, jobs, mac, want in cases if (not check(jobs, mac)) != want]

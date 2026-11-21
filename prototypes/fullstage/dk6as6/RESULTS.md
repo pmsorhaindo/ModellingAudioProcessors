@@ -352,7 +352,8 @@ Every record carries its `grid_hardness`:
    the resampler's floor (8 V worst −111.5 / −105.4 dBc on the grid, −108.0 / −104.2 in the scan; internal share ≤
    −148.4 dBc). With grid current, T 0.5 mA at 8 V is still internal folding at 16× (−84.9 / −80.5 dBc, 21.9 / 17.5 dB
    inside the hq gate) and **23.5–30.4 dB above its 64× ground truth** (−104.7 to −116.5 dBc): 16× does not remove the
-   grid-current law's folding (Michael's call, below).
+   grid-current law's folding (Michael's call, below). T 0.35 mA with grid current at 16× is the resampler's floor
+   instead (−118.9 / −113.4 dBc, internal 28.7 / 25.0 dB below the resampler share).
 4. **FIR resampler: k140 is the preferred candidate among the designs tested, for the conditions measured
    (recommendation, not implemented here).** Kaiser β = 14.47; first stage 123 taps at 48 kHz, 219 at 44.1 kHz; later
    stages 47 taps; ≥ 140.4 dB one-pass stopband against the shipped 89.3–94.2 dB.
@@ -362,9 +363,11 @@ Every record carries its `grid_hardness`:
    - With the shipped FIR, P1 0.6 mA (supported) at 2 V and 44.1 kHz reads **−117.1 dBc at 19987 Hz, above the
      −118.3 dBc gate at every factor** (measured); with k140 that point reads −163.7 dBc. Nothing here bounds the tones
      between the measured ones ("The band edge").
-   - With grid current, T 0.35–0.5 mA at 8 V is internal folding at every factor, which no resampler changes; at 2 V at
-     8× and 16× it is the resampler's floor (internal ≥ 33 dB under the total), where k140 would act, but k140 was not
-     measured on the grid-current cases.
+   - With grid current, the 8 V maxima of T 0.45–0.5 mA are internal folding at every factor (no resampler changes
+     those), and so are T 0.35 mA's at 4× and 8×; T 0.35 mA at 16× (8 V) and every 2 V maximum at 8× and 16× are the
+     resampler's share (at the 2 V maxima the internal share is ≥ 33.2 dB under the total; at other tones it comes
+     within 5.1 dB, T 0.5 mA, 8×, 44.1 kHz, 19837 Hz, −150.6 dBc). k140 was not measured on the grid-current cases,
+     so **its effect there remains open**.
    - P2 (current #55 fit, experimental): with k140 its full 2 V grid is inside the gate at both rates (−129.5 / −131.2
      dBc, from −89.0 / −91.7); its two measured 8 V points read −59.6 to −63.8 dBc at 8× and −106.2 to −116.6 dBc at 16×.
      Whether aliasing still keeps P2 experimental must be re-checked at both drives on the #123 refit.
@@ -386,7 +389,8 @@ Every record carries its `grid_hardness`:
   six bit for bit at both rates).
 - The internal / resampler / other split is an attribution diagnostic (each bin credited to the lowest folding order,
   before the spectrum is looked at; the first review counted ~96 % of the band's bins given a harmonic origin at
-  48 kHz, 16037 Hz, 1 s); the measured total is the evidence. "other" reads ≤ −184.1 dBc everywhere; three of the
+  48 kHz, 16037 Hz, 1 s); the measured total is the evidence. "other" reads ≤ −184.1 dBc for the no-grid cases and ≤ −178.2 dBc for
+  grid-current T; three of the
   deepest floors re-measured after 2.5 s instead of 1.25 s move by < 0.1 dB (`settle_check`).
 - Each point is one stage run, decimated directly ("off") and through each post-filter position (`lpf_aliasing.measure`,
   which takes `quality`, `mode`, FIR designs and `grid_hardness`); "abs" is relative to the **unfiltered** fundamental.
@@ -472,10 +476,12 @@ prototype, 20 Hz–20 kHz, its worst error is 0.0456–0.0638 dB at 8×, 0.0113�
 
 Reading the tables:
 - **2 V.** For the no-grid cases every factor is on the resampler's floor (internal ≤ −197.0 dBc at 8× and 16×; at 4×
-  at least 10 dB under the total above −160 dBc). With grid current T 0.5 mA at 4× is internal folding (−105.2 / −100.8
-  dBc), at 8× and 16× the resampler's floor (−126.8 / −122.5).
+  at least 10 dB under the total above −160 dBc). With grid current T 0.5 mA's maximum at 4× is internal folding (−105.2 /
+  −100.8 dBc); at 8× and 16× every grid-current maximum is the resampler's share (T 0.5 mA −126.8 / −122.5 dBc,
+  internal ≥ 33.2 dB under it), though at other tones the internal share comes within 5.1 dB of the total.
 - **8 V.** 4× is internal folding everywhere; 8× is internal folding for P1 and grid-current T; 16× is the resampler's
-  floor for the no-grid cases and internal folding for grid-current T (T 0.45 / 0.5 mA: −89.9 / −84.9 dBc at 48 kHz).
+  floor for the no-grid cases and for T 0.35 mA with grid current (−118.9 / −113.4 dBc), and internal folding for
+  T 0.45 / 0.5 mA with grid current (−89.9 / −84.9 dBc at 48 kHz).
 - **The post-filter only lowers the absolute alias energy**, at every point above the analysis floor (0.006–29 dB).
 
 ### The band edge (`aliasing_quality.json` band_edge_scan)

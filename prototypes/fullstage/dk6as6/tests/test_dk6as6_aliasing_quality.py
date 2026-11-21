@@ -154,20 +154,30 @@ def test_the_eco_trade_quoted_in_results(fs, p1_rise, t_rise):
         assert _case_worst("4x", fs, d, "T", 0.5) > gate("standard", fs, d)
 
 
-def test_grid_current_t_is_internal_folding_at_8v_at_every_factor():
-    """T 0.35-0.5 mA with grid current, 8 V: the worst point of every factor and rate is internal folding (internal
-    share within 1 dB of the total), so no resampler change moves it; at 4x the same holds at 2 V for T 0.5 mA."""
+def _key_worst(fs, setting, bias, drive):
+    rs = [r for r in Q.records() if (r["fs"], r["setting"], r["mode"], r["bias_ma"], r["drive"])
+          == (fs, setting, "T", bias, drive)]
+    return max(rs, key=lambda r: r["off"]["total_dbc"])
+
+
+def test_grid_current_t_attribution_at_the_maxima():
+    """RESULTS.md, as scoped after the third review: with grid current the 8 V maxima of T 0.45-0.5 mA are internal
+    folding at every factor and T 0.35 mA's at 4x and 8x; T 0.35 mA at 16x (8 V) and every 2 V maximum at 8x / 16x are
+    the resampler's share (at those 2 V maxima the internal share is >= 33 dB under the total); T 0.5 mA's 4x 2 V
+    maximum is internal folding."""
+    def internal(w):
+        return w["off"]["internal_dbc"] >= w["off"]["total_dbc"] - 1.0
     for fs in Q.RATES:
         for s in ("4x", "standard", "hq"):
-            for b in (0.45, 0.5):
-                rs = [r for r in Q.records() if (r["fs"], r["setting"], r["mode"], r["bias_ma"], r["drive"])
-                      == (fs, s, "T", b, 8.0)]
-                w = max(rs, key=lambda r: r["off"]["total_dbc"])
-                assert w["off"]["internal_dbc"] >= w["off"]["total_dbc"] - 1.0, (fs, s, b)
-        rs = [r for r in Q.records() if (r["fs"], r["setting"], r["mode"], r["bias_ma"], r["drive"])
-              == (fs, "4x", "T", 0.5, 2.0)]
-        w = max(rs, key=lambda r: r["off"]["total_dbc"])
-        assert w["off"]["internal_dbc"] >= w["off"]["total_dbc"] - 1.0, fs
+            for b in (0.35, 0.45, 0.5):
+                w = _key_worst(fs, s, b, 8.0)
+                assert internal(w) == (not (b == 0.35 and s == "hq")), (fs, s, b)
+                if b == 0.35 and s == "hq":
+                    assert w["off"]["internal_dbc"] <= w["off"]["total_dbc"] - 20.0, (fs, b)
+                if s != "4x":
+                    w2 = _key_worst(fs, s, b, 2.0)
+                    assert w2["off"]["internal_dbc"] <= w2["off"]["total_dbc"] - 33.0, (fs, s, b)
+        assert internal(_key_worst(fs, "4x", 0.5, 2.0)), fs
 
 
 def test_every_maximum_is_on_the_full_grid():
