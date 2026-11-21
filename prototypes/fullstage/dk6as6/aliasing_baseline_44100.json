@@ -1,48 +1,50 @@
 {
  "format_version": 2,
- "reason": "6AS6 baseline re-derived (#113 review): subset over the grid with the 19937 Hz band edge and the band-edge scan; shipped resampler, CI window, method unchanged",
+ "reason": "6AS6 baseline at the production default stage (#113 re-review): grid current at pentode.HARDNESS, T to 0.5 mA, keys re-derived over every measured tone; shipped resampler, CI window",
  "updated": "2026-11-21",
- "git_rev": "32f4b27",
+ "git_rev": "92b5fa1",
  "tolerance_db": 1.5,
  "method": {
   "fs_base": 44100,
   "stage": "dk6as6.stage.Stage",
+  "grid_hardness": 1.0,
   "filt": "fir",
   "lpf": "off",
   "tones": {
-   "P1/0.6mA/4x/fir/2V": [
+   "T/0.5mA/4x/fir/2V": [
     19987,
-    19937
+    19937,
+    19637
    ],
-   "P1/0.6mA/4x/fir/8V": [
-    19937
+   "T/0.5mA/4x/fir/8V": [
+    19637,
+    19437,
+    19237
    ],
    "P1/0.6mA/standard/fir/2V": [
     19987,
     19937,
     19637
    ],
-   "P1/0.6mA/standard/fir/8V": [
-    19987,
-    19937,
-    19837,
-    19637,
+   "T/0.5mA/standard/fir/8V": [
     19437,
     19237,
     19037
    ],
-   "T/0.3mA/standard/fir/8V": [
-    19937
+   "P1/0.6mA/standard/fir/8V": [
+    19987,
+    19937,
+    19037
    ],
    "P1/0.6mA/hq/fir/2V": [
     19987,
-    19937
+    19937,
+    19637
    ],
-   "P1/0.6mA/hq/fir/8V": [
+   "T/0.5mA/hq/fir/8V": [
     19987,
     19937,
-    19637,
-    19237
+    19837
    ]
   },
   "settle_s": 1.25,
@@ -57,108 +59,112 @@
   "P1/0.6mA/hq/fir/2V": {
    "tones": {
     "19987": {
-     "total_dbc": -117.069687694803,
+     "total_dbc": -117.06968769523112,
      "f_hz": 19990.0
     },
     "19937": {
-     "total_dbc": -118.99941699997319,
-     "f_hz": 19940.0
-    }
-   }
-  },
-  "P1/0.6mA/hq/fir/8V": {
-   "tones": {
-    "19987": {
-     "total_dbc": -104.14337032370271,
-     "f_hz": 19990.0
-    },
-    "19937": {
-     "total_dbc": -105.29208674949673,
+     "total_dbc": -118.99941699997738,
      "f_hz": 19940.0
     },
     "19637": {
-     "total_dbc": -105.139542096299,
+     "total_dbc": -119.69482852047335,
      "f_hz": 19640.0
+    }
+   }
+  },
+  "T/0.5mA/hq/fir/8V": {
+   "tones": {
+    "19987": {
+     "total_dbc": -80.3591262591384,
+     "f_hz": 19990.0
     },
-    "19237": {
-     "total_dbc": -106.95225813947765,
-     "f_hz": 19240.0
+    "19937": {
+     "total_dbc": -80.48455124079189,
+     "f_hz": 19940.0
+    },
+    "19837": {
+     "total_dbc": -80.7339027680105,
+     "f_hz": 19840.0
     }
    }
   },
   "P1/0.6mA/standard/fir/2V": {
    "tones": {
     "19987": {
-     "total_dbc": -117.07028218908866,
+     "total_dbc": -117.07028218879366,
      "f_hz": 19990.0
     },
     "19937": {
-     "total_dbc": -118.9999136223517,
+     "total_dbc": -118.99991362202672,
      "f_hz": 19940.0
     },
     "19637": {
-     "total_dbc": -119.69500858252732,
+     "total_dbc": -119.69500858244069,
      "f_hz": 19640.0
+    }
+   }
+  },
+  "T/0.5mA/standard/fir/8V": {
+   "tones": {
+    "19437": {
+     "total_dbc": -59.406866131298266,
+     "f_hz": 19440.0
+    },
+    "19237": {
+     "total_dbc": -59.64508399918319,
+     "f_hz": 19240.0
+    },
+    "19037": {
+     "total_dbc": -59.89480103200016,
+     "f_hz": 19040.0
     }
    }
   },
   "P1/0.6mA/standard/fir/8V": {
    "tones": {
     "19987": {
-     "total_dbc": -90.84674916173145,
+     "total_dbc": -90.84674916173367,
      "f_hz": 19990.0
     },
     "19937": {
-     "total_dbc": -91.21518896549391,
+     "total_dbc": -91.21518896548784,
      "f_hz": 19940.0
     },
-    "19837": {
-     "total_dbc": -92.02279489128156,
-     "f_hz": 19840.0
-    },
-    "19637": {
-     "total_dbc": -93.14580584987644,
-     "f_hz": 19640.0
-    },
-    "19437": {
-     "total_dbc": -93.31047199480714,
-     "f_hz": 19440.0
-    },
-    "19237": {
-     "total_dbc": -91.87157285995593,
-     "f_hz": 19240.0
-    },
     "19037": {
-     "total_dbc": -90.8439138747492,
+     "total_dbc": -90.84391387474297,
      "f_hz": 19040.0
     }
    }
   },
-  "T/0.3mA/standard/fir/8V": {
-   "tones": {
-    "19937": {
-     "total_dbc": -114.81476937390602,
-     "f_hz": 19940.0
-    }
-   }
-  },
-  "P1/0.6mA/4x/fir/2V": {
+  "T/0.5mA/4x/fir/2V": {
    "tones": {
     "19987": {
-     "total_dbc": -117.0670196182486,
+     "total_dbc": -100.75297393643379,
      "f_hz": 19990.0
     },
     "19937": {
-     "total_dbc": -118.99271524317831,
+     "total_dbc": -100.76877322339524,
      "f_hz": 19940.0
+    },
+    "19637": {
+     "total_dbc": -100.44745796300163,
+     "f_hz": 19640.0
     }
    }
   },
-  "P1/0.6mA/4x/fir/8V": {
+  "T/0.5mA/4x/fir/8V": {
    "tones": {
-    "19937": {
-     "total_dbc": -55.98798258565593,
-     "f_hz": 19940.0
+    "19637": {
+     "total_dbc": -42.67220319929013,
+     "f_hz": 19640.0
+    },
+    "19437": {
+     "total_dbc": -43.17623324535074,
+     "f_hz": 19440.0
+    },
+    "19237": {
+     "total_dbc": -43.218672743738864,
+     "f_hz": 19240.0
     }
    }
   }

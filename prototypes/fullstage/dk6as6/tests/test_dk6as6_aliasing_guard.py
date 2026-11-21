@@ -34,12 +34,12 @@ def test_every_limit_is_the_full_sweeps_worst_plus_margin(fs):
 
 
 @pytest.mark.parametrize("fs", AG.RATES)
-def test_ci_tones_are_the_worst_and_every_tone_within_margin_of_it(fs):
+def test_ci_tones_are_the_highest_within_margin_of_the_worst(fs):
     for (m, b, s, d), (_, tones) in AG.CI[fs].items():
         rs = full_sweep(fs, m, b, s, d)
         w = max(r["off"]["total_dbc"] for r in rs)
-        near = {r["tone"] for r in rs if r["off"]["total_dbc"] >= w - MARGIN_DB}
-        assert set(tones) == near, (fs, m, b, s, d, tones, near)
+        near = sorted((r for r in rs if r["off"]["total_dbc"] >= w - MARGIN_DB), key=lambda r: -r["off"]["total_dbc"])
+        assert set(tones) == {r["tone"] for r in near[:AG.MAX_TONES]}, (fs, m, b, s, d, tones)
 
 
 @pytest.mark.parametrize("fs", AG.RATES)
@@ -64,27 +64,42 @@ def test_committed_baseline_passes_its_own_comparison(fs):
     assert rows and not G.failed(rows) and all(r["status"] == "ok" for r in rows)
 
 
-@pytest.mark.parametrize("fs", AG.RATES)
-def test_a_regressed_non_worst_tone_fails_under_the_real_limit(fs):
-    """Every key whose baseline tones spread by more than the tolerance (there is at least one per rate): its best
-    (non-worst) tone degraded by 1.51 dB stays under the key's real limit and leaves the key's maximum unchanged, yet
-    fails as a regression (a per-tone ratchet, not a per-key maximum)."""
+def _regress_best_tone(fs, k, tones):
     base = G.load_baseline(AG.baseline_path(fs))["values"]
     lim = AG.limits_by_key(fs)
-    def spread(k, tones):
-        v = [base[k]["tones"][str(t)]["total_dbc"] for t in tones]
-        return max(v) - min(v)
-    multi = {k: t for k, t in AG.tones_by_key(fs).items() if len(t) > 1 and spread(k, t) > G.TOLERANCE_DB + 0.01}
+    vals = {t: base[k]["tones"][str(t)]["total_dbc"] for t in tones}
+    t = min(vals, key=vals.get)
+    meas = json.loads(json.dumps(base))
+    meas[k]["tones"][str(t)]["total_dbc"] += G.TOLERANCE_DB + 0.01
+    bad = G.failed(G.compare(meas, base, lim, AG.tones_by_key(fs)))
+    return t, vals, {u: meas[k]["tones"][str(u)]["total_dbc"] for u in tones}, lim[k], bad
+
+
+@pytest.mark.parametrize("fs", AG.RATES)
+def test_a_regressed_non_worst_tone_fails_under_the_real_limit(fs):
+    """Every key with more than one tone: its best (non-worst) tone degraded by 1.51 dB stays under the key's real
+    limit, yet fails as a regression on that tone alone (a per-tone ratchet, not a per-key maximum)."""
+    multi = {k: t for k, t in AG.tones_by_key(fs).items() if len(t) > 1}
     assert multi
     for k, tones in multi.items():
-        vals = {t: base[k]["tones"][str(t)]["total_dbc"] for t in tones}
-        t = min(vals, key=vals.get)
-        meas = json.loads(json.dumps(base))
-        meas[k]["tones"][str(t)]["total_dbc"] += G.TOLERANCE_DB + 0.01
-        after = {u: meas[k]["tones"][str(u)]["total_dbc"] for u in tones}
-        assert max(after.values()) == max(vals.values()) and after[t] < lim[k], (k, t, after)
-        bad = G.failed(G.compare(meas, base, lim, AG.tones_by_key(fs)))
+        t, _, after, lim, bad = _regress_best_tone(fs, k, tones)
+        assert after[t] < lim, (k, t)
         assert [(r["key"], r["tone"], r["status"]) for r in bad] == [(k, t, "FAIL regression")]
+
+
+def test_a_regression_that_leaves_the_key_maximum_unchanged_still_fails():
+    """At the keys whose baseline tones spread by more than the tolerance (there is at least one), the same degradation
+    leaves the key's maximum unchanged and still fails: a per-key maximum ratchet would miss it."""
+    n = 0
+    for fs in AG.RATES:
+        for k, tones in AG.tones_by_key(fs).items():
+            if len(tones) < 2:
+                continue
+            t, vals, after, _, bad = _regress_best_tone(fs, k, tones)
+            if max(vals.values()) - min(vals.values()) > G.TOLERANCE_DB + 0.01:
+                assert max(after.values()) == max(vals.values()) and len(bad) == 1, (fs, k)
+                n += 1
+    assert n >= 1
 
 
 def test_values_by_key_uses_the_6as6_keys():

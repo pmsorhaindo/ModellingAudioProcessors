@@ -6,8 +6,8 @@ dk6as6.stage.Stage: a lean subset of the full sweeps (dk6as6/aliasing_quality.js
    19937 Hz; 1 s windows) plus dk.aliasing.MARGIN_DB (3 dB), rounded up to 0.1 dB, as for every aliasing limit in the
    repo; at the keys the band-edge scan covers (aliasing_quality.json band_edge_scan, 19237-19987 Hz), its tones count
    too. test_dk6as6_aliasing_guard.py recomputes every limit and tone set from the committed sweeps. Between the
-   measured tones the guard measures nothing: the image-rejection bound (resampler_study.band_edge_bound) is the
-   evidence there at 44.1 kHz (dk6as6/RESULTS.md, "The band edge").
+   measured tones the guard measures nothing, and nothing here bounds what lies there (dk6as6/RESULTS.md, "The band
+   edge": resampler_study.band_edge_estimate is an estimate only).
 2. Regression ratchet: each tone must not read more than dk.aliasing_guard.TOLERANCE_DB (1.5 dB) worse than its own
    committed baseline (dk6as6/aliasing_baseline.json at 48 kHz, aliasing_baseline_44100.json; format_version 2,
    values[key].tones[tone] = {total_dbc, f_hz}, #98). Reading more than 1.5 dB better passes, with a note.
@@ -36,8 +36,15 @@ from dk import aliasing_guard as G  # noqa: E402 -- after the sys.path setup
 from dk.aliasing import CI_WINDOW_S, BAND_HZ, MASK_BINS  # noqa: E402 -- after the sys.path setup
 from dk6as6 import aliasing as A6  # noqa: E402 -- after the sys.path setup
 from dk6as6.stage import ExperimentalWarning  # noqa: E402 -- after the sys.path setup
+from dk6as6.pentode import HARDNESS  # noqa: E402 -- after the sys.path setup
+
+# The guard measures the production default stage (#112: g1 grid current at pentode.HARDNESS), named explicitly so a
+# change of default cannot silently change what the baselines mean. The no-grid cases' limits come from no-grid sweeps,
+# which the default stage reads to <= 4.4e-4 dB (aliasing_quality.json model_check).
+GRID_HARDNESS = HARDNESS
 
 QUALITY = {"4x": (4, None), "standard": "standard", "hq": "hq"}       # Stage(quality=)
+MAX_TONES = 3
 OS = {"4x": 4, "standard": 8, "hq": 16}
 RATES = (48000, 44100)
 
@@ -48,41 +55,42 @@ def key(mode, bias, setting, drive):
 
 # The CI subset per rate: (mode, bias mA, setting, drive V): (limit dBc, CI tones). Limit = the worst over every tone
 # measured at the key (the grid, and the band-edge scan where it ran) + 3 dB, rounded up to 0.1 dB (module docstring);
-# the tones are the worst tone and any other within 3 dB of it at the same key. The worst measured
-# (aliasing_quality.json, 1 s windows) is in the comments; hq is measured on a tone subset whose maxima are the grid's
-# to <= 0.07 dB (aliasing_quality.hq_bound).
+# the tones are the highest (at most) MAX_TONES of those within 3 dB of the worst (the worst among them), which bounds
+# CI time where a key is flat across the top of the band (T with grid current). Keys: each setting x drive's worst
+# supported case, and at standard / 8 V also the other mode's worst, so each mode keeps a key. The worst measured
+# (aliasing_quality.json, 1 s windows) is in the comments.
 CI = {
     48000: {
-        ("P1", 0.6, "4x", 2.0): (-120.5, (19037, 16037)),
-        #   worst -123.60 dBc at 19037 Hz over 20 measured tones
-        ("P1", 0.6, "4x", 8.0): (-56.5, (19987, 19937, 19837, 19637, 19237, 19037, 18037)),
-        #   worst -59.52 dBc at 18037 Hz over 25 measured tones
+        ("T", 0.5, "4x", 2.0): (-101.8, (19637, 19437, 19237)),
+        #   worst -104.87 dBc at 19237 Hz over 26 measured tones (grid current)
+        ("T", 0.5, "4x", 8.0): (-40.8, (19987, 19937, 19837)),
+        #   worst -43.88 dBc at 19987 Hz over 26 measured tones (grid current)
         ("P1", 0.6, "standard", 2.0): (-117.4, (19637, 19437)),
-        #   worst -120.49 dBc at 19637 Hz over 25 measured tones
-        ("P1", 0.6, "standard", 8.0): (-94.0, (19937, 19037)),
-        #   worst -97.01 dBc at 19937 Hz over 20 measured tones
-        ("T", 0.3, "standard", 8.0): (-116.6, (19037, 16037)),
-        #   worst -119.64 dBc at 19037 Hz over 20 measured tones
-        ("P1", 0.6, "hq", 2.0): (-120.5, (19037, 16037)),
-        #   worst -123.59 dBc at 19037 Hz over 6 measured tones
-        ("P1", 0.6, "hq", 8.0): (-104.9, (19637, 19437)),
-        #   worst -107.97 dBc at 19637 Hz over 12 measured tones
+        #   worst -120.49 dBc at 19637 Hz over 26 measured tones
+        ("T", 0.5, "standard", 8.0): (-60.3, (19987, 19937, 19837)),
+        #   worst -63.40 dBc at 19987 Hz over 26 measured tones (grid current)
+        ("P1", 0.6, "standard", 8.0): (-93.5, (19987, 19937, 19237)),
+        #   worst -96.52 dBc at 19987 Hz over 26 measured tones
+        ("P1", 0.6, "hq", 2.0): (-117.4, (19637, 19437)),
+        #   worst -120.49 dBc at 19637 Hz over 26 measured tones
+        ("T", 0.5, "hq", 8.0): (-80.7, (19637, 19437, 19237)),
+        #   worst -83.79 dBc at 19237 Hz over 26 measured tones (grid current)
     },
     44100: {
-        ("P1", 0.6, "4x", 2.0): (-114.1, (19987, 19937)),
-        #   worst -117.12 dBc at 19987 Hz over 21 measured tones
-        ("P1", 0.6, "4x", 8.0): (-52.9, (19937,)),
-        #   worst -55.99 dBc at 19937 Hz over 20 measured tones
+        ("T", 0.5, "4x", 2.0): (-97.3, (19987, 19937, 19637)),
+        #   worst -100.39 dBc at 19637 Hz over 26 measured tones (grid current)
+        ("T", 0.5, "4x", 8.0): (-39.4, (19637, 19437, 19237)),
+        #   worst -42.49 dBc at 19637 Hz over 26 measured tones (grid current)
         ("P1", 0.6, "standard", 2.0): (-114.1, (19987, 19937, 19637)),
-        #   worst -117.13 dBc at 19987 Hz over 25 measured tones
-        ("P1", 0.6, "standard", 8.0): (-87.8, (19987, 19937, 19837, 19637, 19437, 19237, 19037)),
-        #   worst -90.83 dBc at 19037 Hz over 25 measured tones
-        ("T", 0.3, "standard", 8.0): (-111.9, (19937,)),
-        #   worst -114.99 dBc at 19937 Hz over 20 measured tones
-        ("P1", 0.6, "hq", 2.0): (-114.1, (19987, 19937)),
-        #   worst -117.13 dBc at 19987 Hz over 8 measured tones
-        ("P1", 0.6, "hq", 8.0): (-101.1, (19987, 19937, 19637, 19237)),
-        #   worst -104.18 dBc at 19987 Hz over 12 measured tones
+        #   worst -117.13 dBc at 19987 Hz over 26 measured tones
+        ("T", 0.5, "standard", 8.0): (-56.4, (19437, 19237, 19037)),
+        #   worst -59.41 dBc at 19437 Hz over 26 measured tones (grid current)
+        ("P1", 0.6, "standard", 8.0): (-87.8, (19987, 19937, 19037)),
+        #   worst -90.83 dBc at 19037 Hz over 26 measured tones
+        ("P1", 0.6, "hq", 2.0): (-114.1, (19987, 19937, 19637)),
+        #   worst -117.13 dBc at 19987 Hz over 26 measured tones
+        ("T", 0.5, "hq", 8.0): (-77.3, (19987, 19937, 19837)),
+        #   worst -80.37 dBc at 19987 Hz over 26 measured tones (grid current)
     },
 }
 
@@ -106,7 +114,7 @@ def measure(fs, mode, bias, setting, drive, tone):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", ExperimentalWarning)
         r = A6.measure(drive, tone, bias=bias, quality=QUALITY[setting], window=CI_WINDOW_S, settle=A6.SETTLE_S,
-                       fs=fs, mode=mode)
+                       fs=fs, mode=mode, grid_hardness=GRID_HARDNESS)
     return dict(r, mode=mode, setting=setting, cpu_s=time.perf_counter() - t)
 
 
@@ -137,7 +145,7 @@ def values_by_key(records):
 
 
 def method(fs):
-    return dict(fs_base=fs, stage="dk6as6.stage.Stage", filt="fir", lpf="off",
+    return dict(fs_base=fs, stage="dk6as6.stage.Stage", grid_hardness=GRID_HARDNESS, filt="fir", lpf="off",
                 tones={key(*k): list(v[1]) for k, v in CI[fs].items()},
                 settle_s=A6.SETTLE_S, window_s=CI_WINDOW_S, band_hz=BAND_HZ, mask_bins=MASK_BINS)
 

@@ -217,32 +217,26 @@ jobs:
       - name: Ruff (pyflakes + pycodestyle, settings from ruff.toml)
         run: ruff check --output-format github prototypes
 
-  # Merge gate (#113 review). One stable check name for main's branch protection, independent of job names and shards:
-  # it fails if any job above failed or was cancelled (a timeout too), or was skipped where it should have run (the
-  # macOS jobs are skipped by design on drafts and pushes to main). The workflow cannot block a merge by itself: making
+  # Merge gate (#113 review). One stable check name for main's branch protection: .github/scripts/ci_gate.py reads every
+  # job of this run from the API and fails unless each expected job (its list, by name, every matrix leg) is present and
+  # passed (macOS jobs may be skipped where they do not run: drafts and pushes to main), and no unlisted job exists. The workflow cannot block a merge by itself: making
   # "ci gate" a required status check on main is a repository setting (Settings -> Branches / Rulesets).
   ci-gate:
     name: ci gate
     if: always()
+    permissions:
+      contents: read
+      actions: read
     needs: [test, test-macos, plugin-macos, aliasing, aliasing-6as6, lint]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Every job passed
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+      # Each job's own conclusion from the API (the needs context aggregates matrix legs; PR #129 re-review).
+      - name: Every expected job passed
         env:
-          NEEDS: ${{ toJSON(needs) }}
+          GITHUB_TOKEN: ${{ github.token }}
           MACOS_EXPECTED: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false) }}
-        run: |
-          python3 - <<'PY'
-          import json, os, sys
-          needs = json.loads(os.environ["NEEDS"])
-          macos_expected = os.environ["MACOS_EXPECTED"] == "true"
-          bad = []
-          for job, v in sorted(needs.items()):
-              r = v["result"]
-              ok = r == "success" or (r == "skipped" and job in ("test-macos", "plugin-macos") and not macos_expected)
-              print(f"{job}: {r}" + ("" if ok else "  <- not passed"))
-              if not ok:
-                  bad.append(job)
-          sys.exit(f"ci gate: {', '.join(bad)} did not pass" if bad else 0)
-          PY
+        run: python3 .github/scripts/ci_gate.py
