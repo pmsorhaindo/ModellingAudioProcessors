@@ -1,0 +1,358 @@
+{
+ "format_version": 2,
+ "reason": "#104: first C++ 6AS6 core baseline (shipped FIR, grid current on, supported envelope, full 1 s windows)",
+ "updated": "2026-11-21",
+ "git_rev": "cc104f3",
+ "tolerance_db": 1.5,
+ "method": {
+  "fs_base": 48000,
+  "core": "cpp/dk6as6_core.h",
+  "fir": "shipped",
+  "settle_s": 1.25,
+  "window_s": 1.0,
+  "band_hz": [
+   20.0,
+   20000.0
+  ],
+  "mask_bins": 3,
+  "grid_hardness": 1.0,
+  "lpf": "off",
+  "tones": {
+   "standard/shipped/P1 0.1 mA/2V": [
+    19037
+   ],
+   "standard/shipped/P1 0.1 mA/8V": [
+    19037,
+    19937
+   ],
+   "standard/shipped/P1 0.25 mA/2V": [
+    19037
+   ],
+   "standard/shipped/P1 0.25 mA/8V": [
+    19037,
+    19937
+   ],
+   "standard/shipped/P1 0.45 mA/2V": [
+    19037
+   ],
+   "standard/shipped/P1 0.45 mA/8V": [
+    19037,
+    19937
+   ],
+   "standard/shipped/P1 0.6 mA/2V": [
+    19037
+   ],
+   "standard/shipped/P1 0.6 mA/8V": [
+    19037,
+    19937
+   ],
+   "standard/shipped/T 0.1 mA/2V": [
+    19037
+   ],
+   "standard/shipped/T 0.1 mA/8V": [
+    19037
+   ],
+   "standard/shipped/T 0.25 mA/2V": [
+    19037
+   ],
+   "standard/shipped/T 0.25 mA/8V": [
+    19037
+   ],
+   "standard/shipped/T 0.5 mA/2V": [
+    19037
+   ],
+   "standard/shipped/T 0.5 mA/8V": [
+    19037,
+    19937
+   ],
+   "hq/shipped/P1 0.1 mA/2V": [
+    19037
+   ],
+   "hq/shipped/P1 0.1 mA/8V": [
+    19037
+   ],
+   "hq/shipped/P1 0.25 mA/2V": [
+    19037
+   ],
+   "hq/shipped/P1 0.25 mA/8V": [
+    19037
+   ],
+   "hq/shipped/P1 0.45 mA/2V": [
+    19037
+   ],
+   "hq/shipped/P1 0.45 mA/8V": [
+    19037
+   ],
+   "hq/shipped/P1 0.6 mA/2V": [
+    19037
+   ],
+   "hq/shipped/P1 0.6 mA/8V": [
+    19037
+   ],
+   "hq/shipped/T 0.1 mA/2V": [
+    19037
+   ],
+   "hq/shipped/T 0.1 mA/8V": [
+    19037
+   ],
+   "hq/shipped/T 0.25 mA/2V": [
+    19037
+   ],
+   "hq/shipped/T 0.25 mA/8V": [
+    19037
+   ],
+   "hq/shipped/T 0.5 mA/2V": [
+    19037
+   ],
+   "hq/shipped/T 0.5 mA/8V": [
+    19037
+   ]
+  }
+ },
+ "values": {
+  "standard/shipped/P1 0.1 mA/2V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -140.30618759984384,
+     "f_hz": 19037.0
+    }
+   }
+  },
+  "standard/shipped/P1 0.1 mA/8V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -112.50388457193453,
+     "f_hz": 19037.0
+    },
+    "19937": {
+     "total_dbc": -108.97001750812981,
+     "f_hz": 19937.0
+    }
+   }
+  },
+  "standard/shipped/P1 0.25 mA/2V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -147.9923906142322,
+     "f_hz": 19037.0
+    }
+   }
+  },
+  "standard/shipped/P1 0.25 mA/8V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -107.17748881148792,
+     "f_hz": 19037.0
+    },
+    "19937": {
+     "total_dbc": -103.02221866789276,
+     "f_hz": 19937.0
+    }
+   }
+  },
+  "standard/shipped/P1 0.45 mA/2V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -130.37328809840548,
+     "f_hz": 19037.0
+    }
+   }
+  },
+  "standard/shipped/P1 0.45 mA/8V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -100.9585128181302,
+     "f_hz": 19037.0
+    },
+    "19937": {
+     "total_dbc": -99.3757195252354,
+     "f_hz": 19937.0
+    }
+   }
+  },
+  "standard/shipped/P1 0.6 mA/2V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -123.59377391457176,
+     "f_hz": 19037.0
+    }
+   }
+  },
+  "standard/shipped/P1 0.6 mA/8V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -98.4410771569108,
+     "f_hz": 19037.0
+    },
+    "19937": {
+     "total_dbc": -97.00916978540583,
+     "f_hz": 19937.0
+    }
+   }
+  },
+  "standard/shipped/T 0.1 mA/2V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -140.73093507403,
+     "f_hz": 19037.0
+    }
+   }
+  },
+  "standard/shipped/T 0.1 mA/8V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -125.25021383667178,
+     "f_hz": 19037.0
+    }
+   }
+  },
+  "standard/shipped/T 0.25 mA/2V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -136.54959893753042,
+     "f_hz": 19037.0
+    }
+   }
+  },
+  "standard/shipped/T 0.25 mA/8V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -121.08275940821811,
+     "f_hz": 19037.0
+    }
+   }
+  },
+  "standard/shipped/T 0.5 mA/2V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -126.84077181395764,
+     "f_hz": 19037.0
+    }
+   }
+  },
+  "standard/shipped/T 0.5 mA/8V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -68.9057769755943,
+     "f_hz": 19037.0
+    },
+    "19937": {
+     "total_dbc": -63.485542692478475,
+     "f_hz": 19937.0
+    }
+   }
+  },
+  "hq/shipped/P1 0.1 mA/2V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -140.31151704420554,
+     "f_hz": 19037.0
+    }
+   }
+  },
+  "hq/shipped/P1 0.1 mA/8V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -113.84415243558821,
+     "f_hz": 19037.0
+    }
+   }
+  },
+  "hq/shipped/P1 0.25 mA/2V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -148.0007938859057,
+     "f_hz": 19037.0
+    }
+   }
+  },
+  "hq/shipped/P1 0.25 mA/8V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -113.06992815382858,
+     "f_hz": 19037.0
+    }
+   }
+  },
+  "hq/shipped/P1 0.45 mA/2V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -130.3723201294072,
+     "f_hz": 19037.0
+    }
+   }
+  },
+  "hq/shipped/P1 0.45 mA/8V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -112.49261614666482,
+     "f_hz": 19037.0
+    }
+   }
+  },
+  "hq/shipped/P1 0.6 mA/2V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -123.59320244075471,
+     "f_hz": 19037.0
+    }
+   }
+  },
+  "hq/shipped/P1 0.6 mA/8V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -111.50110837447293,
+     "f_hz": 19037.0
+    }
+   }
+  },
+  "hq/shipped/T 0.1 mA/2V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -140.743119508971,
+     "f_hz": 19037.0
+    }
+   }
+  },
+  "hq/shipped/T 0.1 mA/8V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -125.2712676116619,
+     "f_hz": 19037.0
+    }
+   }
+  },
+  "hq/shipped/T 0.25 mA/2V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -136.55470727627107,
+     "f_hz": 19037.0
+    }
+   }
+  },
+  "hq/shipped/T 0.25 mA/8V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -121.09241300633605,
+     "f_hz": 19037.0
+    }
+   }
+  },
+  "hq/shipped/T 0.5 mA/2V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -126.84120084477912,
+     "f_hz": 19037.0
+    }
+   }
+  },
+  "hq/shipped/T 0.5 mA/8V": {
+   "tones": {
+    "19037": {
+     "total_dbc": -84.87249952527432,
+     "f_hz": 19037.0
+    }
+   }
+  }
+ }
+}
