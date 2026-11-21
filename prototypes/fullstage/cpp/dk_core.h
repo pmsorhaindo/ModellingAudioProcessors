@@ -137,10 +137,12 @@ struct FirDesign {
     int later_taps; double later_beta;      // stages 1, 2, ...
     const FirRate* rates; int n_rates;      // stage-0 length per validated host rate
 };
-inline constexpr FirDesign SHIPPED_FIR{FIR_FIRST_TAPS, FIR_BETA, FIR_LATER_TAPS, FIR_BETA, FIRST_FIR_BY_RATE, 1};
+template <class T, std::size_t N> constexpr int count_of(const T (&)[N]) { return int(N); }
+inline constexpr FirDesign SHIPPED_FIR{FIR_FIRST_TAPS, FIR_BETA, FIR_LATER_TAPS, FIR_BETA, FIRST_FIR_BY_RATE,
+                                       count_of(FIRST_FIR_BY_RATE)};
 inline constexpr double K140_BETA = 14.47;
 inline constexpr FirRate K140_FIRST_BY_RATE[] = {{48000.0, 123}, {44100.0, 219}};
-inline constexpr FirDesign K140_FIR{123, K140_BETA, 47, K140_BETA, K140_FIRST_BY_RATE, 2};
+inline constexpr FirDesign K140_FIR{123, K140_BETA, 47, K140_BETA, K140_FIRST_BY_RATE, count_of(K140_FIRST_BY_RATE)};
 inline constexpr int K140_FIRST_MAX_TAPS = max_first_fir_taps(K140_FIRST_BY_RATE, 123), K140_LATER_TAPS = 47;
 
 constexpr int first_fir_taps(double fs, const FirDesign& d) {
