@@ -97,7 +97,15 @@ def chain_metrics(fs, os_, fir):
         k += 1
     stop = float(-np.max(20 * np.log10(np.abs(r.internal_response(np.concatenate(bands))) + 1e-300)))
     return dict(ripple_db=rip, stopband_db=stop, latency_samples=r.latency_samples, latency_ms=r.latency_ms,
-                macs_per_direction=r.macs()[0])
+                macs_per_direction=r.macs()[0], cpp_macs_per_sample=cpp_macs(fir, os_))
+
+
+def cpp_macs(fir, os_):
+    """Multiply-adds per base sample, up + down, as cpp/dk_core.h implements the cascade: FirHalfBand's polyphase
+    branches hold N taps on the way up and N + 1 on the way down (the zero taps included), and stage i runs 2^i times
+    per base sample. Machine-independent; the timings (cost()) are the cross-check."""
+    (n0, _), (n1, _) = fir
+    return sum(2 ** i * (2 * (n0 if i == 0 else n1) + 1) for i in range(int(np.log2(os_))))
 
 
 def design_table():
@@ -227,6 +235,34 @@ def collect(jsonl=JSONL, cost_json=None):
     print(f"{len(recs)} records -> {OUT_JSON}")
 
 
+def tables(path=OUT_JSON):
+    """Markdown for dk6as6/RESULTS.md: the design table, and the aliasing per POINTS row and candidate."""
+    d = json.load(open(path))
+    out = ["| candidate | rate | first stage taps / beta | later taps / beta | one-pass stopband 4x / 8x / 16x, dB | "
+           "chain ripple, dB | latency 4x / 8x / 16x, base samples | C++ MACs per sample 4x / 8x / 16x |",
+           "|---|---|---|---|---|---|---|---|"]
+    for c in CANDIDATES:
+        for fs in RATES:
+            r = sorted((x for x in d["design"] if x["candidate"] == c and x["fs"] == fs), key=lambda x: x["os"])
+            out.append(f"| {c} | {fs / 1000:g} kHz | {r[0]['first_taps']} / {r[0]['first_beta']:g} | "
+                       f"{r[0]['later_taps']} / {r[0]['later_beta']:g} | "
+                       + " / ".join(f"{x['stopband_db']:.1f}" for x in r)
+                       + f" | <= {max(x['ripple_db'] for x in r):.1e} | "
+                       + " / ".join(str(x["latency_samples"]) for x in r) + " | "
+                       + " / ".join(str(x["cpp_macs_per_sample"]) for x in r) + " |")
+    idx = {(r["candidate"], r["up"], r["down"], r["setting"], r["fs"], r["mode"], r["bias_ma"], r["drive"],
+            r["tone"]): r for r in d["records"]}
+    out += ["", "| point | rate | " + " | ".join(CANDIDATES) + " |", "|---" * (len(CANDIDATES) + 2) + "|"]
+    for fs in RATES:
+        for m, b, dr, f in POINTS:
+            cells = []
+            for c in CANDIDATES:
+                r = idx.get((c, c, c, "standard", fs, m, b, dr, f))
+                cells.append("—" if r is None else f"{r['off']['total_dbc']:.1f} [{r['off']['resampler_dbc']:.1f}]")
+            out.append(f"| {m} {b:g} mA {dr:g} V {f} | {fs / 1000:g} kHz | " + " | ".join(cells) + " |")
+    return "\n".join(out)
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -242,6 +278,7 @@ if __name__ == "__main__":
     c = sub.add_parser("cost")
     c.add_argument("--rounds", type=int, default=7)
     c.add_argument("--out", default=os.path.join(SCRATCH, "resampler_cost.json"))
+    sub.add_parser("tables")
     k = sub.add_parser("collect")
     k.add_argument("--jsonl", default=JSONL)
     k.add_argument("--cost", default=None)
@@ -266,5 +303,7 @@ if __name__ == "__main__":
         os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
         json.dump(cost(a.rounds), open(a.out, "w"), indent=1)
         print(open(a.out).read())
+    elif a.cmd == "tables":
+        print(tables())
     else:
         collect(a.jsonl, a.cost)

@@ -78,7 +78,8 @@ def load_jsonl(paths):
 
 
 def reused_records():
-    """P1 / standard / both rates from lpf_aliasing.json, labelled as this module's records."""
+    """P1 / standard / both rates from lpf_aliasing.json, labelled as this module's records (not copied into OUT_JSON;
+    records() merges them)."""
     return [dict(r, mode="P1", setting="standard", os=8, source="lpf_aliasing.json")
             for r in json.load(open(os.path.join(HERE, "lpf_aliasing.json")))["records"]]
 
@@ -129,19 +130,46 @@ def summary(records):
     return rows
 
 
+def records(path=OUT_JSON):
+    """Every record of the assessment: OUT_JSON's plus the reused lpf_aliasing.json ones (stored once, there)."""
+    return json.load(open(path))["records"] + reused_records()
+
+
 def collect(jsonl_paths):
-    recs = list(load_jsonl(jsonl_paths).values())
-    keys = {point_key(r) for r in recs}
-    recs += [r for r in reused_records() if point_key(r) not in keys]
+    reused = {point_key(r) for r in reused_records()}
+    recs = [r for r in load_jsonl(jsonl_paths).values() if point_key(r) not in reused]
     recs.sort(key=lambda r: (r["mode"], SETTINGS[r["setting"]][0], -r["fs"], r["bias_ma"], r["drive"], r["tone"]))
     for r in recs:
-        r.pop("cpu_s", None)                   # machine-load dependent; summarised in method.cpu_s_per_point
+        r.pop("cpu_s", None)                   # machine-load dependent
     json.dump(dict(method=dict(settle_s=SETTLE_S, window_s=WINDOW_S, sweep_hz=list(SWEEP_HZ), drives=list(DRIVES),
                                filt="fir", settings={k: list(v) for k, v in SETTINGS.items()},
                                cases=[list(c) for c in CASES], positions=list(lpf.POSITIONS),
                                lpf_prewarp_hz=lpf.PREWARP_HZ, reused="P1 standard 8x: lpf_aliasing.json (#119)"),
-                   summary=summary(recs), records=recs), open(OUT_JSON, "w"), indent=0)
-    print(f"{len(recs)} records -> {OUT_JSON}")
+                   summary=summary(recs + reused_records()), records=recs), open(OUT_JSON, "w"), indent=0)
+    print(f"{len(recs)} records (+ {len(reused)} reused) -> {OUT_JSON}")
+
+
+def tables(path=OUT_JSON):
+    """Markdown for dk6as6/RESULTS.md: per rate and drive, a row per case, the worst total (dBc, filter off; tone) for
+    each setting, and the worst absolute total with the 4k / 7k filter on (dB re the unfiltered fundamental)."""
+    rows = json.load(open(path))["summary"]
+    idx = {(r["mode"], r["bias_ma"], r["setting"], r["fs"], r["drive"]): r for r in rows}
+    sets = [s for s in SETTINGS if s != GROUND_TRUTH and any(r["setting"] == s for r in rows)]
+    out = []
+    for fs in RATES:
+        for d in DRIVES:
+            out += [f"\n**{fs / 1000:g} kHz, {d:g} V**: worst over the sweep, dBc, filter off (tone); "
+                    "[4k / 7k on: worst dB re the unfiltered fundamental]",
+                    "| case | " + " | ".join(sets) + " |", "|---" * (len(sets) + 1) + "|"]
+            for m, b in CASES:
+                cells = []
+                for s in sets:
+                    r = idx.get((m, b, s, fs, d))
+                    cells.append("—" if r is None else
+                                 f"{r['off']['worst_dbc']:.1f} ({r['off']['worst_tone']}; {r['tones']} tones) "
+                                 f"[{r['4k']['worst_abs_db']:.1f} / {r['7k']['worst_abs_db']:.1f}]")
+                out.append(f"| {m} {b:g} mA | " + " | ".join(cells) + " |")
+    return "\n".join(out)
 
 
 def verify_reuse(n=3, workers=None):
@@ -179,6 +207,7 @@ if __name__ == "__main__":
     r.add_argument("--jsonl", default=JSONL)
     c = sub.add_parser("collect")
     c.add_argument("--jsonl", nargs="*", default=[JSONL])
+    sub.add_parser("tables")
     v = sub.add_parser("verify-reuse")
     v.add_argument("--workers", type=int, default=3)
     a = ap.parse_args()
@@ -189,5 +218,7 @@ if __name__ == "__main__":
         run(a.rate, a.setting, cases, drives=a.drives, tones=a.tones, workers=a.workers, jsonl=a.jsonl)
     elif a.cmd == "collect":
         collect(a.jsonl)
+    elif a.cmd == "tables":
+        print(tables())
     else:
         verify_reuse(workers=a.workers)
