@@ -763,14 +763,26 @@
      },
      "burst": {
       "min_rel": 0.000592063274719834,
-      "tau_rel": NaN,
       "traj_rel": 6.62381937371089e-05,
-      "tau_tested": false,
+      "tau_tested": true,
+      "tau_rel": 3.899464199430547e-05,
+      "tail_tau_s": {
+       "dk": 0.09787410332072084,
+       "ref": 0.09787792003517176
+      },
+      "cross_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": 0.06253385416666667,
+       "ref": NaN
+      },
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -5.25814913,
-       "min": -5.476538245462487,
-       "tau": NaN
+       "min": -5.476538245462487
       }
      }
     }
@@ -1617,14 +1629,26 @@
      },
      "burst": {
       "min_rel": 0.0005928119945544097,
-      "tau_rel": NaN,
       "traj_rel": 6.606621856269128e-05,
-      "tau_tested": false,
+      "tau_tested": true,
+      "tau_rel": 3.915802846199412e-05,
+      "tail_tau_s": {
+       "dk": 0.09787408732879323,
+       "ref": 0.09787792003517176
+      },
+      "cross_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": 0.06284375,
+       "ref": NaN
+      },
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -5.25814913,
-       "min": -5.476538245462487,
-       "tau": NaN
+       "min": -5.476538245462487
       }
      }
     }
@@ -2474,14 +2498,26 @@
      },
      "burst": {
       "min_rel": 0.000576376980840676,
-      "tau_rel": NaN,
       "traj_rel": 6.448893816553241e-05,
-      "tau_tested": false,
+      "tau_tested": true,
+      "tau_rel": 0.00014432081666648777,
+      "tail_tau_s": {
+       "dk": 0.09467133492350302,
+       "ref": 0.09468499994002043
+      },
+      "cross_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": 0.056281250000000005,
+       "ref": NaN
+      },
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -4.76421372,
-       "min": -5.004968403326359,
-       "tau": NaN
+       "min": -5.004968403326359
       }
      }
     }
@@ -3328,14 +3364,26 @@
      },
      "burst": {
       "min_rel": 0.000577962062434545,
-      "tau_rel": NaN,
       "traj_rel": 6.435381027773172e-05,
-      "tau_tested": false,
+      "tau_tested": true,
+      "tau_rel": 0.00014450073838467858,
+      "tail_tau_s": {
+       "dk": 0.09467131788761514,
+       "ref": 0.09468499994002043
+      },
+      "cross_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": 0.05666145833333333,
+       "ref": NaN
+      },
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -4.76421372,
-       "min": -5.004968403326359,
-       "tau": NaN
+       "min": -5.004968403326359
       }
      }
     }
@@ -4185,14 +4233,26 @@
      },
      "burst": {
       "min_rel": 0.000568592923671174,
-      "tau_rel": NaN,
       "traj_rel": 6.358291076821561e-05,
-      "tau_tested": false,
+      "tau_tested": true,
+      "tau_rel": 0.00025959317787327407,
+      "tail_tau_s": {
+       "dk": 0.09050817302822037,
+       "ref": 0.09053167443328469
+      },
+      "cross_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": 0.0476484375,
+       "ref": NaN
+      },
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -4.42384477,
-       "min": -4.686748218643997,
-       "tau": NaN
+       "min": -4.686748218643997
       }
      }
     }
@@ -5039,14 +5099,26 @@
      },
      "burst": {
       "min_rel": 0.00057043930676004,
-      "tau_rel": NaN,
       "traj_rel": 6.34609306102815e-05,
-      "tau_tested": false,
+      "tau_tested": true,
+      "tau_rel": 0.00025945617678924116,
+      "tail_tau_s": {
+       "dk": 0.0905081854311579,
+       "ref": 0.09053167443328469
+      },
+      "cross_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": 0.04808072916666667,
+       "ref": NaN
+      },
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -4.42384477,
-       "min": -4.686748218643997,
-       "tau": NaN
+       "min": -4.686748218643997
       }
      }
     }
@@ -5896,15 +5968,26 @@
      },
      "burst": {
       "min_rel": 0.0005644548135688154,
-      "tau_rel": 0.5304370323952754,
       "traj_rel": 6.314132248273206e-05,
       "tau_tested": true,
-      "tail_tau_fit_rel": 0.00031013605716745385,
+      "tau_rel": 0.0003096748035925634,
+      "tail_tau_s": {
+       "dk": 0.08757616445713008,
+       "ref": 0.08760329298968073
+      },
+      "cross_tau_s": {
+       "dk": 0.08750000000000001,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": 0.04121354166666667,
+       "ref": 0.08777
+      },
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -4.24715625,
-       "min": -4.524312357749757,
-       "tau": 0.08777
+       "min": -4.524312357749757
       }
      }
     }
@@ -5983,7 +6066,7 @@
     "ac_stage": true,
     "ac_chain": true,
     "harmonics": true,
-    "burst": false,
+    "burst": true,
     "newton": true
    },
    "supported": false
@@ -6751,15 +6834,26 @@
      },
      "burst": {
       "min_rel": 0.0005664040746649057,
-      "tau_rel": 0.5251557099996202,
       "traj_rel": 6.302413249021365e-05,
       "tau_tested": true,
-      "tail_tau_fit_rel": 0.0003103110916791163,
+      "tau_rel": 0.000309855160568806,
+      "tail_tau_s": {
+       "dk": 0.08757614865726505,
+       "ref": 0.08760329298968073
+      },
+      "cross_tau_s": {
+       "dk": 0.08750000000000001,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": 0.04167708333333334,
+       "ref": 0.08777
+      },
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -4.24715625,
-       "min": -4.524312357749757,
-       "tau": 0.08777
+       "min": -4.524312357749757
       }
      }
     }
@@ -6839,7 +6933,7 @@
     "ac_stage": true,
     "ac_chain": true,
     "harmonics": true,
-    "burst": false,
+    "burst": true,
     "newton": true
    },
    "supported": false

@@ -377,7 +377,15 @@ def run(model, bias, solver=SOLVER, out="out", write=True, mode=MODE, split=Fals
         errs = [f.exception() for f in futs if f.exception() is not None]
         if errs:
             raise errs[0]
-    return analyse(model, bias, out, generator(model, bias, solver, mode, split, rk), write, mode)
+    gen = generator(model, bias, solver, mode, split, rk)       # saved with the raw output for --analyse-only
+    json.dump(gen, open(generator_file(model, bias, out, mode), "w"), indent=1)
+    return analyse(model, bias, out, gen, write, mode)
+
+
+def generator_file(model, bias, out="out", mode=MODE):
+    """The generator record run() saves beside the raw output once its analyses finish (#112 review): --analyse-only
+    reads it, so re-analysed data keeps the ngspice version, solver settings and Rk it was simulated with."""
+    return os.path.join(HERE, out, f"{case(model, bias, mode)}_generator.json")
 
 
 def generator(model, bias, solver=SOLVER, mode=MODE, split=False, rk=None):
@@ -480,11 +488,14 @@ if __name__ == "__main__":
     if "--split" in args:          # --split N: run 'main' as split_analyses(), N ngspice calls at a time (#112)
         i = args.index("--split")
         split, args = int(args[i + 1]), args[:i] + args[i + 2:]
-    analyse_only = "--analyse-only" in args      # re-analyse a finished run's out/ files (no ngspice): with --split if
-    args = [a for a in args if a != "--analyse-only"]     # it was split, so the generator record says so
+    analyse_only = "--analyse-only" in args      # re-analyse a finished run's out/ files (no ngspice)
+    args = [a for a in args if a != "--analyse-only"]
     for mdl, md, bias in cases(args or list(PARAMS)):
-        if analyse_only:
-            r = analyse(mdl, bias, "out", generator(mdl, bias, mode=md, split=bool(split)), True, md)
+        if analyse_only:     # the raw run's own generator record (generator_file); a run without one is refused
+            gf = generator_file(mdl, bias, "out", md)
+            if not os.path.exists(gf):
+                sys.exit(f"{gf} missing: re-analysis needs the generator record its raw run saved")
+            r = analyse(mdl, bias, "out", json.load(open(gf)), True, md)
         else:
             r = run(mdl, bias, mode=md, split=bool(split), jobs=max(split, 1))
         print(case(mdl, bias, md), r["op"], {a: round(s["thd_pct"], 3) for a, s in r["sine"].items()},

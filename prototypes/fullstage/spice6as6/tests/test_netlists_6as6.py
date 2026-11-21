@@ -310,6 +310,22 @@ def test_grid_subckt_is_the_dk_valve_law_with_grid_current(mode):
         assert abs(_eval(b["BG2"][2], *v) - ig2) <= 10 * rel * (abs(ig20) + (1 - f) * ig1) + 1e-25, v
 
 
+def test_grid_subckt_matches_the_dk_law_through_cutoff():
+    """#112 review: through the cut-off transition (T's strapped screen near the cathode, g1 below it, Ik down to
+    underflow) the dualg B-sources and pentode.currents_grid give the same split, to 1e-12 of the magnitudes plus the
+    SPICE form's ln(1 + exp(-|x|)) loss on Ig1 (~1e-16 / exp(x) relative, as the test above)."""
+    b = _bsources("dualg", "T")
+    g = pentode.GRID
+    for vg1 in (-0.6, -0.8, -1.0, -1.1, -1.2, -1.5):
+        rel = 1e-12 + 2e-16 / math.exp(g["CG"] * vg1)
+        for vs in (0.303, 0.5, 2.0):
+            v = (vg1, vs, vs, vs)
+            ip, ig2, ig1, _ = pentode.currents_grid(*v)
+            ik = pentode.cathode_share(*v)[0]
+            for name, want in (("BP", ip), ("BG2", ig2), ("BG1", ig1)):
+                assert abs(_eval(b[name][2], *v) - want) <= rel * (abs(ik) + ig1) + 1e-300, (name, v)
+
+
 def test_grid_subckts_leave_the_111_ones_alone():
     """#112 changes the P1 / T subckts only as new files: the dual ones (Ig1 = 0) have no Bg1 and are generated exactly
     as before (test_committed_files_are_generated_and_current), so every dual reference stays reproducible."""

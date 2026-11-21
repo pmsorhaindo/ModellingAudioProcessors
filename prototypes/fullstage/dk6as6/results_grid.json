@@ -768,14 +768,26 @@
      },
      "burst": {
       "min_rel": 0.0005800510679033755,
-      "tau_rel": NaN,
       "traj_rel": 6.481341696460396e-05,
-      "tau_tested": false,
+      "tau_tested": true,
+      "tau_rel": 5.252056701743335e-05,
+      "tail_tau_s": {
+       "dk": 0.10012390554795729,
+       "ref": 0.10012916438844595
+      },
+      "cross_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": 0.06657161458333333,
+       "ref": NaN
+      },
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -5.276816139999999,
-       "min": -5.489837585084138,
-       "tau": NaN
+       "min": -5.489837585084138
       }
      }
     }
@@ -1625,14 +1637,26 @@
      },
      "burst": {
       "min_rel": 0.0005777037669065788,
-      "tau_rel": NaN,
       "traj_rel": 6.452911685322767e-05,
-      "tau_tested": false,
+      "tau_tested": true,
+      "tau_rel": 5.265863911063651e-05,
+      "tail_tau_s": {
+       "dk": 0.10012389172291397,
+       "ref": 0.10012916438844595
+      },
+      "cross_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": 0.0667109375,
+       "ref": NaN
+      },
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -5.276816139999999,
-       "min": -5.489837585084138,
-       "tau": NaN
+       "min": -5.489837585084138
       }
      }
     }
@@ -2486,14 +2510,26 @@
      },
      "burst": {
       "min_rel": 0.0005656420403320483,
-      "tau_rel": NaN,
       "traj_rel": 6.320417639566802e-05,
-      "tau_tested": false,
+      "tau_tested": true,
+      "tau_rel": 5.103911805748318e-05,
+      "tail_tau_s": {
+       "dk": 0.10013234059381858,
+       "ref": 0.10013745152102874
+      },
+      "cross_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": 0.06663541666666667,
+       "ref": NaN
+      },
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -4.78235651,
-       "min": -5.017692146239818,
-       "tau": NaN
+       "min": -5.017692146239818
       }
      }
     }
@@ -3344,14 +3380,26 @@
      },
      "burst": {
       "min_rel": 0.0005645101179646561,
-      "tau_rel": NaN,
       "traj_rel": 6.297032111998606e-05,
-      "tau_tested": false,
+      "tau_tested": true,
+      "tau_rel": 5.114666246675004e-05,
+      "tail_tau_s": {
+       "dk": 0.10013232982459551,
+       "ref": 0.10013745152102874
+      },
+      "cross_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": 0.06683333333333333,
+       "ref": NaN
+      },
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -4.78235651,
-       "min": -5.017692146239818,
-       "tau": NaN
+       "min": -5.017692146239818
       }
      }
     }
@@ -4205,14 +4253,26 @@
      },
      "burst": {
       "min_rel": 0.0005576883955936696,
-      "tau_rel": NaN,
       "traj_rel": 6.230839890573359e-05,
-      "tau_tested": false,
+      "tau_tested": true,
+      "tau_rel": 2.667354306984393e-06,
+      "tail_tau_s": {
+       "dk": 0.09983839530822587,
+       "ref": 0.09983812900456247
+      },
+      "cross_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": 0.066015625,
+       "ref": NaN
+      },
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -4.44280156,
-       "min": -4.699884355190764,
-       "tau": NaN
+       "min": -4.699884355190764
       }
      }
     }
@@ -5063,14 +5123,26 @@
      },
      "burst": {
       "min_rel": 0.0005571592067279418,
-      "tau_rel": NaN,
       "traj_rel": 6.21000027059923e-05,
-      "tau_tested": false,
+      "tau_tested": true,
+      "tau_rel": 2.5769649707463316e-06,
+      "tail_tau_s": {
+       "dk": 0.09983838628392366,
+       "ref": 0.09983812900456247
+      },
+      "cross_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": 0.06624739583333333,
+       "ref": NaN
+      },
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -4.44280156,
-       "min": -4.699884355190764,
-       "tau": NaN
+       "min": -4.699884355190764
       }
      }
     }

@@ -763,14 +763,26 @@
      },
      "burst": {
       "min_rel": 0.0006712488578380915,
-      "tau_rel": NaN,
       "traj_rel": 7.518344749529478e-05,
-      "tau_tested": false,
+      "tau_tested": true,
+      "tau_rel": 3.952941944129762e-05,
+      "tail_tau_s": {
+       "dk": 0.11292106675707282,
+       "ref": 0.11291660322930189
+      },
+      "cross_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": 0.08412760416666666,
+       "ref": NaN
+      },
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -8.016824339999996,
-       "min": -8.328474870932137,
-       "tau": NaN
+       "min": -8.328474870932137
       }
      }
     }
@@ -1614,14 +1626,26 @@
      },
      "burst": {
       "min_rel": 0.0006699955101183708,
-      "tau_rel": NaN,
       "traj_rel": 7.4927181052746e-05,
-      "tau_tested": false,
+      "tau_tested": true,
+      "tau_rel": 3.914245593783505e-05,
+      "tail_tau_s": {
+       "dk": 0.11292102306246844,
+       "ref": 0.11291660322930189
+      },
+      "cross_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": 0.08428385416666667,
+       "ref": NaN
+      },
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -8.016824339999996,
-       "min": -8.328474870932137,
-       "tau": NaN
+       "min": -8.328474870932137
       }
      }
     }
@@ -2469,14 +2493,26 @@
      },
      "burst": {
       "min_rel": 0.0006828004293353285,
-      "tau_rel": NaN,
       "traj_rel": 7.638698255572629e-05,
-      "tau_tested": false,
+      "tau_tested": true,
+      "tau_rel": 1.5140061058627197e-05,
+      "tail_tau_s": {
+       "dk": 0.11394785427594696,
+       "ref": 0.11394612912459462
+      },
+      "cross_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -5.37479449000177,
-       "min": -5.903995556786942,
-       "tau": NaN
+       "min": -5.903995556786942
       }
      }
     }
@@ -3321,14 +3357,26 @@
      },
      "burst": {
       "min_rel": 0.0006861090072705078,
-      "tau_rel": NaN,
       "traj_rel": 7.630431330162648e-05,
-      "tau_tested": false,
+      "tau_tested": true,
+      "tau_rel": 1.5091597658223321e-05,
+      "tail_tau_s": {
+       "dk": 0.11394784875373008,
+       "ref": 0.11394612912459462
+      },
+      "cross_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -5.37479449000177,
-       "min": -5.903995556786942,
-       "tau": NaN
+       "min": -5.903995556786942
       }
      }
     }
@@ -4177,14 +4225,26 @@
      },
      "burst": {
       "min_rel": 0.0006874926708408946,
-      "tau_rel": NaN,
       "traj_rel": 7.689538930717026e-05,
-      "tau_tested": false,
+      "tau_tested": true,
+      "tau_rel": 4.070726780991407e-06,
+      "tail_tau_s": {
+       "dk": 0.11188043546838275,
+       "ref": 0.11187998003555176
+      },
+      "cross_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -3.941618732303993,
-       "min": -4.624093565694801,
-       "tau": NaN
+       "min": -4.624093565694801
       }
      }
     }
@@ -5031,14 +5091,26 @@
      },
      "burst": {
       "min_rel": 0.0006923705088964782,
-      "tau_rel": NaN,
       "traj_rel": 7.68697151280067e-05,
-      "tau_tested": false,
+      "tau_tested": true,
+      "tau_rel": 3.971369880950704e-06,
+      "tail_tau_s": {
+       "dk": 0.11188042435233476,
+       "ref": 0.11187998003555176
+      },
+      "cross_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -3.941618732303993,
-       "min": -4.624093565694801,
-       "tau": NaN
+       "min": -4.624093565694801
       }
      }
     }
@@ -5890,14 +5962,26 @@
      },
      "burst": {
       "min_rel": 0.0006917756222127869,
-      "tau_rel": NaN,
       "traj_rel": 7.736363251883254e-05,
-      "tau_tested": false,
+      "tau_tested": true,
+      "tau_rel": 2.769070415187258e-07,
+      "tail_tau_s": {
+       "dk": 0.10909870228084606,
+       "ref": 0.10909867207065554
+      },
+      "cross_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -2.652700740001386,
-       "min": -3.4960020904275324,
-       "tau": NaN
+       "min": -3.4960020904275324
       }
      }
     }
@@ -6747,14 +6831,26 @@
      },
      "burst": {
       "min_rel": 0.0006979373539771627,
-      "tau_rel": NaN,
       "traj_rel": 7.738336453316513e-05,
-      "tau_tested": false,
+      "tau_tested": true,
+      "tau_rel": 9.635524689244335e-08,
+      "tail_tau_s": {
+       "dk": 0.10909868258288503,
+       "ref": 0.10909867207065554
+      },
+      "cross_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -2.652700740001386,
-       "min": -3.4960020904275324,
-       "tau": NaN
+       "min": -3.4960020904275324
       }
      }
     }
@@ -7610,16 +7706,27 @@
      },
      "burst": {
       "min_rel": 0.012453426875140172,
-      "tau_rel": NaN,
       "traj_rel": 0.15844930523248654,
       "tau_tested": true,
+      "tau_rel": 0.013649257798374004,
+      "tail_tau_s": {
+       "dk": 0.10458727035794768,
+       "ref": 0.10603456345001498
+      },
+      "cross_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": NaN,
+       "ref": 0.089001
+      },
       "spice_exp_capped": true,
-      "tail_tau_fit_rel": NaN,
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -0.9488133349997446,
-       "min": -2.0512244584355717,
-       "tau": 0.089001
+       "min": -2.0512244584355717
       }
      }
     }
@@ -8476,16 +8583,27 @@
      },
      "burst": {
       "min_rel": 0.012461381670301974,
-      "tau_rel": NaN,
       "traj_rel": 0.15844924860904677,
       "tau_tested": true,
+      "tau_rel": 0.013649440329774332,
+      "tail_tau_s": {
+       "dk": 0.10458725100331033,
+       "ref": 0.10603456345001498
+      },
+      "cross_tau_s": {
+       "dk": NaN,
+       "ref": NaN
+      },
+      "cross_tau_rel": null,
+      "padded_tau_s": {
+       "dk": NaN,
+       "ref": 0.089001
+      },
       "spice_exp_capped": true,
-      "tail_tau_fit_rel": NaN,
       "t_min_diff_ms": 0.0,
       "ref": {
        "rest": -0.9488133349997446,
-       "min": -2.0512244584355717,
-       "tau": 0.089001
+       "min": -2.0512244584355717
       }
      }
     }

@@ -1,7 +1,7 @@
 """Aliasing of the #102 6AS6 stage at standard 8x / FIR / 48 kHz (dk6as6/aliasing.py; the 12AX7 stage's metric).
 Two separate checks (#111 review):
   regression  the worst tone of the full sweep in the short CI window, against LIMIT_DBC (that sweep's worst + 3 dB),
-              per Distortion-switch mode: without grid current (the #111 records) P2 at CI_CASES_MODES; with
+              per Distortion-switch mode: without grid current (the #111 records) T and P2 at CI_CASES_MODES; with
               the default g1 grid current (#112) P1 and T at CI_CASES_GRID, against LIMIT_DBC_GRID. These baselines
               are chosen from the measurements, so they show reproducibility only.
   quality     every SUPPORTED setting (stage.envelope of the sweep's grid hardness) within QUALITY_GATE_DBC, the

@@ -102,29 +102,72 @@ def _step3(J, K, r):
     return -x0, -x1, -x2
 
 
+def _resid3_safe(p, K, i, par, g, jac=True):
+    """_resid3, with an evaluation that overflows (or yields NaN) reported as an infinite residual, so that a wild
+    trial step is backtracked or ends the attempt instead of raising or poisoning the iterate (#112 review)."""
+    try:
+        r, fv, v, J = _resid3(p, K, i, par, g, jac)
+    except (OverflowError, ValueError, ZeroDivisionError):
+        return None, math.inf, None, None
+    if not fv < math.inf or (jac and not all(math.isfinite(x) for row in J for x in row)):
+        return None, math.inf, None, None
+    return r, fv, v, J
+
+
 def solve_grid(p, K, i, par=DUAL_CONTROL, g=GRID, max_it=MAX_IT, tol_v=TOL_V, tol_f=TOL_F):
-    """solve() with the g1 current (#112): K is 4x3, i = [Ip, Ig2, Ig1] the warm start. Returns (v, [Ip, Ig2, Ig1],
-    iterations, converged), the currents the valve law at v, as solve()."""
-    r, fv, v, J = _resid3(p, K, i, par, g)
+    """solve() with the g1 current (#112): K is 4x3, i = [Ip, Ig2, Ig1] the start. Returns (v, [Ip, Ig2, Ig1],
+    iterations, converged, residual): the currents are the valve law at v, as solve(); residual is ||K R||inf there
+    (inf if no finite iterate was found). On the cap, the iterate with the smallest finite residual (the start counts).
+    A singular or non-finite Newton step, or a step whose every backtracked trial fails to evaluate, ends the attempt
+    as not converged (so a caller can restart, solve_grid_restarts)."""
+    r, fv, v, J = _resid3_safe(p, K, i, par, g)
+    if r is None:
+        return [p[q] - K[q][0] * i[0] - K[q][1] * i[1] - K[q][2] * i[2] for q in range(4)], list(i), 0, False, math.inf
     fb, best = fv, (v, [i[k] - r[k] for k in range(3)])
+    it = 0
     for it in range(1, max_it + 1):
-        s = _step3(J, K, r)
+        try:
+            s = _step3(J, K, r)
+        except ZeroDivisionError:
+            break                                            # singular I + J K
+        if not all(math.isfinite(x) for x in s):
+            break
         lam = 1.0
         t = [i[k] + s[k] for k in range(3)]
-        gr, gv, gvolt, gJ = _resid3(p, K, t, par, g)
+        gr, gv, gvolt, gJ = _resid3_safe(p, K, t, par, g)
         if not (gv < fv or fv < tol_f):
             for _ in range(LS_MAX - 1):
                 lam *= 0.5
                 t = [i[k] + lam * s[k] for k in range(3)]
-                gr, gv, gvolt, _ = _resid3(p, K, t, par, g, jac=False)
+                gr, gv, gvolt, _ = _resid3_safe(p, K, t, par, g, jac=False)
                 if gv < fv:
                     break
-            gJ = currents_grid(*gvolt, par, g)[3]
+            if gr is not None:
+                gr, gv, gvolt, gJ = _resid3_safe(p, K, t, par, g)
+        if gr is None:
+            break                                            # no finite trial along the step
         dv = max(abs(lam * (K[q][0] * s[0] + K[q][1] * s[1] + K[q][2] * s[2])) for q in range(4))
         i = t
         r, fv, v, J = gr, gv, gvolt, gJ
         if dv < tol_v and fv < tol_f:
-            return v, [i[k] - r[k] for k in range(3)], it, True
-        if (fv < fb or not fb < math.inf) and abs(r[0]) + abs(r[1]) + abs(r[2]) < math.inf:
+            return v, [i[k] - r[k] for k in range(3)], it, True, fv
+        if fv < fb:
             fb, best = fv, (v, [i[k] - r[k] for k in range(3)])
-    return best + (max_it, False)
+    return best + (it, False, fb)
+
+
+def solve_grid_restarts(p, K, starts, par=DUAL_CONTROL, g=GRID, max_it=MAX_IT, tol_v=TOL_V, tol_f=TOL_F):
+    """solve_grid from each start in turn until one converges (#112: the stage's extrapolated warm start, then the
+    previous sample's currents, then the operating point). Returns (v, i, iterations summed over the attempts,
+    converged, residual, attempts). If none converges: the candidate with the smallest finite residual over all the
+    attempts, converged False."""
+    best, total = None, 0
+    for k, start in enumerate(starts, 1):
+        v, i, it, ok, fv = solve_grid(p, K, start, par, g, max_it, tol_v, tol_f)
+        total += it
+        if ok:
+            return v, i, total, True, fv, k
+        if best is None or fv < best[3]:
+            best = (v, i, ok, fv)
+    v, i, ok, fv = best
+    return v, i, total, False, fv, len(starts)

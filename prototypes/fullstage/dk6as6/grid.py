@@ -22,8 +22,9 @@ the borrowed law (its effect); nothing here validates the law against a valve.
              plate above the cathode and Ip + Ig2 > 0 (stage.py, the supported envelope).
 Run: python -m dk6as6.grid [static] [envelope] [hf] [tables] [--workers N]   (from prototypes/fullstage; all if none
      given)
-     -> dk6as6/grid.json (each part replaces its own key). "static" needs ngspice ($NGSPICE); "tables" needs
-     results_grid*.json (python -m dk6as6.validate --grid) and results.json / results_T.json.
+     -> dk6as6/grid.json (each of static / envelope / hf replaces its own key). "static" needs ngspice ($NGSPICE).
+     "tables" prints the burst / THD tables of RESULTS.md (not stored: they are derived from the committed
+     results[_grid][_T].json and references; PR #128 review); it needs those files.
 """
 import argparse
 import json
@@ -58,7 +59,9 @@ HF_BIASES = (0.35, 0.4, 0.45, 0.5, 0.55, 0.6)
 HF_DRIVES = (4.0, 6.0, 8.0)
 HF_TONES = tuple(1037.0 + 2000.0 * k for k in range(10))           # 1037 ... 19037 Hz
 HF_S = 0.4
-TRAJ_MS = (30.0, 35.0, 50.0, 119.0)     # grid DC read-outs (the research note's 35 / 50 / 119 ms, plus the burst's end)
+# grid DC read-outs: the burst's end and the research note's 35 / 50 / 119 ms, the last at the trajectory's last
+# full-window sample, 118.5 ms (PR #128 review: np.interp clamped "119 ms" to it)
+TRAJ_MS = (30.0, 35.0, 50.0, 118.5)
 
 
 # --- static Ig-Vgk sweep ------------------------------------------------------------------------------------
@@ -143,7 +146,7 @@ def _tone(a):
     return dict(mode=mode, bias_ma=bias, drive=drive, supported=st.supported, vg1k_max=float(i["vgk"][keep].max()),
                 vak_min=float(i["vak"][keep].min()), ipk_min=float(i["ipk"][keep].min()),
                 ig1_max=float(i["ig1"][keep].max()), H1_V_peak=float(h[0]), thd_pct=100 * thd(h),
-                nonconverged=s["nonconverged"], it_max=s["max"], it_mean=s["mean"])
+                nonconverged=s["nonconverged"], it_max=s["max"], restarted=st.restarted, it_mean=s["mean"])
 
 
 def _onset(a):
@@ -155,7 +158,7 @@ def _onset(a):
     s = st.iteration_stats()
     return dict(mode=mode, bias_ma=bias, f_hz=f0, quality=quality, supported=st.supported,
                 vg1k_max=float(r["vgk"].max()), vak_min=float(r["vak"].min()), ipk_min=float(r["ipk"].min()),
-                ig1_max=float(r["ig1"].max()), nonconverged=s["nonconverged"], it_max=s["max"])
+                ig1_max=float(r["ig1"].max()), nonconverged=s["nonconverged"], it_max=s["max"], restarted=st.restarted)
 
 
 def _hf(a):
@@ -167,7 +170,7 @@ def _hf(a):
     s = st.iteration_stats()
     return dict(mode=mode, bias_ma=bias, drive=drive, f_hz=f0, supported=st.supported,
                 vg1k_max=float(r["vgk"].max()), vak_min=float(r["vak"].min()), ipk_min=float(r["ipk"].min()),
-                ig1_max=float(r["ig1"].max()), nonconverged=s["nonconverged"], it_max=s["max"])
+                ig1_max=float(r["ig1"].max()), nonconverged=s["nonconverged"], it_max=s["max"], restarted=st.restarted)
 
 
 def hf(workers=None):
@@ -242,15 +245,18 @@ def tables():
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("parts", nargs="*", default=["static", "envelope", "hf", "tables"])
+    ap.add_argument("parts", nargs="*", default=["static", "envelope", "hf"])
     ap.add_argument("--workers", type=int, default=os.cpu_count())
     a = ap.parse_args()
     out = json.load(open(JSON)) if os.path.exists(JSON) else {}
     out["grid"] = pentode.GRID
     out["perveance_ratio"] = pentode.PERVEANCE_RATIO
+    out.pop("tables", None)              # derived data, printed by the "tables" part, not stored
     for p in a.parts:
-        out[p] = {"static": static, "tables": tables}[p]() if p in ("static", "tables") else \
-            {"envelope": envelope, "hf": hf}[p](a.workers)
+        if p == "tables":
+            print(json.dumps(tables(), indent=1, default=float))
+            continue
+        out[p] = static() if p == "static" else {"envelope": envelope, "hf": hf}[p](a.workers)
         json.dump(out, open(JSON, "w"), indent=1, default=float)
     if "static" in out:
         for k, s in out["static"].items():

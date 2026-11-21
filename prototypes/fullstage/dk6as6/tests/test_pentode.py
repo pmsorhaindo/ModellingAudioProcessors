@@ -145,3 +145,39 @@ def test_currents_grid_jacobian_matches_central_differences(hardness):
                 d = (fp[k] - fm[k]) / (2 * h)
                 assert abs(J[k][j] - d) <= 1e-5 * (scale + abs(d)), (v, k, j, J[k][j], d)
         assert J[2][1:] == (0.0, 0.0, 0.0)          # DZ: Ig1 depends on Vg1k only
+
+
+# The cut-off transition (#112 review): T's screen strapped to a plate near the cathode and g1 below it, where Ik
+# underflows. Newton can visit these voltages on its way to a root.
+CUTOFF = [(vg1, vs, vs, vs) for vg1 in (-0.6, -0.8, -1.0, -1.1, -1.2, -1.5, -3.0, -8.0) for vs in (0.303, 0.5, 2.0)]
+
+
+def test_currents_grid_stay_finite_and_continuous_into_cutoff():
+    """No NaN / inf anywhere in the currents or the Jacobian, the split matches reference_grid (model6as6._f's share,
+    as the dualg subckt) to 1e-12 of the magnitudes, and the plate takes the same share f of (Ik - Ig1) on either side
+    of Ik's underflow: no switch to "all of -Ig1 on the plate"."""
+    for v in CUTOFF:
+        ip, ig2, ig1, J = P.currents_grid(*v)
+        assert all(math.isfinite(x) for x in (ip, ig2, ig1)) and all(math.isfinite(x) for r in J for x in r), v
+        rp, rg2, rg1 = P.reference_grid(*v)
+        ik, _, f, _ = P.cathode_share(*v)
+        scale = abs(ik) + ig1
+        assert abs(ip - rp) <= 1e-12 * scale + 1e-300 and abs(ig2 - rg2) <= 1e-12 * scale + 1e-300, (v, ip, rp)
+        assert ip == pytest.approx((ik - ig1) * f, rel=1e-15, abs=1e-300)
+    ip, ig2, ig1, _ = P.currents_grid(-1.0, 0.303, 0.303, 0.303)        # the review's point: Ik ~ 1e-323 A
+    assert ip == pytest.approx(-5.0018e-12, rel=1e-4) and ip < 0.0 and ig2 < 0.0
+
+
+def test_currents_grid_jacobian_in_cutoff_matches_central_differences():
+    for v in CUTOFF:
+        _, _, _, J = P.currents_grid(*v)
+        scale = max(abs(x) for row in J for x in row)
+        for j in range(4):
+            h = 1e-6 * max(1.0, abs(v[j]))
+            vp, vm = list(v), list(v)
+            vp[j] += h
+            vm[j] -= h
+            fp, fm = P.reference_grid(*vp), P.reference_grid(*vm)
+            for k in range(3):
+                d = (fp[k] - fm[k]) / (2 * h)
+                assert abs(J[k][j] - d) <= 1e-5 * (scale + abs(d)) + 1e-30, (v, k, j, J[k][j], d)

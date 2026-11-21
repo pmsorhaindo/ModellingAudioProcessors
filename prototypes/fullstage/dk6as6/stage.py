@@ -31,7 +31,7 @@ from dk.stage import Stage as _Stage12AX7, OperatingPointError, NonConvergenceWa
 from dk.resample import Resampler
 from dk.solver import MAX_IT, TOL_V, TOL_F
 from . import circuit
-from .solver import solve, solve_grid
+from .solver import solve, solve_grid, solve_grid_restarts
 from .pentode import DUAL_CONTROL, HARDNESS, grid as grid_law
 
 QUALITY = {"hq": (16, None), "standard": (8, None)}   # (os, prewarp_hz)
@@ -120,7 +120,7 @@ def operating_point(rk, par=DUAL_CONTROL, newton=tuple(NEWTON.values()), mode=ci
             v, i0, i1, it, ok = solve((p * s).tolist(), K0, i[0], i[1], par, *newton)
             i = [i0, i1, 0.0]
         else:
-            v, i, it, ok = solve_grid((p * s).tolist(), K0, i, par, g, *newton)
+            v, i, it, ok, _ = solve_grid((p * s).tolist(), K0, i, par, g, *newton)
         if not ok:
             raise OperatingPointError(
                 f"DC operating point did not converge at source step {k}/10 (supplies x {s:.1f}): "
@@ -251,7 +251,8 @@ class Stage(_Stage12AX7):
         self.iters = []
         self.nonconv = 0
         self.nonconv_block = 0
-        self.out_of_law = 0                     # internal samples with Vg1k > 0 or Vak < 0 (the runtime guard)
+        self.restarted = 0                      # samples whose first Newton start failed (grid path, #112)
+        self.out_of_law = 0                     # internal samples outside the law in force (the runtime guard)
         self.out_of_law_block = 0
         self.rs.reset()
 
@@ -277,16 +278,12 @@ class Stage(_Stage12AX7):
             def step(p, e, prev):
                 # #112: if the extrapolated warm start does not converge (T near the top of its range, steady 6-8 V at
                 # 13-19 kHz: Newton stalls where Ik < Ig1 although a root with every current positive exists), restart
-                # from the previous sample's currents, then from the operating point. Iterations are summed; a sample
-                # that converges first time (every one inside the supported envelope) is unchanged.
-                v, i, it, ok = solve_grid(p, K, e, par, g, *nw)
-                for start in (prev, i_op):
-                    if ok:
-                        break
-                    v2, i2, it2, ok2 = solve_grid(p, K, start, par, g, *nw)
-                    it += it2
-                    if ok2:
-                        v, i, ok = v2, i2, True
+                # from the previous sample's currents, then from the operating point (solver.solve_grid_restarts).
+                # Iterations are summed; a sample that converges first time is unchanged. If no start converges, the
+                # candidate with the smallest finite residual over all three is kept (and counted as not converged).
+                v, i, it, ok, _, attempts = solve_grid_restarts(p, K, (e, prev, i_op), par, g, *nw)
+                if attempts > 1:
+                    self.restarted += 1
                 return v, i, it, ok
         iters = np.empty(len(vin), dtype=np.int16)
         bad = law = 0

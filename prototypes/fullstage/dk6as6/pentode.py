@@ -25,7 +25,7 @@ per-sample Newton solve (numpy on scalars is ~10x slower). dk6as6/tests/test_pen
 model6as6.dual_ip_ig2 (relative 1e-12) and the Jacobian against central differences, for both parameter sets.
 Port order: v = (Vg1k, Vg2k, Vg3k, Vak) (circuit.NLV), i = (Ip, Ig2) (circuit.NLI); J = d i / d v, 2x4.
 currents_grid() is the law with g1 current: i = (Ip, Ig2, Ig1) (circuit.NLI + NLI_G1), J 3x4; reference_grid() its
-numpy reference (model6as6.dual_ip_ig2 for Ik and f, and DZ's eq. (11) in numpy).
+numpy reference (model6as6._f for Ik and f, and DZ's eq. (11) in numpy).
 """
 import json
 import math
@@ -74,8 +74,9 @@ def sigmoid(x):
     return e / (1.0 + e)
 
 
-def currents(vg1, vg2, vg3, va, p=DUAL_CONTROL):
-    """Return (Ip, Ig2) and the Jacobian d(Ip, Ig2)/d(Vg1k, Vg2k, Vg3k, Vak) as a 2x4 tuple-of-tuples."""
+def cathode_share(vg1, vg2, vg3, va, p=DUAL_CONTROL):
+    """(Ik, dIk, f, df): the fit's cathode current and plate share and their gradients d/d(Vg1k, Vg2k, Vg3k, Vak), each
+    computed directly (never as Ip / Ik, which loses f where Ik underflows: #112 review)."""
     MU, EX, KG1, KP = p["MU"], p["EX"], p["KG1"], p["KP"]
     FMAX, MU3, V3C, S3, P3 = p["FMAX"], p["MU3"], p["V3C"], p["S3"], p["P3"]
     RI, KVB, KR, XA = p.get("RI", 0.0), p.get("KVB", 1e-9), p.get("KR", 0.0), p.get("XA", 1.0)
@@ -114,6 +115,12 @@ def currents(vg1, vg2, vg3, va, p=DUAL_CONTROL):
     dik = (dik0_g1 * kf + dik_z * dz_g1, dik0_g2 * kf + dik_z * dz_g2, dik_z * dz_g3, dik_z * dz_a)
     dzs = (dz_g1, dz_g2, dz_g3, dz_a)
     dfs = tuple(df_z * d for d in dzs[:3]) + (df_z * dz_a + df_a,)
+    return ik, dik, f, dfs
+
+
+def currents(vg1, vg2, vg3, va, p=DUAL_CONTROL):
+    """Return (Ip, Ig2) and the Jacobian d(Ip, Ig2)/d(Vg1k, Vg2k, Vg3k, Vak) as a 2x4 tuple-of-tuples."""
+    ik, dik, f, dfs = cathode_share(vg1, vg2, vg3, va, p)
     ip = ik * f
     dip = tuple(dik[j] * f + ik * dfs[j] for j in range(4))
     return ip, ik - ip, (dip, tuple(dik[j] - dip[j] for j in range(4)))
@@ -146,21 +153,17 @@ def grid_current(vg1, g=GRID):
 
 def currents_grid(vg1, vg2, vg3, va, p=DUAL_CONTROL, g=GRID):
     """Return (Ip, Ig2, Ig1) and the Jacobian d(Ip, Ig2, Ig1)/d(Vg1k, Vg2k, Vg3k, Vak) as a 3x4 tuple-of-tuples:
-    the fit's cathode current Ik less Ig1, split by the fit's plate share f. With GG = 0 Ip and Ig2 are currents()'."""
-    ip0, ig20, (dip0, dig20) = currents(vg1, vg2, vg3, va, p)
+    the fit's cathode current Ik less Ig1, split by the fit's plate share f: Ip = (Ik - Ig1) f, Ig2 = (Ik - Ig1)(1 - f),
+    with the product rule on each. f and its gradient come straight from the fit (cathode_share), so the law and its
+    Jacobian stay finite and continuous into cut-off, where Ik underflows (#112 review). With GG = 0 Ip and Ig2 are
+    currents()' to rounding."""
+    ik, dik, f, dfs = cathode_share(vg1, vg2, vg3, va, p)
     ig1, dig1 = grid_current(vg1, g)
-    if ig1 == 0.0 and dig1 == 0.0:
-        return ip0, ig20, 0.0, (dip0, dig20, (0.0, 0.0, 0.0, 0.0))
-    ik = ip0 + ig20
-    # Ik underflows to 0 only in deep cut-off (Vg1k ~ -8 V over Vg2k ~ 0): all of -Ig1 then goes to the plate
-    f, w = (ip0 / ik, ig1 / ik) if ik > 0.0 else (1.0, 0.0)
-    # Ip = Ip0 - f Ig1 with f = Ip0 / Ik:  d Ip = d Ip0 (1 - w (1 - f)) + w f d Ig20 - f d Ig1   (w = Ig1 / Ik)
-    a, b = 1.0 - w * (1.0 - f), w * f
-    p0, p1, p2, p3 = dip0
-    q0, q1, q2, q3 = dig20
-    dip = (a * p0 + b * q0 - f * dig1, a * p1 + b * q1, a * p2 + b * q2, a * p3 + b * q3)
-    dig2 = (p0 + q0 - dig1 - dip[0], p1 + q1 - dip[1], p2 + q2 - dip[2], p3 + q3 - dip[3])
-    return ip0 - f * ig1, ig20 - (1.0 - f) * ig1, ig1, (dip, dig2, (dig1, 0.0, 0.0, 0.0))
+    ipk = ik - ig1                                                   # Ip + Ig2
+    dipk = (dik[0] - dig1, dik[1], dik[2], dik[3])
+    ip = ipk * f
+    dip = tuple(dipk[j] * f + ipk * dfs[j] for j in range(4))
+    return ip, ipk - ip, ig1, (dip, tuple(dipk[j] - dip[j] for j in range(4)), (dig1, 0.0, 0.0, 0.0))
 
 
 def currents_grid_only(vg1, vg2, vg3, va, p=DUAL_CONTROL, g=GRID):
@@ -172,8 +175,6 @@ def reference_grid(vg1, vg2, vg3, va, p=DUAL_CONTROL, g=GRID):
     """(Ip, Ig2, Ig1) in numpy from model6as6.dual_ip_ig2 (Ik = Ip + Ig2, f = Ip / Ik) and DZ eq. (11):
     what currents_grid() must reproduce."""
     import numpy as np
-    ip0, ig20 = model6as6.dual_ip_ig2(vg1, vg2, vg3, va, p)
-    ik = ip0 + ig20
+    ik, f = model6as6._f(vg1, vg2, vg3, va, p)         # the fit's cathode current and plate share, as dual_ip_ig2
     ig1 = g["GG"] * (np.logaddexp(0.0, g["CG"] * vg1) / g["CG"]) ** g["XI"]
-    f = ip0 / ik if ik > 0.0 else 1.0       # Ik underflows to 0 only in deep cut-off (currents_grid's convention)
     return float((ik - ig1) * f), float((ik - ig1) * (1.0 - f)), float(ig1)
