@@ -10,6 +10,8 @@ g++, c++ or clang++): skipped without one, except under CI (CI set), where a mis
                                Python functions on this machine, bit for bit, in a -O2 -ffp-contract=off build
   test_vectors_6as6_fresh      the committed cpp/vectors_6as6.txt still matches what the Python stage produces now
   test_k140_derivation         the k140 FIR lengths and beta re-derived from #113's rule (cpp/dk_core.h K140_FIR)
+  test_validate_k140_6as6      the same 44 settings with the core's default resampler (k140): every supported setting
+                               passes every CRIT criterion against the ngspice references
   test_validate_reproduced_6as6  dk6as6.validate.run on the C++ core reproduces every committed dk6as6/results*.json
                                (44 settings: both models, every mode and reference current, standard and hq) within
                                validate_cpp_6as6.LIMITS; every criterion reads as Python's; supported settings pass
@@ -218,6 +220,15 @@ def test_k140_derivation():
             assert not (stop >= 140 and rip <= 0.005), (fs, n - 4, stop, rip)    # the shortest such length
 
 
+def test_validate_k140_6as6():
+    """The core's default resampler (k140, which the committed Python results do not use) against the same-model ngspice
+    references: every supported setting passes every dk/validate.CRIT criterion at standard and hq."""
+    _exe()
+    out, bad = VC.main(workers=os.cpu_count(), write=False, fir="k140")
+    assert not bad, [(r["model"], r["mode"], r["bias_ma"], r["quality"], r["failed"]) for r in bad]
+    assert len(out["rows"]) == 44 and all(r["fir"] == "k140" for r in out["rows"])
+
+
 def test_validate_reproduced_6as6():
     _exe()
     out, bad = VC.main(workers=os.cpu_count(), write=False)
@@ -265,18 +276,26 @@ def test_bench_6as6_records():
 
 
 def test_aliasing_records():
-    """The committed sweep (cpp/aliasing_6as6.json) and the guard's baselines (#98 format) are consistent: every
-    supported setting is within its quality gate at both rates and both designs; the guard's tones and limits are
-    recomputed from the sweep; the baselines cover every guard key and tone; parity with the Python sweeps."""
+    """The committed sweep (cpp/aliasing_6as6.json) and the guard's baselines (#98 format) are consistent: with the
+    core's default design every supported setting is within its quality gate at both rates, both qualities and every
+    tone up to 19997 Hz; with the shipped FIR only the known band-edge points are over it; the guard runs the default
+    design, and its tones and limits are recomputed from the sweep; the baselines cover every guard key and tone;
+    parity with the Python sweeps."""
     from cpp import aliasing_6as6 as AQ
     from dk import aliasing_guard as AG
     if not os.path.exists(AQ.SWEEP_JSON):
         pytest.skip("no cpp/aliasing_6as6.json")
+    assert AQ.default_fir() == "k140"                      # dk6as6_core.h DEFAULT_FIR, as the CLI reports it
     sw = json.load(open(AQ.SWEEP_JSON))
     recs = sw["records"]
-    assert len(recs) == len(AQ.sweep_jobs(recs=[r for r in recs if r["fir"] == "shipped"]))
+    assert len(recs) == len(AQ.sweep_jobs()) and max(AQ.TONES) == 19997
     for r in recs:
-        assert r["total_dbc"] <= AQ.gate(r["fs"], r["quality"], r["drive"]), r
+        over = r["total_dbc"] > AQ.gate(r["fs"], r["quality"], r["drive"])
+        if r["fir"] == AQ.default_fir():
+            assert not over, r
+        else:   # #113's finding: the shipped FIR at 44.1 kHz, 2 V, P1 0.6 mA, from 19957 Hz (the resampler's)
+            assert over == (r["fs"] == 44100 and r["drive"] == 2.0 and r["mode"] == "P1" and r["bias_ma"] == 0.6
+                            and r["tone"] >= 19957), r
         assert r["nonconverged"] == 0 and r["out_of_law"] == 0, r
     now = json.loads(json.dumps(AQ.summary(recs)))        # recomputed here: libm's log10 may differ by an ulp
     assert len(now) == len(sw["summary"])

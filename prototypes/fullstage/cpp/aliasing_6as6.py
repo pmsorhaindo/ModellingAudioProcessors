@@ -10,8 +10,9 @@ window (dk.aliasing.WINDOW_S). One C++ run per point (`test_core_6as6 cli`, 256-
 Settings: the supported envelope with the default grid current (dk6as6.stage.SUPPORTED_MA): P1 at 0.1 / 0.25 / 0.45 /
 0.6 mA and T at 0.1 / 0.25 / 0.5 mA (0.5 = the top of T's envelope); standard 8x and hq 16x; 2 V and 8 V; filter off
 (the post-filter only lowers absolute alias energy, dk6as6/RESULTS-lpf.md); tones SWEEP_HZ (1037 ... 19037 Hz) plus the
-band edge 19937 Hz (#113 review); host rates 48 and 44.1 kHz. The shipped design (SHIPPED_FIR, what the core runs) at
-every point; K140_FIR at each setting / quality / drive's three worst shipped tones.
+band edge, BAND_EDGE_HZ = 19937 / 19957 / 19977 / 19997 Hz (#113 and #104 reviews); host rates 48 and 44.1 kHz; both
+resampler designs at every point: K140_FIR (the core's DEFAULT_FIR since #104's review) and SHIPPED_FIR (the resampler
+of the committed Python results, for parity and comparison).
 
 ADAA bound. Antiderivative antialiasing acts on the nonlinearity's own aliasing at the internal rate: at best it removes
 the "internal" term entirely; it does nothing about the resampler term (in-band harmonics leaking through the
@@ -20,8 +21,10 @@ decimator and the interpolator's residual images), and its half-sample delay and
 rate / quality / drive / design, the worst total over every supported setting and tone with and without the internal
 term, i.e. how far an ideal ADAA could lower that worst case. It is a measured upper bound, not an ADAA implementation.
 
-Guard (CI): per rate, every setting x quality x drive above at its full sweep's worst tone, plus 19037 Hz, on the
-shipped design (DEFAULT_FIR, what the core runs), with full 1 s windows. Two checks per tone, as dk.aliasing_guard:
+Guard (CI): per rate, every setting x quality x drive above at its full sweep's worst tone, 19037 Hz and every
+band-edge tone, on the stage's own default design (the CLI's "default", i.e. DEFAULT_FIR, not a design the harness
+picks), with full 1 s windows. Keys carry the design's name, so a change of the default fails until the baselines are
+updated on purpose. Two checks per tone, as dk.aliasing_guard:
   1. absolute: at or below the quality gate, the shipped 12AX7 stage's committed budget for the same quality and drive
      (dk.aliasing.limits_for_rate(fs), FIR; the gate dk6as6/stage.py's supported envelope uses at standard);
   2. ratchet: within dk.aliasing_guard.TOLERANCE_DB (1.5 dB) of the tone's committed baseline
@@ -30,7 +33,7 @@ Parity: the full sweep's shipped 48 kHz standard points against the committed Py
 (dk6as6/aliasing_grid[_T].json): `table` prints the worst |C++ - Python|.
 
 Run from prototypes/fullstage:
-  python -m cpp.aliasing_6as6 sweep [--workers N]          -> cpp/aliasing_6as6.json (full sweep, ~1.2k points)
+  python -m cpp.aliasing_6as6 sweep [--workers N]          -> cpp/aliasing_6as6.json (full sweep, 2.6k points)
   python -m cpp.aliasing_6as6 scan [--workers N]           -> the band-edge scan, added to cpp/aliasing_6as6.json
   python -m cpp.aliasing_6as6 table                         the summary tables (cpp/README-6as6.md)
   python -m cpp.aliasing_6as6 guard --fs 48000|44100 [--workers N] [--json OUT]
@@ -59,14 +62,14 @@ QUALITIES = ("standard", "hq")
 DRIVES = (2.0, 8.0)
 FIRS = ("shipped", "k140")
 SETTINGS = (("P1", 0.1), ("P1", 0.25), ("P1", 0.45), ("P1", 0.6), ("T", 0.1), ("T", 0.25), ("T", 0.5))
-BAND_EDGE_HZ = 19937
-TONES = tuple(AL.SWEEP_HZ) + (BAND_EDGE_HZ,)
-GUARD_EXTRA_TONE = 19037
+BAND_EDGE_HZ = (19937, 19957, 19977, 19997)
+TONES = tuple(AL.SWEEP_HZ) + BAND_EDGE_HZ
+GUARD_EXTRA_TONES = (19037,) + BAND_EDGE_HZ
 SWEEP_JSON = os.path.join(HERE, "aliasing_6as6.json")
-GUARD_FIR = "shipped"            # the design the core runs (dk6as6_core.h DEFAULT_FIR)
+GUARD_FIR = "default"            # the CLI runs the stage's own DEFAULT_FIR (default_fir() names it)
 # The band-edge scan (#113 review): P1 0.6 mA (the 2 V worst of the sweep at 44.1 kHz) at 2 V, tones from the band edge
-# up to 19987 Hz, both rates, both qualities (48 kHz: standard), both designs
-SCAN_TONES = tuple(range(19937, 19988, 10))
+# up to 19997 Hz in 10 Hz steps, both rates, both qualities (48 kHz: standard), both designs
+SCAN_TONES = tuple(range(19937, 19998, 10))
 SCAN_JOBS = ([(44100, q, fir, "P1", 0.6, 2.0, f) for q in QUALITIES for fir in FIRS for f in SCAN_TONES]
              + [(48000, "standard", fir, "P1", 0.6, 2.0, f) for fir in FIRS for f in SCAN_TONES])
 
@@ -80,12 +83,26 @@ def gate(fs, quality, drive):
     return AL.limits_for_rate(fs)[(quality, "fir")][drive]
 
 
-def key(quality, mode, bias, drive, fir=GUARD_FIR):
-    return f"{quality}/{fir}/{mode} {bias:g} mA/{drive:g}V"
+_DEFAULT = []
+
+
+def default_fir():
+    """The name of the core's DEFAULT_FIR, as the CLI reports it ("k140" or "shipped")."""
+    if not _DEFAULT:
+        _DEFAULT.append(VC.cli(np.zeros(0), 48000.0, 8, "P1", 0.45, 1.0, fir="default")[2]["default_fir"])
+    return _DEFAULT[0]
+
+
+def resolve(fir):
+    return default_fir() if fir == "default" else fir
+
+
+def key(quality, mode, bias, drive, fir=None):
+    return f"{quality}/{resolve(fir or GUARD_FIR)}/{mode} {bias:g} mA/{drive:g}V"
 
 
 def latency(fs, os_, fir):
-    return Resampler(fs, os_, "fir", fir=K140[float(fs)] if fir == "k140" else None).latency_samples
+    return Resampler(fs, os_, "fir", fir=K140[float(fs)] if resolve(fir) == "k140" else None).latency_samples
 
 
 def measure(fs, quality, fir, mode, bias, drive, tone, window=AL.WINDOW_S, settle=SETTLE_S):
@@ -97,10 +114,10 @@ def measure(fs, quality, fir, mode, bias, drive, tone, window=AL.WINDOW_S, settl
     t0 = time.perf_counter()
     y, _, info = VC.cli(x, fs, os_, mode, bias, 1.0, fir=fir)
     wall = time.perf_counter() - t0
-    assert info["latency_samples"] == L, (info["latency_samples"], L)
+    assert info["latency_samples"] == L and info["fir"] == resolve(fir), (info["latency_samples"], L, info["fir"])
     a = AL.alias_dbc(y[n0 + L:n0 + L + n], m, fs, os_)
     st = info["stats"]
-    return dict(fs=fs, quality=quality, os=os_, fir=fir, mode=mode, bias_ma=bias, drive=drive, tone=int(tone),
+    return dict(fs=fs, quality=quality, os=os_, fir=info["fir"], mode=mode, bias_ma=bias, drive=drive, tone=int(tone),
                 f_hz=m * fs / n, window_s=window, settle_s=settle, nonconverged=st["nonconverged"],
                 restarted=st["restarted"], out_of_law=st["out_of_law"], it_max=st["max"], wall_s=wall, **a)
 
@@ -132,20 +149,10 @@ def run(jobs, workers, cache=None):
     return [done[j] for j in jobs]
 
 
-def sweep_jobs(rates=RATES, recs=None):
-    """The shipped design at every setting, quality, drive and tone; k140 at each of those keys' three worst shipped
-    tones (recs: the shipped records, to pick them; without, k140 everywhere)."""
-    jobs = [(fs, q, "shipped", mode, b, d, f) for fs in rates for q in QUALITIES for mode, b in SETTINGS
+def sweep_jobs(rates=RATES):
+    """Both designs at every setting, quality, drive and tone."""
+    return [(fs, q, fir, mode, b, d, f) for fs in rates for q in QUALITIES for fir in FIRS for mode, b in SETTINGS
             for d in DRIVES for f in TONES]
-    for fs in rates:
-        for q in QUALITIES:
-            for mode, b in SETTINGS:
-                for d in DRIVES:
-                    r = [x for x in (recs or []) if (x["fs"], x["quality"], x["fir"], x["mode"], x["bias_ma"],
-                                                       x["drive"]) == (fs, q, "shipped", mode, b, d)]
-                    tones = [x["tone"] for x in sorted(r, key=lambda x: -x["total_dbc"])[:3]] if recs else TONES
-                    jobs += [(fs, q, "k140", mode, b, d, f) for f in sorted(tones)]
-    return jobs
 
 
 def adaa_floor(total_dbc, internal_dbc):
@@ -198,16 +205,17 @@ def parity(recs):
 
 
 def guard_tones(fs, recs=None):
-    """{key: tones}: the full sweep's worst tone per setting / quality / drive (shipped design), plus 19037 Hz."""
+    """{key: tones}: the full sweep's worst tone per setting / quality / drive (the default design), 19037 Hz and the
+    band-edge tones."""
     recs = recs if recs is not None else json.load(open(SWEEP_JSON))["records"]
     out = {}
     for q in QUALITIES:
         for mode, b in SETTINGS:
             for d in DRIVES:
                 r = [x for x in recs if (x["fs"], x["quality"], x["fir"], x["mode"], x["bias_ma"], x["drive"]) ==
-                     (fs, q, GUARD_FIR, mode, b, d)]
+                     (fs, q, resolve(GUARD_FIR), mode, b, d)]
                 w = max(r, key=lambda x: x["total_dbc"])["tone"]
-                out[key(q, mode, b, d)] = tuple(sorted({w, GUARD_EXTRA_TONE}))
+                out[key(q, mode, b, d)] = tuple(sorted({w, *GUARD_EXTRA_TONES}))
     return out
 
 
@@ -252,7 +260,7 @@ def guard(fs, workers, json_out=None, update=False, reason=None):
         with open(path, "w") as fh:
             json.dump(dict(format_version=AG.FORMAT_VERSION, reason=reason, updated=time.strftime("%Y-%m-%d"),
                            git_rev=AG.git_rev(), tolerance_db=AG.TOLERANCE_DB,
-                           method=dict(fs_base=fs, core="cpp/dk6as6_core.h", fir=GUARD_FIR, settle_s=SETTLE_S,
+                           method=dict(fs_base=fs, core="cpp/dk6as6_core.h", fir=resolve(GUARD_FIR), settle_s=SETTLE_S,
                                        window_s=AL.WINDOW_S, band_hz=AL.BAND_HZ, mask_bins=AL.MASK_BINS,
                                        grid_hardness=1.0, lpf="off", tones={k: list(v) for k, v in tones.items()}),
                            values=measured), fh, indent=1)
@@ -303,8 +311,7 @@ if __name__ == "__main__":
     if a.cmd == "sweep":
         t0 = time.perf_counter()
         cache = os.path.join(HERE, ".aliasing_6as6_cache.jsonl")
-        shipped = run([j for j in sweep_jobs() if j[2] == "shipped"], a.workers, cache)
-        recs = run(sweep_jobs(recs=shipped), a.workers, cache)
+        recs = run(sweep_jobs(), a.workers, cache)
         json.dump(dict(method=dict(settle_s=SETTLE_S, window_s=AL.WINDOW_S, band_hz=AL.BAND_HZ, mask_bins=AL.MASK_BINS,
                                    grid_hardness=1.0, lpf="off", settings=SETTINGS, tones=TONES, firs=FIRS,
                                    k140=K140, wall_s=time.perf_counter() - t0, core="cpp/dk6as6_core.h"),

@@ -9,7 +9,9 @@ analysis itself, dk6as6/linear.py, and the resampler's analytical response stay 
 against Python's sample by sample in cpp/test_core_6as6.cpp). compare() lists every deviation from the committed Python
 result of the same setting; LIMITS are the tolerances cpp/tests/test_cpp_core_6as6.py asserts. Every criterion
 (dk/validate.CRIT, unchanged) must read the same as the Python result's, and every supported setting must pass.
-Run from prototypes/fullstage:  python -m cpp.validate_cpp_6as6 [--workers N]   (~1 min; writes cpp/results_6as6.json)
+Run from prototypes/fullstage:  python -m cpp.validate_cpp_6as6 [--workers N] [--fir k140]   (~1 min; writes
+cpp/results_6as6.json, or with --fir k140 cpp/results_6as6_k140.json: the core's default resampler, which the
+Python results do not use, judged on dk/validate.CRIT alone)
 """
 import argparse
 import json
@@ -26,8 +28,11 @@ from dk6as6 import circuit, pentode, validate  # noqa: E402 -- after the sys.pat
 from dk6as6.stage import QUALITY, BIAS_MA, supported  # noqa: E402 -- after the sys.path setup
 from spice6as6.run_refs import MODE_BIASES, GRID_BIASES  # noqa: E402 -- after the sys.path setup
 from cpp.build import build  # noqa: E402 -- after the sys.path setup
+from cpp.export_vectors_6as6 import K140  # noqa: E402 -- after the sys.path setup
 
 EXE = None          # test_core_6as6 used by CppStage (set by run(), or by the caller)
+FIR = "shipped"     # CppStage's resampler: "shipped" (the Python results' FIR: the parity run) or "k140" (the core's
+                    # DEFAULT_FIR: python -m cpp.validate_cpp_6as6 --fir k140, judged on CRIT alone)
 MODELS = {"dual": MODE_BIASES, "dualg": GRID_BIASES}     # (ii) references: no grid current / the default grid law
 
 
@@ -67,7 +72,7 @@ class CppStage:
         self.grid_hardness = grid_hardness
         self.grid = validate.pentode.grid(grid_hardness, pentode) if grid_hardness else None
         self.supported = supported(mode, bias, grid_hardness)
-        _, _, info = cli(np.zeros(0), fs, self.os, mode, bias, grid_hardness)
+        _, _, info = cli(np.zeros(0), fs, self.os, mode, bias, grid_hardness, fir=FIR)
         self.info, self.fs, self.rk = info, info["fs"], info["rk"]
         nx, nv, no, nu, ni = 7, 4, 5, info["nu"], info["ni"]
         shapes = dict(A=(nx, nx), B=(nx, nu), C=(nx, ni), D=(no, nx), E=(no, nu), F=(no, ni), G=(nv, nx), H=(nv, nu),
@@ -79,7 +84,7 @@ class CppStage:
         self.dc = dict(vg1k=v[0], vg2k=v[1], vg3k=v[2], vak=v[3], vgk=v[0], ip=i[0], ig2=i[1], ig1=i[2], ik=info["ik"],
                        ia=i[0], nodes=dict(zip(circuit.NODES, info["nodes"])), rk=self.rk)
         # the resampler's analytical response (validate.small_signal) is Python's; the C++ geometry must match it
-        self.rs = Resampler(fs, self.os, filt)
+        self.rs = Resampler(fs, self.os, filt, fir=K140[float(fs)] if FIR == "k140" else None)
         assert (info["latency_samples"], info["up_delay_internal"]) == (self.rs.latency_samples,
                                                                         self.rs.up_delay_internal)
         self._stats, self._used = None, False
@@ -98,7 +103,7 @@ class CppStage:
         self._used = True
         rec = bool({"vgk", "vg2k"} & set(record))
         y, internal, info = cli(vin, self.fs_base, self.os, self.mode, self.bias, self.grid_hardness,
-                                drive=self.drive, output=self.output, rec=rec)
+                                drive=self.drive, output=self.output, fir=FIR, rec=rec)
         self._stats = info["stats"]
         out = {"out": y, "_internal": {}}
         if internal is not None:
@@ -178,7 +183,8 @@ def compare(c, p):
     hist = []
     for k, pi in p["iterations"].items():
         ci = c["iterations"][k]
-        assert ci["samples"] == pi["samples"] and ci["nonconverged"] == pi["nonconverged"], k
+        if FIR == "shipped":                # parity run; with k140 the latency (so the length) differs
+            assert ci["samples"] == pi["samples"] and ci["nonconverged"] == pi["nonconverged"], k
         ch = {int(k): v for k, v in ci["histogram"].items()}
         ph = {int(k): v for k, v in pi["histogram"].items()}
         hist.append(sum(abs(ch.get(b, 0) - ph.get(b, 0)) for b in set(ch) | set(ph)) / pi["samples"])
@@ -209,21 +215,30 @@ def jobs():
             for q in QUALITY]
 
 
+def check_k140(d):
+    """The k140 run has no Python counterpart (the Python stage runs the shipped FIR until #129 / #134): every supported
+    setting must pass every CRIT criterion on its own; the deviations from the shipped Python results are reported."""
+    if not d["supported"] or d["status"] == "passed":
+        return []
+    return [("supported setting passes", d["status"], "passed")]
+
+
 def one(job):
     model, mode, b, q = job
     ref = json.load(open(validate.results_file(mode, model)))[f"{b:g}"][q]
     r = run(q, model, b, mode)
     d = compare(r, ref)
-    return dict(model=model, mode=mode, bias_ma=b, quality=q, deviation=d, failed=check(d))
+    return dict(model=model, mode=mode, bias_ma=b, quality=q, fir=FIR, deviation=d,
+                failed=check(d) if FIR == "shipped" else check_k140(d))
 
 
-def _init(path):
-    global EXE
-    EXE = path
+def _init(path, fir):
+    global EXE, FIR
+    EXE, FIR = path, fir
 
 
-def main(workers=1, write=True):
-    with ProcessPoolExecutor(workers, initializer=_init, initargs=(exe(),)) as ex:
+def main(workers=1, write=True, fir="shipped"):
+    with ProcessPoolExecutor(workers, initializer=_init, initargs=(exe(), fir)) as ex:
         rows = list(ex.map(one, jobs()))
     worst = {k: max(r["deviation"][k] for r in rows) for k in list(LIMITS) + ["harm_db_all"]}
     comp = subprocess.run([os.environ.get("CXX", "c++"), "--version"], capture_output=True, text=True).stdout
@@ -231,8 +246,12 @@ def main(workers=1, write=True):
                       "test_core_6as6 cli, -O2) in place of dk6as6.stage.Stage; deviations = |C++ - Python| against "
                       "the committed dk6as6/results*.json of the same setting",
                compiler=comp.splitlines()[0] if comp else None, limits=LIMITS, worst=worst, rows=rows)
+    if fir != "shipped":
+        out["method"] += (f"; resampler {fir} (the core's DEFAULT_FIR): judged on dk/validate.CRIT alone, the "
+                          "deviations from the shipped-FIR Python results are for information")
     if write:
-        json.dump(out, open(os.path.join(HERE, "results_6as6.json"), "w"), indent=1, default=float)
+        name = "results_6as6.json" if fir == "shipped" else f"results_6as6_{fir}.json"
+        json.dump(out, open(os.path.join(HERE, name), "w"), indent=1, default=float)
     for r in rows:
         print(r["model"], r["mode"], r["bias_ma"], r["quality"], r["deviation"]["status"],
               "python:", r["deviation"]["status_python"], "supported" if r["deviation"]["supported"] else "exp",
@@ -245,7 +264,9 @@ def main(workers=1, write=True):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--workers", type=int, default=os.cpu_count())
+    ap.add_argument("--fir", choices=("shipped", "k140"), default="shipped",
+                    help="shipped: parity with the committed Python results; k140: the core's default, CRIT alone")
     a = ap.parse_args()
-    _, bad = main(a.workers)
+    _, bad = main(a.workers, fir=a.fir)
     failed = [(r["model"], r["mode"], r["bias_ma"], r["quality"], r["failed"]) for r in bad]
     sys.exit(f"C++ core deviates from the Python results: {failed}" if bad else 0)
