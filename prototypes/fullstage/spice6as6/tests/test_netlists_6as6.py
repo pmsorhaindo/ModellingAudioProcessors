@@ -378,6 +378,70 @@ def test_failed_analysis_stops_the_run(tmp_path, monkeypatch):
     assert os.path.exists(os.path.join(out, f"{R.case('dual', BIAS_MA)}_main_log.txt"))
 
 
+# A stand-in ngspice for the publish tests: writes "new" into every literal wrdata target of the netlist it is given
+# (paths relative to its cwd, spice6as6/), then exits with the status FAKE_STATUS_<analysis> (default 0).
+FAKE_WRITER = """#!/bin/sh
+[ "$1" = "--version" ] && { echo "** ngspice-41 : stand-in"; exit 0; }
+for p in $(grep '^wrdata ' "$2" | awk '{print $2}'); do echo new > "$p"; done
+case "$2" in *_burst.cir) exit ${FAKE_BURST_STATUS:-0};; esac
+exit 0
+"""
+
+
+def _previous_run(out, c, gfile):
+    """A previously published run of case c in out: its raw files hold "old", plus its generator record."""
+    os.makedirs(out, exist_ok=True)
+    for suffix in ("op", "ac", "ac_20", "ac_20000", "burst", "sine_0.05"):
+        open(os.path.join(out, f"{c}_{suffix}.txt"), "w").write("old\n")
+    json.dump({"run": "old"}, open(gfile, "w"))
+
+
+def _fake_writer(tmp_path, monkeypatch, burst_status):
+    fake = tmp_path / "ngspice"
+    fake.write_text(FAKE_WRITER)
+    fake.chmod(0o755)
+    monkeypatch.setattr(R, "NGSPICE", str(fake))
+    monkeypatch.setenv("FAKE_BURST_STATUS", str(burst_status))
+
+
+def test_failed_rerun_leaves_the_previous_run_whole(tmp_path, monkeypatch):
+    """PR #128 review: a rerun whose 'main' writes its raw files and succeeds, then whose burst fails, must not leave a
+    mixture of new and old files under the old generator record (which --analyse-only trusts). run() stages the run in
+    its own directory and publishes only a complete set, so the previous run's files and record are untouched and the
+    staged files are gone."""
+    out = str(tmp_path / "out")
+    c = R.case("dual", BIAS_MA)
+    gfile = R.generator_file("dual", BIAS_MA, out)
+    _previous_run(out, c, gfile)
+    before = {f: open(os.path.join(out, f)).read() for f in os.listdir(out)}
+    _fake_writer(tmp_path, monkeypatch, burst_status=1)
+    with pytest.raises(RuntimeError, match="ngspice failed on burst"):
+        R.run("dual", BIAS_MA, out=out, write=False)
+    after = {f: open(os.path.join(out, f)).read() for f in os.listdir(out) if not f.endswith("_log.txt")}
+    assert after == before                                  # every old raw file and the old record, unchanged
+    assert not [f for f in os.listdir(out) if f.startswith("_staging_")]
+    assert os.path.exists(os.path.join(out, f"{c}_main_log.txt"))   # the failed run's logs are kept
+
+
+def test_successful_rerun_publishes_a_whole_new_set(tmp_path, monkeypatch):
+    """The other side: a rerun that succeeds replaces the record and the raw files as one set. No raw file of the
+    previous run survives (its sine file, which this stand-in does not rewrite, is gone), and the new record is the
+    new run's."""
+    out = str(tmp_path / "out")
+    c = R.case("dual", BIAS_MA)
+    gfile = R.generator_file("dual", BIAS_MA, out)
+    _previous_run(out, c, gfile)
+    _fake_writer(tmp_path, monkeypatch, burst_status=0)
+    monkeypatch.setattr(R, "analyse", lambda *a, **k: "analysed")
+    assert R.run("dual", BIAS_MA, out=out, write=False) == "analysed"
+    raw = {f: open(os.path.join(out, f)).read() for f in os.listdir(out)
+           if f.startswith(c + "_") and f.endswith(".txt") and not f.endswith("_log.txt")}
+    assert raw and set(raw.values()) == {"new\n"} and f"{c}_sine_0.05.txt" not in raw
+    gen = json.load(open(gfile))
+    assert gen.get("run") != "old" and gen["bias_ma"] == BIAS_MA and gen["ngspice"].startswith("ngspice-41")
+    assert not [f for f in os.listdir(out) if f.startswith("_staging_") or f.endswith(".tmp")]
+
+
 def test_ngspice_has_a_wall_clock_limit(tmp_path, monkeypatch):
     """An ngspice that never returns is killed at NGSPICE_TIMEOUT_S and run() raises TimeoutError, with nothing left
     running and its generated netlist removed (#111: two ngspice children hung for ~2 h after writing their output)."""

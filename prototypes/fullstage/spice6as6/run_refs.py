@@ -37,6 +37,7 @@ Usage: python spice6as6/run_refs.py [dual] [r51] [dual:0.25] [dual/T] [dual/P2:0
 import json
 import math
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -348,7 +349,12 @@ def run(model, bias, solver=SOLVER, out="out", write=True, mode=MODE, split=Fals
     write=True (re)writes the committed reference_<tag>_<bias>mA.json, write=False is for convergence studies. Fails if
     models/ is stale. split=True (#112) runs 'main' as split_analyses(), the same analyses as shorter ngspice calls,
     `jobs` at a time (each still under NGSPICE_TIMEOUT_S); every call is waited for before a failure is raised, so
-    nothing is left running."""
+    nothing is left running.
+    Raw output is staged (PR #128 review): ngspice writes into a fresh <out>/_staging_<case>/, and only when every
+    analysis has succeeded is the set published. The previous generator record is removed first, then the raw files
+    are moved into <out>/, then the new generator record (generator_file) is written. A failed or interrupted run
+    deletes its staging directory and leaves the previous complete set and its record untouched, so --analyse-only can
+    never pair one run's record with another run's files (an interrupted publish leaves no record, and is refused)."""
     if open(model_file(model, mode)).read() != subckt(model, mode=mode):
         raise RuntimeError(f"{model_file(model, mode)} is stale; run python spice6as6/run_refs.py --write-netlist")
     o = os.path.join(HERE, out)
@@ -356,10 +362,14 @@ def run(model, bias, solver=SOLVER, out="out", write=True, mode=MODE, split=Fals
     spiceinit()
     rk = cathode_resistor(bias, PARAMS[model], mode=mode, grid_hardness=HARDNESS[model])
     c = case(model, bias, mode)
+    stage = os.path.join(out, f"_staging_{c}")             # relative to HERE, as `out` (or absolute)
+    sdir = os.path.join(HERE, stage)
+    shutil.rmtree(sdir, ignore_errors=True)
+    os.makedirs(sdir)
     def one(name):
         tagn = name.replace(":", "_")
         fn = os.path.join(HERE, f"_gen_{out.replace('/', '_')}_{c}_{tagn}.cir")
-        open(fn, "w").write(netlist(model, name, bias, out=out, solver=solver, rk=rk, mode=mode))
+        open(fn, "w").write(netlist(model, name, bias, out=stage, solver=solver, rk=rk, mode=mode))
         try:
             code, log = ngspice(["-b", fn])
         finally:
@@ -367,19 +377,38 @@ def run(model, bias, solver=SOLVER, out="out", write=True, mode=MODE, split=Fals
         open(os.path.join(o, f"{c}_{tagn}_log.txt"), "w").write(log)
         if code != 0:
             raise RuntimeError(f"ngspice failed on {name} ({c}), see {o}/{c}_{tagn}_log.txt")
-    if not split:
-        for name in ANALYSES:   # one at a time: a failure stops the run with nothing left running (PR #120 review)
-            one(name)
-    else:
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(jobs) as ex:     # leaving the block waits for every call (each has its timeout)
-            futs = [ex.submit(one, name) for name in split_analyses() + ["burst"]]
-        errs = [f.exception() for f in futs if f.exception() is not None]
-        if errs:
-            raise errs[0]
-    gen = generator(model, bias, solver, mode, split, rk)       # saved with the raw output for --analyse-only
-    json.dump(gen, open(generator_file(model, bias, out, mode), "w"), indent=1)
+    try:
+        if not split:
+            for name in ANALYSES:   # one at a time: a failure stops the run with nothing left running (PR #120 review)
+                one(name)
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(jobs) as ex:     # leaving the block waits for every call (each has its timeout)
+                futs = [ex.submit(one, name) for name in split_analyses() + ["burst"]]
+            errs = [f.exception() for f in futs if f.exception() is not None]
+            if errs:
+                raise errs[0]
+        gen = generator(model, bias, solver, mode, split, rk)   # saved with the raw output for --analyse-only
+        publish(sdir, o, generator_file(model, bias, out, mode), gen, c)
+    finally:
+        shutil.rmtree(sdir, ignore_errors=True)
     return analyse(model, bias, out, gen, write, mode)
+
+
+def publish(sdir, o, gfile, gen, c):
+    """Publish a complete staged run of case c: drop the old generator record and the case's old raw files (not its
+    logs), move every staged raw file into o, then write the new record (run(); an interruption part-way leaves no
+    record, which --analyse-only refuses)."""
+    if os.path.exists(gfile):
+        os.remove(gfile)
+    for f in os.listdir(o):
+        if f.startswith(c + "_") and f.endswith(".txt") and not f.endswith("_log.txt"):
+            os.remove(os.path.join(o, f))
+    for f in sorted(os.listdir(sdir)):
+        os.replace(os.path.join(sdir, f), os.path.join(o, f))
+    tmp = gfile + ".tmp"
+    json.dump(gen, open(tmp, "w"), indent=1)
+    os.replace(tmp, gfile)
 
 
 def generator_file(model, bias, out="out", mode=MODE):
