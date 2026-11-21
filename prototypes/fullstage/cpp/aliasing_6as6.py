@@ -10,7 +10,8 @@ window (dk.aliasing.WINDOW_S). One C++ run per point (`test_core_6as6 cli`, 256-
 Settings: the supported envelope with the default grid current (dk6as6.stage.SUPPORTED_MA): P1 at 0.1 / 0.25 / 0.45 /
 0.6 mA and T at 0.1 / 0.25 / 0.5 mA (0.5 = the top of T's envelope); standard 8x and hq 16x; 2 V and 8 V; filter off
 (the post-filter only lowers absolute alias energy, dk6as6/RESULTS-lpf.md); tones SWEEP_HZ (1037 ... 19037 Hz) plus the
-band edge 19937 Hz (#113 review); host rates 48 and 44.1 kHz; resampler designs SHIPPED_FIR and K140_FIR.
+band edge 19937 Hz (#113 review); host rates 48 and 44.1 kHz. The shipped design (SHIPPED_FIR, what the core runs) at
+every point; K140_FIR at each setting / quality / drive's three worst shipped tones.
 
 ADAA bound. Antiderivative antialiasing acts on the nonlinearity's own aliasing at the internal rate: at best it removes
 the "internal" term entirely; it does nothing about the resampler term (in-band harmonics leaking through the
@@ -105,14 +106,39 @@ def _job(a):
     return measure(*a)
 
 
-def run(jobs, workers):
+def run(jobs, workers, cache=None):
+    """measure() at every job, in `workers` processes. cache: a JSON-lines file of finished points (appended as they
+    finish, reused on a rerun), so an interrupted sweep resumes."""
+    done = {}
+    if cache and os.path.exists(cache):
+        for line in open(cache):
+            r = json.loads(line)
+            done[(r["fs"], r["quality"], r["fir"], r["mode"], r["bias_ma"], r["drive"], r["tone"])] = r
+    todo = [j for j in jobs if j not in done]
     with ProcessPoolExecutor(workers, initializer=_init, initargs=(VC.exe(),)) as ex:
-        return list(ex.map(_job, jobs, chunksize=1))
+        out = open(cache, "a") if cache else None
+        for j, r in zip(todo, ex.map(_job, todo, chunksize=1)):
+            done[j] = r
+            if out:
+                out.write(json.dumps(r) + "\n")
+                out.flush()
+    return [done[j] for j in jobs]
 
 
-def sweep_jobs(rates=RATES, firs=FIRS):
-    return [(fs, q, fir, mode, b, d, f) for fs in rates for q in QUALITIES for fir in firs for mode, b in SETTINGS
+def sweep_jobs(rates=RATES, recs=None):
+    """The shipped design at every setting, quality, drive and tone; k140 at each of those keys' three worst shipped
+    tones (recs: the shipped records, to pick them; without, k140 everywhere)."""
+    jobs = [(fs, q, "shipped", mode, b, d, f) for fs in rates for q in QUALITIES for mode, b in SETTINGS
             for d in DRIVES for f in TONES]
+    for fs in rates:
+        for q in QUALITIES:
+            for mode, b in SETTINGS:
+                for d in DRIVES:
+                    r = [x for x in (recs or []) if (x["fs"], x["quality"], x["fir"], x["mode"], x["bias_ma"],
+                                                       x["drive"]) == (fs, q, "shipped", mode, b, d)]
+                    tones = [x["tone"] for x in sorted(r, key=lambda x: -x["total_dbc"])[:3]] if recs else TONES
+                    jobs += [(fs, q, "k140", mode, b, d, f) for f in sorted(tones)]
+    return jobs
 
 
 def adaa_floor(total_dbc, internal_dbc):
@@ -258,7 +284,9 @@ if __name__ == "__main__":
     a = ap.parse_args()
     if a.cmd == "sweep":
         t0 = time.perf_counter()
-        recs = run(sweep_jobs(), a.workers)
+        cache = os.path.join(HERE, ".aliasing_6as6_cache.jsonl")
+        shipped = run([j for j in sweep_jobs() if j[2] == "shipped"], a.workers, cache)
+        recs = run(sweep_jobs(recs=shipped), a.workers, cache)
         json.dump(dict(method=dict(settle_s=SETTLE_S, window_s=AL.WINDOW_S, band_hz=AL.BAND_HZ, mask_bins=AL.MASK_BINS,
                                    grid_hardness=1.0, lpf="off", settings=SETTINGS, tones=TONES, firs=FIRS,
                                    k140=K140, wall_s=time.perf_counter() - t0, core="cpp/dk6as6_core.h"),

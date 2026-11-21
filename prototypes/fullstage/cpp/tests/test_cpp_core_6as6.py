@@ -274,7 +274,7 @@ def test_aliasing_records():
         pytest.skip("no cpp/aliasing_6as6.json")
     sw = json.load(open(AQ.SWEEP_JSON))
     recs = sw["records"]
-    assert len(recs) == len(AQ.sweep_jobs())
+    assert len(recs) == len(AQ.sweep_jobs(recs=[r for r in recs if r["fir"] == "shipped"]))
     for r in recs:
         assert r["total_dbc"] <= AQ.gate(r["fs"], r["quality"], r["drive"]), r
         assert r["nonconverged"] == 0 and r["out_of_law"] == 0, r
