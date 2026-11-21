@@ -41,6 +41,8 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
+import uuid
 import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -350,11 +352,13 @@ def run(model, bias, solver=SOLVER, out="out", write=True, mode=MODE, split=Fals
     models/ is stale. split=True (#112) runs 'main' as split_analyses(), the same analyses as shorter ngspice calls,
     `jobs` at a time (each still under NGSPICE_TIMEOUT_S); every call is waited for before a failure is raised, so
     nothing is left running.
-    Raw output is staged (PR #128 review): ngspice writes into a fresh <out>/_staging_<case>/, and only when every
-    analysis has succeeded is the set published. The previous generator record is removed first, then the raw files
-    are moved into <out>/, then the new generator record (generator_file) is written. A failed or interrupted run
-    deletes its staging directory and leaves the previous complete set and its record untouched, so --analyse-only can
-    never pair one run's record with another run's files (an interrupted publish leaves no record, and is refused)."""
+    Raw output, one immutable directory per run (PR #128 review): ngspice writes into a fresh staging directory, the
+    run's generator record is saved beside the traces, and the staged run is ANALYSED IN PLACE, so a missing or
+    unreadable trace fails the run (whatever ngspice's exit code) before anything is published. Only then is the
+    directory renamed to <out>/<case>_run_<id>/ and the pointer <out>/<case>.current (run_dir) replaced atomically to
+    name it. A published run directory is never written again; the previous one is kept until the next publish, so a
+    reader that resolved the pointer (--analyse-only) reads one run's record and traces, never a mixture. A failed run
+    deletes its staging directory and leaves the pointer and every published run untouched."""
     if open(model_file(model, mode)).read() != subckt(model, mode=mode):
         raise RuntimeError(f"{model_file(model, mode)} is stale; run python spice6as6/run_refs.py --write-netlist")
     o = os.path.join(HERE, out)
@@ -362,9 +366,9 @@ def run(model, bias, solver=SOLVER, out="out", write=True, mode=MODE, split=Fals
     spiceinit()
     rk = cathode_resistor(bias, PARAMS[model], mode=mode, grid_hardness=HARDNESS[model])
     c = case(model, bias, mode)
-    stage = os.path.join(out, f"_staging_{c}")             # relative to HERE, as `out` (or absolute)
+    rid = f"{time.strftime('%Y%m%dT%H%M%S')}_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    stage = os.path.join(out, f"_staging_{c}_{rid}")      # relative to HERE, as `out` (or absolute)
     sdir = os.path.join(HERE, stage)
-    shutil.rmtree(sdir, ignore_errors=True)
     os.makedirs(sdir)
     def one(name):
         tagn = name.replace(":", "_")
@@ -388,33 +392,54 @@ def run(model, bias, solver=SOLVER, out="out", write=True, mode=MODE, split=Fals
             errs = [f.exception() for f in futs if f.exception() is not None]
             if errs:
                 raise errs[0]
-        gen = generator(model, bias, solver, mode, split, rk)   # saved with the raw output for --analyse-only
-        publish(sdir, o, generator_file(model, bias, out, mode), gen, c)
+        gen = dict(generator(model, bias, solver, mode, split, rk), run_id=rid)
+        json.dump(gen, open(os.path.join(sdir, GENERATOR), "w"), indent=1)
+        res = analyse(model, bias, stage, gen, False, mode)   # every trace present and readable, or raise
+        publish(sdir, o, c, rid)
     finally:
-        shutil.rmtree(sdir, ignore_errors=True)
-    return analyse(model, bias, out, gen, write, mode)
+        shutil.rmtree(sdir, ignore_errors=True)            # gone if published (renamed); removed if not
+    if write:
+        json.dump(res, open(ref_file(model, bias, mode), "w"), indent=1)
+    return res
 
 
-def publish(sdir, o, gfile, gen, c):
-    """Publish a complete staged run of case c: drop the old generator record and the case's old raw files (not its
-    logs), move every staged raw file into o, then write the new record (run(); an interruption part-way leaves no
-    record, which --analyse-only refuses)."""
-    if os.path.exists(gfile):
-        os.remove(gfile)
-    for f in os.listdir(o):
-        if f.startswith(c + "_") and f.endswith(".txt") and not f.endswith("_log.txt"):
-            os.remove(os.path.join(o, f))
-    for f in sorted(os.listdir(sdir)):
-        os.replace(os.path.join(sdir, f), os.path.join(o, f))
-    tmp = gfile + ".tmp"
-    json.dump(gen, open(tmp, "w"), indent=1)
-    os.replace(tmp, gfile)
+GENERATOR = "generator.json"          # the run's generator record, inside its run directory
 
 
-def generator_file(model, bias, out="out", mode=MODE):
-    """The generator record run() saves beside the raw output once its analyses finish (#112 review): --analyse-only
-    reads it, so re-analysed data keeps the ngspice version, solver settings and Rk it was simulated with."""
-    return os.path.join(HERE, out, f"{case(model, bias, mode)}_generator.json")
+def publish(sdir, o, c, rid):
+    """Publish a complete, analysed staged run of case c: rename it to <o>/<c>_run_<rid> (atomic, one filesystem), then
+    replace the pointer <o>/<c>.current atomically; delete the run directories of c older than the one just
+    superseded (kept so a reader that resolved it can finish)."""
+    new = os.path.join(o, f"{c}_run_{rid}")
+    os.rename(sdir, new)
+    ptr = os.path.join(o, f"{c}.current")
+    prev = open(ptr).read().strip() if os.path.exists(ptr) else None
+    tmp = f"{ptr}.{rid}.tmp"
+    open(tmp, "w").write(os.path.basename(new) + "\n")
+    os.replace(tmp, ptr)
+    keep = {os.path.basename(new), prev}
+    for d in os.listdir(o):
+        if d.startswith(f"{c}_run_") and d not in keep:
+            shutil.rmtree(os.path.join(o, d), ignore_errors=True)
+
+
+def run_dir(model, bias, out="out", mode=MODE):
+    """The current published run directory of a case, relative to HERE as `out` (resolved once: read the pointer,
+    then read only inside the directory it names, which is never modified); None if no run was published."""
+    ptr = os.path.join(HERE, out, f"{case(model, bias, mode)}.current")
+    if not os.path.exists(ptr):
+        return None
+    return os.path.join(out, open(ptr).read().strip())
+
+
+def analyse_published(model, bias, out="out", write=True, mode=MODE):
+    """--analyse-only: re-analyse the current published run with its own generator record (both from one run
+    directory, PR #128 review)."""
+    d = run_dir(model, bias, out, mode)
+    if d is None:
+        raise FileNotFoundError(f"no published run of {case(model, bias, mode)} in {out}/ (no .current pointer)")
+    gen = json.load(open(os.path.join(HERE, d, GENERATOR)))
+    return analyse(model, bias, d, gen, write, mode)
 
 
 def generator(model, bias, solver=SOLVER, mode=MODE, split=False, rk=None):
@@ -520,11 +545,8 @@ if __name__ == "__main__":
     analyse_only = "--analyse-only" in args      # re-analyse a finished run's out/ files (no ngspice)
     args = [a for a in args if a != "--analyse-only"]
     for mdl, md, bias in cases(args or list(PARAMS)):
-        if analyse_only:     # the raw run's own generator record (generator_file); a run without one is refused
-            gf = generator_file(mdl, bias, "out", md)
-            if not os.path.exists(gf):
-                sys.exit(f"{gf} missing: re-analysis needs the generator record its raw run saved")
-            r = analyse(mdl, bias, "out", json.load(open(gf)), True, md)
+        if analyse_only:     # the current published run, record and traces from its own directory
+            r = analyse_published(mdl, bias, "out", True, md)
         else:
             r = run(mdl, bias, mode=md, split=bool(split), jobs=max(split, 1))
         print(case(mdl, bias, md), r["op"], {a: round(s["thd_pct"], 3) for a, s in r["sine"].items()},

@@ -378,68 +378,116 @@ def test_failed_analysis_stops_the_run(tmp_path, monkeypatch):
     assert os.path.exists(os.path.join(out, f"{R.case('dual', BIAS_MA)}_main_log.txt"))
 
 
-# A stand-in ngspice for the publish tests: writes "new" into every literal wrdata target of the netlist it is given
-# (paths relative to its cwd, spice6as6/), then exits with the status FAKE_STATUS_<analysis> (default 0).
-FAKE_WRITER = """#!/bin/sh
-[ "$1" = "--version" ] && { echo "** ngspice-41 : stand-in"; exit 0; }
-for p in $(grep '^wrdata ' "$2" | awk '{print $2}'); do echo new > "$p"; done
-case "$2" in *_burst.cir) exit ${FAKE_BURST_STATUS:-0};; esac
-exit 0
+# A stand-in ngspice for the publication tests (PR #128 review): writes parseable traces into every literal wrdata
+# target of the netlist it is given (cwd spice6as6/): the op point with Va = $FAKE_VA, a flat AC response, 1 kHz sines,
+# a burst; skips targets containing $FAKE_SKIP; exits $FAKE_BURST_STATUS on a burst netlist, else 0.
+FAKE_NGSPICE = """#!{python}
+import os, sys
+import numpy as np
+if sys.argv[1] == "--version":
+    print("** ngspice-41 : stand-in")
+    sys.exit(0)
+skip = os.environ.get("FAKE_SKIP") or None
+def pairs(t, cols):
+    return np.column_stack([c for x in cols for c in (t, x)])
+for ln in open(sys.argv[2]):
+    tok = ln.split()
+    if not tok or tok[0] != "wrdata" or "$" in tok[1] or (skip and skip in tok[1]):
+        continue
+    p, nv = tok[1], len(tok) - 2
+    if p.endswith("_op.txt"):
+        d = pairs(np.zeros(1), [float(os.environ["FAKE_VA"])] + [1.0] * (nv - 1))
+    elif "_ac" in p:
+        f = np.logspace(0, 5, 11) if p.endswith("_ac.txt") else np.array([float(p.rsplit("_", 1)[1][:-4])])
+        d = np.column_stack([f, np.full_like(f, 20.0), f, np.zeros_like(f)])
+    elif "_sine_" in p:
+        t = np.arange(0.3, 0.5, 1e-5)
+        d = pairs(t, [np.sin(2 * np.pi * 1000 * t), 0 * t, 0 * t])
+    else:                                                   # burst: g, k, out, gl
+        t = np.arange(0.0, 0.12, 1e-5)
+        d = pairs(t, [-1.0 - 0.2 * ((t > 0.01) & (t < 0.03)), 0 * t, 0 * t, 0 * t])
+    np.savetxt(p, d)
+sys.exit(int(os.environ.get("FAKE_BURST_STATUS", "0")) if sys.argv[2].endswith("_burst.cir") else 0)
 """
 
 
-def _previous_run(out, c, gfile):
-    """A previously published run of case c in out: its raw files hold "old", plus its generator record."""
-    os.makedirs(out, exist_ok=True)
-    for suffix in ("op", "ac", "ac_20", "ac_20000", "burst", "sine_0.05"):
-        open(os.path.join(out, f"{c}_{suffix}.txt"), "w").write("old\n")
-    json.dump({"run": "old"}, open(gfile, "w"))
-
-
-def _fake_writer(tmp_path, monkeypatch, burst_status):
+def _fake(tmp_path, monkeypatch):
     fake = tmp_path / "ngspice"
-    fake.write_text(FAKE_WRITER)
+    fake.write_text(FAKE_NGSPICE.format(python=sys.executable))
     fake.chmod(0o755)
     monkeypatch.setattr(R, "NGSPICE", str(fake))
+
+
+def _run(monkeypatch, out, va, burst_status=0, skip="", split=True):
+    monkeypatch.setenv("FAKE_VA", str(va))
     monkeypatch.setenv("FAKE_BURST_STATUS", str(burst_status))
+    monkeypatch.setenv("FAKE_SKIP", skip)
+    return R.run("dual", BIAS_MA, out=out, write=False, split=split)
 
 
-def test_failed_rerun_leaves_the_previous_run_whole(tmp_path, monkeypatch):
-    """PR #128 review: a rerun whose 'main' writes its raw files and succeeds, then whose burst fails, must not leave a
-    mixture of new and old files under the old generator record (which --analyse-only trusts). run() stages the run in
-    its own directory and publishes only a complete set, so the previous run's files and record are untouched and the
-    staged files are gone."""
+def _published(out):
+    """(pointer target, {file: bytes} of that run directory, Va re-analysed from it with its own record)."""
+    d = R.run_dir("dual", BIAS_MA, out)
+    files = {f: open(os.path.join(R.HERE, d, f), "rb").read() for f in os.listdir(os.path.join(R.HERE, d))}
+    return d, files, R.analyse_published("dual", BIAS_MA, out, write=False)["op"]["va"]
+
+
+def _no_staging(out):
+    return not [f for f in os.listdir(out) if f.startswith("_staging_")]
+
+
+def test_failed_rerun_leaves_the_published_run_whole(tmp_path, monkeypatch):
+    """PR #128 review (1st): a rerun whose main writes its traces, then whose burst fails, publishes nothing: the
+    pointer, the published run's files and its re-analysis are unchanged, and the staging directory is gone."""
+    _fake(tmp_path, monkeypatch)
     out = str(tmp_path / "out")
-    c = R.case("dual", BIAS_MA)
-    gfile = R.generator_file("dual", BIAS_MA, out)
-    _previous_run(out, c, gfile)
-    before = {f: open(os.path.join(out, f)).read() for f in os.listdir(out)}
-    _fake_writer(tmp_path, monkeypatch, burst_status=1)
+    _run(monkeypatch, out, 150.0)
+    before = _published(out)
     with pytest.raises(RuntimeError, match="ngspice failed on burst"):
-        R.run("dual", BIAS_MA, out=out, write=False)
-    after = {f: open(os.path.join(out, f)).read() for f in os.listdir(out) if not f.endswith("_log.txt")}
-    assert after == before                                  # every old raw file and the old record, unchanged
-    assert not [f for f in os.listdir(out) if f.startswith("_staging_")]
-    assert os.path.exists(os.path.join(out, f"{c}_main_log.txt"))   # the failed run's logs are kept
+        _run(monkeypatch, out, 151.0, burst_status=1, split=False)
+    assert _published(out) == before and before[2] == 150.0 and _no_staging(out)
 
 
-def test_successful_rerun_publishes_a_whole_new_set(tmp_path, monkeypatch):
-    """The other side: a rerun that succeeds replaces the record and the raw files as one set. No raw file of the
-    previous run survives (its sine file, which this stand-in does not rewrite, is gone), and the new record is the
-    new run's."""
+def test_zero_exit_with_a_missing_trace_publishes_nothing(tmp_path, monkeypatch):
+    """PR #128 review (2nd): ngspice exits 0 but one sine trace is missing. The staged run is analysed before
+    publication, so the run fails and the previous complete run stays published, whole and re-analysable."""
+    _fake(tmp_path, monkeypatch)
     out = str(tmp_path / "out")
-    c = R.case("dual", BIAS_MA)
-    gfile = R.generator_file("dual", BIAS_MA, out)
-    _previous_run(out, c, gfile)
-    _fake_writer(tmp_path, monkeypatch, burst_status=0)
-    monkeypatch.setattr(R, "analyse", lambda *a, **k: "analysed")
-    assert R.run("dual", BIAS_MA, out=out, write=False) == "analysed"
-    raw = {f: open(os.path.join(out, f)).read() for f in os.listdir(out)
-           if f.startswith(c + "_") and f.endswith(".txt") and not f.endswith("_log.txt")}
-    assert raw and set(raw.values()) == {"new\n"} and f"{c}_sine_0.05.txt" not in raw
-    gen = json.load(open(gfile))
-    assert gen.get("run") != "old" and gen["bias_ma"] == BIAS_MA and gen["ngspice"].startswith("ngspice-41")
-    assert not [f for f in os.listdir(out) if f.startswith("_staging_") or f.endswith(".tmp")]
+    _run(monkeypatch, out, 150.0)
+    before = _published(out)
+    with pytest.raises(FileNotFoundError, match="_sine_0.05"):
+        _run(monkeypatch, out, 151.0, skip="_sine_0.05")
+    assert _published(out) == before and before[2] == 150.0 and _no_staging(out)
+
+
+def test_complete_rerun_publishes_a_new_run_directory(tmp_path, monkeypatch):
+    """A genuinely complete rerun (real analysis of the stand-in's traces) is published as a new run directory with its
+    own record, the pointer moves to it, the superseded run is kept one generation for readers, older ones go."""
+    _fake(tmp_path, monkeypatch)
+    out = str(tmp_path / "out")
+    _run(monkeypatch, out, 150.0)
+    a = R.run_dir("dual", BIAS_MA, out)
+    assert _run(monkeypatch, out, 151.0)["op"]["va"] == 151.0
+    b, files, va = _published(out)
+    gen = json.loads(files[R.GENERATOR])
+    assert b != a and va == 151.0 and b.endswith(gen["run_id"]) and gen["ngspice"].startswith("ngspice-41")
+    assert os.path.isdir(os.path.join(R.HERE, a))                  # kept for a reader that resolved it
+    _run(monkeypatch, out, 152.0)
+    assert not os.path.exists(os.path.join(R.HERE, a)) and _no_staging(out)
+
+
+def test_reanalysis_overlapping_a_publish_reads_one_run(tmp_path, monkeypatch):
+    """PR #128 review (2nd): a reader resolves the current run (A), then run B is published, then the reader reads.
+    It reads A's record and A's traces from A's directory (never modified), not A's record over B's data."""
+    _fake(tmp_path, monkeypatch)
+    out = str(tmp_path / "out")
+    _run(monkeypatch, out, 150.0)
+    d_a = R.run_dir("dual", BIAS_MA, out)
+    gen_a = json.load(open(os.path.join(R.HERE, d_a, R.GENERATOR)))
+    _run(monkeypatch, out, 151.0)                                  # publication overlaps the read
+    res = R.analyse(*("dual", BIAS_MA), d_a, gen_a, False)
+    assert res["op"]["va"] == 150.0 and res["generator"]["run_id"] == gen_a["run_id"] and d_a.endswith(gen_a["run_id"])
+    assert R.analyse_published("dual", BIAS_MA, out, write=False)["op"]["va"] == 151.0
 
 
 def test_ngspice_has_a_wall_clock_limit(tmp_path, monkeypatch):
