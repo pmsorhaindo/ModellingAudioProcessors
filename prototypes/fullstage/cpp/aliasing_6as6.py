@@ -16,8 +16,9 @@ every point; K140_FIR at each setting / quality / drive's three worst shipped to
 ADAA bound. Antiderivative antialiasing acts on the nonlinearity's own aliasing at the internal rate: at best it removes
 the "internal" term entirely; it does nothing about the resampler term (in-band harmonics leaking through the
 decimator and the interpolator's residual images), and its half-sample delay and droop cost accuracy instead. So
-10 log10(10^(total/10) - 10^(internal/10)) is the total an ideal ADAA could reach at each point, and total minus that is
-the most it could buy. `table` reports both; it is a measured upper bound, not an ADAA implementation.
+10 log10(10^(total/10) - 10^(internal/10)) is the total an ideal ADAA could reach at each point; `table` reports, per
+rate / quality / drive / design, the worst total over every supported setting and tone with and without the internal
+term, i.e. how far an ideal ADAA could lower that worst case. It is a measured upper bound, not an ADAA implementation.
 
 Guard (CI): per rate, every setting x quality x drive above at its full sweep's worst tone, plus 19037 Hz, on the
 shipped design (DEFAULT_FIR, what the core runs), with full 1 s windows. Two checks per tone, as dk.aliasing_guard:
@@ -30,6 +31,7 @@ Parity: the full sweep's shipped 48 kHz standard points against the committed Py
 
 Run from prototypes/fullstage:
   python -m cpp.aliasing_6as6 sweep [--workers N]          -> cpp/aliasing_6as6.json (full sweep, ~1.2k points)
+  python -m cpp.aliasing_6as6 scan [--workers N]           -> the band-edge scan, added to cpp/aliasing_6as6.json
   python -m cpp.aliasing_6as6 table                         the summary tables (cpp/README-6as6.md)
   python -m cpp.aliasing_6as6 guard --fs 48000|44100 [--workers N] [--json OUT]
                                     [--update-baseline --reason "..."]
@@ -62,6 +64,11 @@ TONES = tuple(AL.SWEEP_HZ) + (BAND_EDGE_HZ,)
 GUARD_EXTRA_TONE = 19037
 SWEEP_JSON = os.path.join(HERE, "aliasing_6as6.json")
 GUARD_FIR = "shipped"            # the design the core runs (dk6as6_core.h DEFAULT_FIR)
+# The band-edge scan (#113 review): P1 0.6 mA (the 2 V worst of the sweep at 44.1 kHz) at 2 V, tones from the band edge
+# up to 19987 Hz, both rates, both qualities (48 kHz: standard), both designs
+SCAN_TONES = tuple(range(19937, 19988, 10))
+SCAN_JOBS = ([(44100, q, fir, "P1", 0.6, 2.0, f) for q in QUALITIES for fir in FIRS for f in SCAN_TONES]
+             + [(48000, "standard", fir, "P1", 0.6, 2.0, f) for fir in FIRS for f in SCAN_TONES])
 
 
 def baseline_path(fs):
@@ -148,8 +155,9 @@ def adaa_floor(total_dbc, internal_dbc):
 
 
 def summary(recs):
-    """Per rate / quality / drive / design: the worst total over every supported setting and tone, its point, the worst
-    internal term, the worst total with internal folding removed, and the gate."""
+    """Per rate / quality / drive / design, over every supported setting and tone: the worst total, where it is and its
+    split by source there; the worst total once the internal term is removed from every point (what an ideal ADAA
+    leaves: adaa_floor), and so how much an ideal ADAA would lower that worst case; and the gate."""
     rows = []
     for fs in RATES:
         for q in QUALITIES:
@@ -159,15 +167,13 @@ def summary(recs):
                     if not r:
                         continue
                     w = max(r, key=lambda x: x["total_dbc"])
-                    wi = max(r, key=lambda x: x["internal_dbc"])
-                    gain = max(x["total_dbc"] - adaa_floor(x["total_dbc"], x["internal_dbc"]) for x in r)
+                    floor = max(adaa_floor(x["total_dbc"], x["internal_dbc"]) for x in r)
                     rows.append(dict(fs=fs, quality=q, drive=d, fir=fir, points=len(r), worst_dbc=w["total_dbc"],
                                      worst_at=f"{w['mode']} {w['bias_ma']:g} mA {w['tone']} Hz",
-                                     worst_internal_dbc=wi["internal_dbc"],
-                                     worst_internal_at=f"{wi['mode']} {wi['bias_ma']:g} mA {wi['tone']} Hz",
-                                     worst_without_internal_dbc=max(adaa_floor(x["total_dbc"], x["internal_dbc"])
-                                                                    for x in r),
-                                     max_adaa_gain_db=gain, max_other_dbc=max(x["other_dbc"] for x in r),
+                                     worst_internal_dbc=w["internal_dbc"], worst_resampler_dbc=w["resampler_dbc"],
+                                     max_internal_dbc=max(x["internal_dbc"] for x in r),
+                                     worst_without_internal_dbc=floor, adaa_gain_on_worst_db=w["total_dbc"] - floor,
+                                     max_other_dbc=max(x["other_dbc"] for x in r),
                                      gate_dbc=gate(fs, q, d), margin_db=gate(fs, q, d) - w["total_dbc"],
                                      nonconverged=sum(x["nonconverged"] for x in r),
                                      out_of_law=sum(x["out_of_law"] for x in r)))
@@ -257,14 +263,14 @@ def guard(fs, workers, json_out=None, update=False, reason=None):
 
 
 def table(recs):
-    lines = ["| rate | quality | drive | design | worst total dBc (point) | worst internal dBc | worst without "
-             "internal dBc | most an ideal ADAA buys, dB | gate dBc | margin dB |",
-             "|---|---|---|---|---|---|---|---|---|---|"]
+    lines = ["| rate | quality | drive | design | points | worst total dBc (where) | internal / resampler there, dBc | "
+             "worst with internal removed (ideal ADAA), dBc | ideal ADAA lowers the worst by, dB | gate dBc | "
+             "margin dB |", "|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in summary(recs):
-        lines.append(f"| {r['fs'] / 1e3:g} kHz | {r['quality']} | {r['drive']:g} V | {r['fir']} | "
-                     f"{r['worst_dbc']:.1f} ({r['worst_at']}) | {r['worst_internal_dbc']:.1f} | "
-                     f"{r['worst_without_internal_dbc']:.1f} | {r['max_adaa_gain_db']:.2f} | {r['gate_dbc']:.1f} | "
-                     f"{r['margin_db']:.1f} |")
+        lines.append(f"| {r['fs'] / 1e3:g} kHz | {r['quality']} | {r['drive']:g} V | {r['fir']} | {r['points']} | "
+                     f"{r['worst_dbc']:.1f} ({r['worst_at']}) | {r['worst_internal_dbc']:.1f} / "
+                     f"{r['worst_resampler_dbc']:.1f} | {r['worst_without_internal_dbc']:.1f} | "
+                     f"{r['adaa_gain_on_worst_db']:.1f} | {r['gate_dbc']:.1f} | {r['margin_db']:.1f} |")
     p = parity(recs)
     if p:
         w = max(p, key=lambda x: abs(x["diff_db"]))
@@ -273,9 +279,21 @@ def table(recs):
     return "\n".join(lines)
 
 
+def scan_table(recs):
+    rows = sorted({(r["fs"], r["quality"]) for r in recs}, reverse=True)
+    lines = ["| rate | quality | design | " + " | ".join(f"{t} Hz" for t in SCAN_TONES) + " | gate dBc |",
+             "|---|---|---|" + "---|" * (len(SCAN_TONES) + 1)]
+    for fs, q in rows:
+        for fir in FIRS:
+            v = {r["tone"]: r["total_dbc"] for r in recs if (r["fs"], r["quality"], r["fir"]) == (fs, q, fir)}
+            lines.append(f"| {fs / 1e3:g} kHz | {q} | {fir} | " + " | ".join(f"{v[t]:.1f}" for t in SCAN_TONES)
+                         + f" | {gate(fs, q, 2.0):.1f} |")
+    return "P1 0.6 mA, 2 V, total dBc above the band edge\n\n" + "\n".join(lines)
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=("sweep", "table", "guard"))
+    ap.add_argument("cmd", choices=("sweep", "scan", "table", "guard"))
     ap.add_argument("--workers", type=int, default=os.cpu_count())
     ap.add_argument("--fs", type=int, choices=RATES, default=48000)
     ap.add_argument("--json")
@@ -292,8 +310,16 @@ if __name__ == "__main__":
                                    k140=K140, wall_s=time.perf_counter() - t0, core="cpp/dk6as6_core.h"),
                        summary=summary(recs), parity=parity(recs), records=recs), open(SWEEP_JSON, "w"), indent=1)
         print(table(recs))
+    elif a.cmd == "scan":
+        d = json.load(open(SWEEP_JSON))
+        d["scan"] = run(SCAN_JOBS, a.workers, os.path.join(HERE, ".aliasing_6as6_cache.jsonl"))
+        json.dump(d, open(SWEEP_JSON, "w"), indent=1)
+        print(scan_table(d["scan"]))
     elif a.cmd == "table":
-        print(table(json.load(open(SWEEP_JSON))["records"]))
+        d = json.load(open(SWEEP_JSON))
+        print(table(d["records"]))
+        if "scan" in d:
+            print("\n" + scan_table(d["scan"]))
     else:
         if a.update_baseline and not (a.reason and a.reason.strip()):
             ap.error("--update-baseline needs --reason")

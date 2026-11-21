@@ -279,6 +279,17 @@ def test_aliasing_records():
         assert r["total_dbc"] <= AQ.gate(r["fs"], r["quality"], r["drive"]), r
         assert r["nonconverged"] == 0 and r["out_of_law"] == 0, r
     assert sw["summary"] == json.loads(json.dumps(AQ.summary(recs)))
+    # the band-edge scan (#113's finding, reproduced on the C++ core): with the shipped FIR, P1 0.6 mA at 2 V and
+    # 44.1 kHz is over the gate from 19957 Hz up (both qualities: the resampler's, not the stage's); k140 is >= 40 dB
+    # inside it at every scanned point; 48 kHz is inside with both
+    scan = sw["scan"]
+    assert len(scan) == len(AQ.SCAN_JOBS)
+    for r in scan:
+        g = AQ.gate(r["fs"], r["quality"], r["drive"])
+        if r["fir"] == "k140":
+            assert r["total_dbc"] <= g - 40, r
+        else:
+            assert (r["total_dbc"] > g) == (r["fs"] == 44100 and r["tone"] >= 19957), r
     assert all(abs(p["diff_db"]) < 0.01 for p in AQ.parity(recs)) and len(AQ.parity(recs)) > 50
     for fs in AQ.RATES:
         base = AG.load_baseline(AQ.baseline_path(fs))
