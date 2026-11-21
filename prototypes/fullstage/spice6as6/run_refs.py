@@ -58,7 +58,7 @@ HARDNESS = {"dual": 0.0, "r51": 0.0, "dualg": pentode.HARDNESS}   # grid hardnes
 # target cathode currents of the P1 references, mA (#110: the range ends, lowest distortion, default)
 # dualg P1 stops at 0.45 mA: at 0.6 mA P1 draws Ig1 <= 1e-23 A on every validate.py signal, so its dual reference is
 # the same circuit to far below ngspice's abstol (1e-14 A); test_p1_grid_current_is_negligible checks the DK side. A
-# dualg 0.6 mA run would repeat #120's ~2 CPU-hour burst (ngspice chatters at that operating point's silent start).
+# dualg 0.6 mA run's burst was killed at a 3 h cap (#120's silent-start chatter at that operating point).
 BIASES = {"dual": (0.1, 0.25, 0.45, 0.6), "r51": (0.45,), "dualg": (0.1, 0.25, 0.45)}
 # dual model (#111); T 0.35 mA brackets the top (0.3 mA) of its no-grid supported envelope (stage.SUPPORTED_MA_NO_GRID)
 MODE_BIASES = {"P1": BIASES["dual"], "T": (0.1, 0.25, 0.35, 0.45, 0.6), "P2": (0.1, 0.25, 0.45, 0.6)}

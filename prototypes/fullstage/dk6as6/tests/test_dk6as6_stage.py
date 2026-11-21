@@ -31,15 +31,15 @@ C = V.CRIT
 pytestmark = pytest.mark.filterwarnings("ignore::dk6as6.stage.ExperimentalWarning")
 
 
-# CI time (the fullstage job must stay well inside its timeout): the default stage (dualg) at standard at every P1 grid
-# reference bias plus hq at the ends, T (#111) at standard at the top of its supported envelope; the no-grid stage
-# (dual) at standard at 0.6 mA, P1's top (test_p1_grid_current_is_negligible ties it to the default stage). P2 is
-# experimental only (stage.SUPPORTED_MA): its known 0.6 mA burst failure is tested below. Every mode at every bias,
-# standard and hq, is in results[_grid][_<mode>].json (python -m dk6as6.validate [--grid]), checked by
+# CI time (both fullstage jobs have a 20 min timeout; #112 keeps the 6as6 shard near #121's 11 min): the default stage
+# (dualg) at standard at every P1 grid reference bias plus hq at the highest, and T at standard at the top of its
+# supported envelope. The no-grid stage (grid_hardness=0) is the #111 stage bit for bit; its every-bias results are
+# results[_<mode>].json, and test_p1_grid_current_is_negligible ties P1 0.6 mA to the default stage. P2 is experimental
+# only (stage.SUPPORTED_MA): its known 0.6 mA burst failure is tested below. Every mode at every bias, standard and hq,
+# is in results[_grid][_<mode>].json (python -m dk6as6.validate [--grid]), checked by
 # test_committed_validation_every_supported_setting_passes.
 CASES = ([("P1", "standard", b, "dualg") for b in GRID_BIASES["P1"]]
-         + [("P1", "hq", b, "dualg") for b in (GRID_BIASES["P1"][0], GRID_BIASES["P1"][-1])]
-         + [("T", "standard", SUPPORTED_MA["T"][1], "dualg"), ("P1", "standard", 0.6, "dual")])
+         + [("P1", "hq", GRID_BIASES["P1"][-1], "dualg"), ("T", "standard", SUPPORTED_MA["T"][1], "dualg")])
 
 
 @pytest.fixture(scope="module", params=CASES, ids=str)
@@ -149,10 +149,16 @@ def test_supported_envelope():
                     assert Stage(V.FS, bias=b, mode=mode, grid_hardness=gh).supported and supported(mode, b, gh)
 
 
-@pytest.mark.parametrize("quality", QUALITY)
-@pytest.mark.parametrize("mode, bias, f, phase, hardness", [
-    (m, b, f, ph, gh) for gh in (HARDNESS, 0.0) for m, ends in envelope(gh).items() for b in ends
-    for f, ph in ((100, "cos"), (20, "cos"), (18000, "sin"))])
+# Live re-checks, cut for CI time (envelope[_grid].json has every stimulus at every end, and
+# test_envelope_record_is_the_supported_range checks them): the default stage at both ends of T at both qualities
+# and of P1 at standard (>= 3.17 V of g1 margin there), and the no-grid stage at T's top with its worst stimulus (the
+# 100 Hz step onset).
+STAYS = ([(m, b, f, ph, HARDNESS, q) for m, ends in SUPPORTED_MA.items() for b in ends
+          for f, ph in ((100, "cos"), (20, "cos"), (18000, "sin")) for q in (QUALITY if m == "T" else ("standard",))]
+         + [("T", SUPPORTED_MA_NO_GRID["T"][1], 100, "cos", 0.0, "standard")])
+
+
+@pytest.mark.parametrize("mode, bias, f, phase, hardness, quality", STAYS)
 def test_supported_envelope_stays_in_the_law(mode, bias, f, phase, hardness, quality):
     """At both ends of each supported range, 8 V peak tones from silence (envelope.py's worst stimuli: the step onset
     at 100 Hz and 20 Hz, the slope onset at 18 kHz) stay in the law in force on the interpolated internal-rate voltages
@@ -189,7 +195,7 @@ def test_t_leaves_the_law_just_above_its_envelope(quality):
     assert max(r["vgk"]) > 0.0 and st.out_of_law > 0 and not st.supported
 
 
-@pytest.mark.parametrize("quality", QUALITY)
+@pytest.mark.parametrize("quality", ["standard"])     # hq: envelope_grid.json (-0.0779 V); CI time
 def test_grid_current_keeps_that_onset_in_the_law(quality):
     """#112: the same T 0.35 mA / 8 V / 100 Hz step onset with the default grid current: the grid current clamps g1, so
     it stays below the cathode (-0.08 V at worst over envelope.py's class), the plate above it, and the guard counts

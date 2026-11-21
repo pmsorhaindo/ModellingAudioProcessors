@@ -866,8 +866,8 @@ far enough positive for the cap (no case is `spice_exp_capped`), and every harmo
 validate.py signal P1 at 0.6 mA draws Ig1 ≤ 1.2e-23 A (g1 ≤ −3.28 V). That is nine orders below ngspice's abstol (1e-14
 A), so the dualg circuit there is the dual one, and the dual 0.6 mA reference passes (`results.json`).
 `test_p1_grid_current_is_negligible` checks the DK side: grid on and off agree to 1e-12 relative at 0.6 mA / 8 V
-(measured 5e-15). A dualg run would repeat #120's ~2 CPU-hour burst, ngspice chattering through that operating
-point's silent start.
+(measured 5e-15). A dualg 0.6 mA run was tried: its op/AC and sine pieces finished, but its burst (#120's silent-start chatter) was
+killed at the 3 h cap, so it is not committed.
 
 ### What the grid current changes (`grid.json` "tables"; DK standard, ngspice agreeing to the digits shown)
 **4 V, 1 kHz burst (10–30 ms): grid DC (cycle-mean Vgk), V.** "No grid" is the #111 stage. **Raw shift and
@@ -942,5 +942,5 @@ grid current), but it is the largest aliasing of any supported 6AS6 setting. At 
 onset and the internal aliasing passes the gate (−109.7 / −87.5 dBc). **That, not the law, ends T's envelope at
 0.5 mA** (`test_t_above_its_grid_envelope_fails_the_quality_gate`). hq (16×) would lower the internal part; it is not
 measured here, and the gate is defined at standard. The repo has no audibility criterion (#96), and this does not
-invent one. Regression baselines: `aliasing.LIMIT_DBC_GRID` (worst + 3 dB). CI re-measures P1 0.45 / 0.6 mA at 8 V and
+invent one. Regression baselines: `aliasing.LIMIT_DBC_GRID` (worst + 3 dB). CI re-measures P1 0.6 mA at 8 V and
 T 0.5 mA at 2 and 8 V (`CI_CASES_GRID`). Every grid sweep record carries Newton's unconverged count: zero everywhere.

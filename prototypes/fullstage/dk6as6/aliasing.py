@@ -119,8 +119,8 @@ QUALITY_GATE_DBC = LIMIT_DBC_12AX7[("standard", "fir")]          # {2.0: -118.3,
 # The CI check of T and P2 (P1's is in the test): (mode, bias mA, drive V, the sweep's worst tone there)
 CI_CASES_MODES = [("T", 0.3, 8.0, 19037), ("P2", 0.25, 8.0, 19037)]   # grid_hardness 0 (#111 records); T: its top
 # ... and of the default stage, with grid current (#112): (mode, bias mA, drive V, the grid sweep's worst tone there):
-# P1 at the default and at its top, T at the top of its envelope at both drives
-CI_CASES_GRID = [("P1", BIAS_MA, 8.0, 19037), ("P1", 0.6, 8.0, 19037), ("T", 0.5, 2.0, 19037), ("T", 0.5, 8.0, 17037)]
+# P1 at its top (its worst, -98.44 dBc), T at the top of its envelope at both drives
+CI_CASES_GRID = [("P1", 0.6, 8.0, 19037), ("T", 0.5, 2.0, 19037), ("T", 0.5, 8.0, 17037)]
 
 
 def measure(drive, f, bias=BIAS_MA, quality="standard", filt="fir", window=WINDOW_S, settle=SETTLE_S, fs=FS,
