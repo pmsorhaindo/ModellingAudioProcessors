@@ -2,8 +2,9 @@
 g++, c++ or clang++): skipped without one, except under CI (CI set), where a missing compiler fails.
   test_core_6as6_vectors       cpp/test_core_6as6.cpp on cpp/vectors_6as6.txt, -O2: every C++ test, including no
                                allocation in process(), FTZ/DAZ scoping, block-size invariance, the #7 / #112 fallbacks
-  test_core_6as6_no_contract   the same with -ffp-contract=off: the valve law and the solvers equal the vectors bit for
-                               bit (the vectors were written on one machine; same libm needed for bits, see README)
+  test_core_6as6_no_contract   the same with -ffp-contract=off (the valve law and the solvers then equal vectors written
+                               with the same libm bit for bit, reported as *_bit_equal_frac; test_bit_exact_* asserts
+                               bits against the live Python functions)
   test_core_6as6_fma           the same with -O2 -march=x86-64-v3 (FMA contraction; x86-64 only)
   test_bit_exact_*             the valve law (including where Python raises) and the three solvers against the live
                                Python functions on this machine, bit for bit, in a -O2 -ffp-contract=off build
@@ -58,10 +59,7 @@ def test_core_6as6_vectors():
 
 
 def test_core_6as6_no_contract():
-    r = _run_vectors(_exe(("-O2", "-ffp-contract=off")))
-    if platform.system() == "Darwin" and platform.machine() == "arm64":   # the libm the vectors were written with
-        assert r["law_nogrid_bit_equal_frac"] == 1 and r["law_grid_bit_equal_frac"] == 1, r
-        assert r["solve_bit_equal_frac"] == 1, r
+    _run_vectors(_exe(("-O2", "-ffp-contract=off")))    # bit-equal to the vectors only with their libm: reported
 
 
 @pytest.mark.skipif(not X86, reason="x86-64 only")
@@ -225,3 +223,68 @@ def test_validate_reproduced_6as6():
     out, bad = VC.main(workers=os.cpu_count(), write=False)
     assert not bad, [(r["model"], r["mode"], r["bias_ma"], r["quality"], r["failed"]) for r in bad]
     assert len(out["rows"]) == 44
+
+
+BENCH_KEYS = {"name", "quality", "os", "variant", "mode", "bias_ma", "grid_hardness", "lpf", "fir", "level_v", "block",
+              "instances", "ns_per_sample", "ns_min", "ns_max", "pct_core", "block_pct_p50", "block_pct_p99",
+              "block_pct_max", "cpu_on_fraction", "cycles_per_sample", "instr_per_sample", "ghz_on_cpu", "newton_mean",
+              "newton_max", "nonconverged", "restarted", "deterministic"}
+
+
+def _bench_rows_ok(rows):
+    assert len(rows) == 60 and len({r["name"] for r in rows}) == 60
+    for r in rows:
+        assert BENCH_KEYS <= set(r), r["name"]
+        assert r["deterministic"] and r["ns_per_sample"] > 0 and r["newton_mean"] >= 1.0, r
+        assert r["nonconverged"] == 0 and r["newton_max"] <= 3 * 50, r
+
+
+def test_bench_6as6_smoke():
+    if B.compiler() is None:
+        pytest.skip("no C++ compiler")
+    exe = B.build(name="bench_6as6")
+    names = subprocess.run([exe, "--list"], capture_output=True, text=True, check=True).stdout.split()
+    assert len(names) == 2 * 3 * 2 * 2 + 6 * 2 * 3      # default: quality x peak x block x instances; 6 variants
+    p = subprocess.run([exe, "--seconds", "0.011", "--reps", "1"], capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr[-2000:]           # 1: an output differed between passes
+    d = json.loads(p.stdout)
+    assert d["meta"]["samples_per_pass"] == 512 and d["meta"]["core"] == "cpp/dk6as6_core.h"
+    _bench_rows_ok(d["results"])
+
+
+def test_bench_6as6_records():
+    import glob
+    files = sorted(glob.glob(os.path.join(ROOT, "cpp", "bench_6as6_*.json")))
+    if not files:
+        pytest.skip("no cpp/bench_6as6_*.json committed")
+    for f in files:
+        d = json.load(open(f))
+        assert {"host", "build", "state_before", "state_after", "meta", "results"} <= set(d), f
+        assert d["meta"]["reps"] >= 5 and not d["build"]["dirty"] and d["build"]["source"] == "cpp/bench_6as6.cpp", f
+        _bench_rows_ok(d["results"])
+
+
+def test_aliasing_records():
+    """The committed sweep (cpp/aliasing_6as6.json) and the guard's baselines (#98 format) are consistent: every
+    supported setting is within its quality gate at both rates and both designs; the guard's tones and limits are
+    recomputed from the sweep; the baselines cover every guard key and tone; parity with the Python sweeps."""
+    from cpp import aliasing_6as6 as AQ
+    from dk import aliasing_guard as AG
+    if not os.path.exists(AQ.SWEEP_JSON):
+        pytest.skip("no cpp/aliasing_6as6.json")
+    sw = json.load(open(AQ.SWEEP_JSON))
+    recs = sw["records"]
+    assert len(recs) == len(AQ.sweep_jobs())
+    for r in recs:
+        assert r["total_dbc"] <= AQ.gate(r["fs"], r["quality"], r["drive"]), r
+        assert r["nonconverged"] == 0 and r["out_of_law"] == 0, r
+    assert sw["summary"] == json.loads(json.dumps(AQ.summary(recs)))
+    assert all(abs(p["diff_db"]) < 0.01 for p in AQ.parity(recs)) and len(AQ.parity(recs)) > 50
+    for fs in AQ.RATES:
+        base = AG.load_baseline(AQ.baseline_path(fs))
+        tones = AQ.guard_tones(fs, recs)
+        assert base["method"]["fs_base"] == fs and base["method"]["tones"] == {k: list(v) for k, v in tones.items()}
+        for k, ts in tones.items():
+            for t in ts:
+                b = base["values"][k]["tones"][str(t)]
+                assert b["total_dbc"] <= AQ.guard_limits(fs)[k], (k, t)
