@@ -28,9 +28,9 @@ jobs:
       matrix:
         # wdf (#12): the WDF stage reuses prototypes/fullstage (its requirements.txt includes fullstage's); Linux only.
         # fullstage runs as shards: everything but the 6AS6 tests (#111), and the 6AS6 tests (dk6as6/, spice6as6/) in
-        # three (#112, PR #128 review, #127): the stage's live validations, the live envelope re-checks, and the rest.
-        # The single 6AS6 shard had reached 13-19 of 20 min with #112's grid-current cases. The macOS job below uses
-        # the same split.
+        # four (#112, PR #128 review, #127): the stage tests with half the live validations, the other half, the live
+        # envelope re-checks, and the rest. The single 6AS6 shard had reached 13-19 of 20 min with #112's grid-current
+        # cases (and runs of one head varied 7.5-13.6 min). The macOS job below uses the same split.
         include:
           - prototype: valvelab
           - prototype: fullstage
@@ -39,11 +39,14 @@ jobs:
             shard: 6as6 stage
             pytest_args: dk6as6/tests/test_dk6as6_stage.py
           - prototype: fullstage
+            shard: 6as6 validation
+            pytest_args: dk6as6/tests/test_dk6as6_validation.py
+          - prototype: fullstage
             shard: 6as6 envelope
             pytest_args: dk6as6/tests/test_dk6as6_envelope.py
           - prototype: fullstage
             shard: 6as6 rest
-            pytest_args: dk6as6 spice6as6 --ignore=dk6as6/tests/test_dk6as6_stage.py --ignore=dk6as6/tests/test_dk6as6_envelope.py
+            pytest_args: dk6as6 spice6as6 --ignore=dk6as6/tests/test_dk6as6_stage.py --ignore=dk6as6/tests/test_dk6as6_validation.py --ignore=dk6as6/tests/test_dk6as6_envelope.py
           - prototype: fit6as6
           - prototype: wdf
     defaults:
@@ -85,10 +88,12 @@ jobs:
           - pytest_args: --ignore=dk6as6 --ignore=spice6as6
           - shard: 6as6 stage
             pytest_args: dk6as6/tests/test_dk6as6_stage.py
+          - shard: 6as6 validation
+            pytest_args: dk6as6/tests/test_dk6as6_validation.py
           - shard: 6as6 envelope
             pytest_args: dk6as6/tests/test_dk6as6_envelope.py
           - shard: 6as6 rest
-            pytest_args: dk6as6 spice6as6 --ignore=dk6as6/tests/test_dk6as6_stage.py --ignore=dk6as6/tests/test_dk6as6_envelope.py
+            pytest_args: dk6as6 spice6as6 --ignore=dk6as6/tests/test_dk6as6_stage.py --ignore=dk6as6/tests/test_dk6as6_validation.py --ignore=dk6as6/tests/test_dk6as6_envelope.py
     defaults:
       run:
         working-directory: prototypes/fullstage
