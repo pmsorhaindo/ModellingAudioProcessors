@@ -854,10 +854,10 @@
    "cpu": {
     "method": "time.perf_counter around Stage.process (pure Python, one core, 48 kHz base, 16x OS, fir half-band resampling included); value = seconds of CPU per second of audio",
     "seconds_per_second": {
-     "0.05": 194.38373738164688,
-     "0.5": 177.39346172046697,
-     "2": 160.44934565722212,
-     "8": 184.43963112194984
+     "0.05": 110.54893972502487,
+     "0.5": 100.84176787209245,
+     "2": 86.65455481327577,
+     "8": 74.57115290953354
     }
    },
    "passed": {
@@ -1725,10 +1725,10 @@
    "cpu": {
     "method": "time.perf_counter around Stage.process (pure Python, one core, 48 kHz base, 8x OS, fir half-band resampling included); value = seconds of CPU per second of audio",
     "seconds_per_second": {
-     "0.05": 104.9674327837179,
-     "0.5": 96.98327758292838,
-     "2": 91.15195297520026,
-     "8": 99.49112180035455
+     "0.05": 58.701270937284505,
+     "0.5": 57.68881555356955,
+     "2": 49.014380607932274,
+     "8": 57.25070139567776
     }
    },
    "passed": {
@@ -2597,10 +2597,10 @@
    "cpu": {
     "method": "time.perf_counter around Stage.process (pure Python, one core, 48 kHz base, 16x OS, fir half-band resampling included); value = seconds of CPU per second of audio",
     "seconds_per_second": {
-     "0.05": 197.7828627091146,
-     "0.5": 175.26851327350053,
-     "2": 157.68208000535822,
-     "8": 181.64729730457876
+     "0.05": 114.63467087674805,
+     "0.5": 101.78948091251357,
+     "2": 86.3979867894458,
+     "8": 74.81777260883673
     }
    },
    "passed": {
@@ -3468,10 +3468,10 @@
    "cpu": {
     "method": "time.perf_counter around Stage.process (pure Python, one core, 48 kHz base, 8x OS, fir half-band resampling included); value = seconds of CPU per second of audio",
     "seconds_per_second": {
-     "0.05": 107.2945207717679,
-     "0.5": 97.04287379473107,
-     "2": 92.04998205379692,
-     "8": 103.07109562897404
+     "0.05": 57.564643070989426,
+     "0.5": 58.149351862353,
+     "2": 50.64504561297678,
+     "8": 60.57049177497893
     }
    },
    "passed": {
@@ -4340,10 +4340,10 @@
    "cpu": {
     "method": "time.perf_counter around Stage.process (pure Python, one core, 48 kHz base, 16x OS, fir half-band resampling included); value = seconds of CPU per second of audio",
     "seconds_per_second": {
-     "0.05": 199.4374212598254,
-     "0.5": 178.1189360695731,
-     "2": 158.77049100784407,
-     "8": 183.38628745871236
+     "0.05": 113.73464553788133,
+     "0.5": 100.23046151256673,
+     "2": 86.67489402969512,
+     "8": 74.90973979146798
     }
    },
    "passed": {
@@ -5211,10 +5211,10 @@
    "cpu": {
     "method": "time.perf_counter around Stage.process (pure Python, one core, 48 kHz base, 8x OS, fir half-band resampling included); value = seconds of CPU per second of audio",
     "seconds_per_second": {
-     "0.05": 106.47880400374072,
-     "0.5": 98.22013841687534,
-     "2": 89.66388492747504,
-     "8": 104.19171684953652
+     "0.05": 58.485804502652634,
+     "0.5": 56.95788326820848,
+     "2": 48.72174360320448,
+     "8": 60.53409654440977
     }
    },
    "passed": {

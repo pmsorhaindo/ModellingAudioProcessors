@@ -827,19 +827,23 @@ it). Tested both ways: `test_t_leaves_the_law_just_above_its_envelope` without g
 
 **Where T's envelope ends: steady state across the band** (`python -m dk6as6.grid hf` → `grid.json` "hf"; T at
 0.35–0.6 mA every 50 µA, 4 / 6 / 8 V peak, tones 1037–19037 Hz every 2 kHz, 0.4 s from silence). The 1 kHz and onset
-checks above are not enough. Before the fix below, T at 0.5–0.6 mA lost Newton on single samples of a *steady* 6–8 V
-tone at 13–19 kHz (0.5 mA / 8 V at 13 and 19 kHz, 0.55 mA / 8 V at 17 kHz, 0.6 mA / 6 V at 19 kHz and 8 V at 15–19 kHz):
-1–12 samples per 0.4 s hit MAX_IT and returned an iterate with the plate at ~0 V and Ip + Ig2 slightly negative. **That
-was Newton, not the circuit.** At the failing sample of T 0.6 mA / 8 V / 15 kHz the same equations have a root with
-every current positive (plate 11.7 V), which Newton finds in 6–7 iterations from zero current or from the previous
-sample's currents. Only the linear-extrapolation warm start led it into the Ik < Ig1 region, where it stalled.
-**Fix (`Stage.process_internal`, grid path only):** if a sample does not converge, restart from the previous sample's
-currents, then from the operating point; the iterations are summed. A sample that converges first time is unchanged,
-so every 1 kHz result and the hardness-0 stage are bit-identical. With it, **every T setting 0.35–0.6 mA at 4 / 6 /
-8 V and every tone stays in the law with no unconverged sample**. At 0.6 mA / 8 V the plate stays ≥ 6.9 V above the
-cathode and Ip + Ig2 ≥ 0.47 µA. **Cost:** a rescued sample takes 55–57 iterations (the failed 50, then 5–7). This
-happens on a few samples per 0.4 s, only at T ≥ 0.5 mA with a steady 6–8 V tone above 13 kHz. It is a worst-case
-real-time item for the C++ port (#104), not an accuracy one.
+checks above are not enough. **Every T setting 0.35–0.6 mA at 4 / 6 / 8 V and every tone stays in the law, with no
+unconverged sample, no Newton restart and at most 15 iterations.** At 0.6 mA / 8 V the plate stays ≥ 6.9 V above the
+cathode and Ip + Ig2 ≥ 0.47 µA.
+
+*History (PR #128 review).* The first version of `currents_grid` rebuilt the plate share as Ip / Ik. Where Ik
+underflows in cut-off (a screen strapped near the cathode, g1 below it), that division gave a NaN or discontinuous
+Jacobian. Newton visited that region on single samples of steady 6–8 V, 13–19 kHz tones at T 0.5–0.6 mA, hit MAX_IT,
+and needed a restart (55–57 iterations). With the share and its gradient taken straight from the fit
+(`pentode.cathode_share`) those stalls are gone: 0 restarts over the 180 runs of this scan and the 212 envelope runs
+above. The restart stays, as a safety net with a fixed contract. **`Stage.process_internal`, grid path only, via
+`solver.solve_grid_restarts`:** if the extrapolated warm start does not converge, restart from the previous sample's
+currents, then from the operating point, summing the iterations. If none converges, keep the candidate with the
+smallest finite residual over all three starts and count the sample as not converged. A singular, non-finite or
+overflowing step ends an attempt instead of raising (`dk6as6/tests/test_dk6as6_grid.py`: a live rescued-sample
+regression against an independent solve, and the review's failure case, which checks that selection). Worst case per
+sample is 3 × MAX_IT iterations; none of the measured signals needs a second start. The C++ port (#104) should budget
+from the measured ≤ 15.
 
 ### Validation against the same-model ngspice references (`dk/validate.CRIT` unchanged; `results_grid[_T].json`)
 References `spice6as6/reference_dualg_{0.1,0.25,0.45}mA.json` (P1) and `reference_dualg_T_{0.1,0.25,0.35,0.45,0.5,0.6}mA.json`
