@@ -6,9 +6,9 @@
  *
  * A configuration is quality (standard / hq) x input peak (0.5 / 2 / 8 V) x block (64 / 512) x instances (x1 one mono
  * Stage; x2 two independent mono Stages on one thread, left then right per block: the stereo cost, as #20's x2) at the
- * default setting (P1, 0.45 mA, the default grid current, filter off, the core's DEFAULT_FIR), plus x1 / block-64 rows
- * that change one thing from the default: T 0.5 mA (the top of T's envelope), P1 0.1 and 0.6 mA (the ends of the
- * range), no grid current, the 7k post-filter, and the k140 resampler. There is no SIMD 6AS6 kernel (README-6as6.md,
+ * default setting (P1, 0.45 mA, the default grid current, filter off, the core's DEFAULT_FIR: k140), plus x1 / block-64
+ * rows that change one thing from the default: T 0.5 mA (the top of T's envelope), P1 0.1 and 0.6 mA (the ends of the
+ * range), no grid current, the 7k post-filter, and the shipped resampler. There is no SIMD 6AS6 kernel (README-6as6.md,
  * "CPU"), so there are no s2 / v2 rows.
  */
 #include "dk6as6_core.h"
@@ -121,7 +121,7 @@ int main(int argc, char** argv) {
     { Settings s; s.bias_ma = 0.6; variants.push_back({"P1_0.6mA", s}); }
     { Settings s; s.grid_hardness = 0.0; variants.push_back({"P1_0.45mA_nogrid", s}); }
     { Settings s; s.lpf = Lpf::k7; variants.push_back({"P1_0.45mA_lpf7k", s}); }
-    { Settings s; s.fir = dkcore::K140_FIR; variants.push_back({"P1_0.45mA_k140", s}); }
+    { Settings s; s.fir = dkcore::SHIPPED_FIR; variants.push_back({"P1_0.45mA_shipped", s}); }
     std::vector<Config> cfg;
     for (const auto& v : variants)
         for (const auto& q : qs)

@@ -1,6 +1,7 @@
 # Third-party notices
 
-This repository's own code is MIT-licensed ([LICENSE](LICENSE)). The plugin wrapper in [plugin/](plugin/) builds
+This repository's own code is MIT-licensed ([LICENSE](LICENSE)), except the adapted SciPy source listed below, which
+keeps SciPy's BSD licence. The plugin wrapper in [plugin/](plugin/) builds
 against the two SDKs below. Neither is vendored into this repository. CMake fetches each one at a pinned tag when the
 build is configured ([plugin/CMakeLists.txt](plugin/CMakeLists.txt)). Their files keep their own licences. Our
 `LICENSE` does not relicense them. Any distributed binary must carry these notices and the licence texts (see
@@ -30,6 +31,50 @@ VST is a registered trademark of Steinberg Media Technologies GmbH.
 
 > This product includes Apple's AudioUnitSDK, Copyright (C) 2023 Apple Inc., licensed under the Apache License,
 > Version 2.0 (https://github.com/apple/AudioUnitSDK/blob/AudioUnitSDK-1.4.0/LICENSE.txt).
+
+## SciPy (adapted source: Brent's root finder)
+
+- What: `detail::brentq` in [prototypes/fullstage/cpp/dk6as6_core.h](prototypes/fullstage/cpp/dk6as6_core.h) is a
+  C++ translation of SciPy's `brentq` (`scipy/optimize/Zeros/brentq.c`, "Written by Charles Harris"), so that the
+  C++ 6AS6 stage solves its cathode resistor exactly as `dk6as6/stage.py` does through `scipy.optimize.brentq` (#104).
+  The control flow and expressions are kept; the callback, the status codes and the statistics are adapted.
+- Source: <https://github.com/scipy/scipy/blob/v1.18.1/scipy/optimize/Zeros/brentq.c>, SciPy 1.18.1 (the version in
+  `prototypes/fullstage/requirements.txt`).
+- Licence: BSD 3-Clause, <https://github.com/scipy/scipy/blob/v1.18.1/LICENSE.txt>, reproduced here as its condition 1
+  requires:
+
+```
+Copyright (c) 2001-2002 Enthought, Inc. 2003, SciPy Developers.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above
+   copyright notice, this list of conditions and the following
+   disclaimer in the documentation and/or other materials provided
+   with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived
+   from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
 
 ## Test tools (not part of the product)
 

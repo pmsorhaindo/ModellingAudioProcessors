@@ -51,6 +51,7 @@
 #define DK_CORE_H
 
 #include <atomic>
+#include <climits>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
@@ -146,9 +147,12 @@ inline constexpr FirDesign K140_FIR{123, K140_BETA, 47, K140_BETA, K140_FIRST_BY
 inline constexpr int K140_FIRST_MAX_TAPS = max_first_fir_taps(K140_FIRST_BY_RATE, 123), K140_LATER_TAPS = 47;
 
 constexpr int first_fir_taps(double fs, const FirDesign& d) {
-    for (int i = 0; i < d.n_rates; ++i) if (fs == d.rates[i].fs) return d.rates[i].taps;
+    if (d.rates)
+        for (int i = 0; i < d.n_rates; ++i) if (fs == d.rates[i].fs) return d.rates[i].taps;
     return d.first_taps;
 }
+// a half-band length the cascade can run: 4m + 3 (both end taps non-zero, dk/resample.py's _FirHB)
+constexpr bool halfband_taps_ok(int nt) { return nt >= 3 && nt % 4 == 3; }
 constexpr int first_fir_taps(double fs) { return first_fir_taps(fs, SHIPPED_FIR); }
 struct FirGeometry { int stages = 0, pad = 0, latency_samples = 0, up_delay_internal = 0; };
 constexpr FirGeometry fir_geometry(int os, double fs, const FirDesign& des = SHIPPED_FIR) {
@@ -156,11 +160,16 @@ constexpr FirGeometry fir_geometry(int os, double fs, const FirDesign& des = SHI
     int n = 0;
     while ((1 << n) < os) ++n;
     if ((1 << n) != os) return {};
-    int d = 0;
+    // the tap counts are checked, and the delay summed in 64 bits, before any int arithmetic on them: an invalid or
+    // absurdly long design gives no geometry (stages 0), so prepare() rejects it instead of overflowing
+    long long dl = 0;
     for (int i = 0; i < n; ++i) {
         const int nt = i == 0 ? first_fir_taps(fs, des) : des.later_taps;
-        d += (nt - 1) * os / (1 << (i + 1));
+        if (!halfband_taps_ok(nt)) return {};
+        dl += (long long)(nt - 1) * os / (1 << (i + 1));
     }
+    if (dl > INT_MAX / 2) return {};
+    const int d = int(dl);
     const int pad = ((-d) % os + os) % os;
     return {n, pad, (d + pad) / os, d / 2};
 }
@@ -1107,8 +1116,7 @@ public:
         const auto g = fir_geometry(os, fs_base, des);
         if (!g.stages) return false;
         const int n0 = first_fir_taps(fs_base, des);
-        if (n0 > FIRST_N || (g.stages > 1 && des.later_taps > LATER_N) || n0 % 4 != 3 || des.later_taps % 4 != 3)
-            return false;
+        if (n0 > FIRST_N || (g.stages > 1 && des.later_taps > LATER_N)) return false;   // geometry checked 4m + 3
         os_ = os; nst_ = g.stages;
         first_.prepare(n0, des.first_beta);
         for (int i = 1; i < nst_; ++i) later_[i-1].prepare(des.later_taps, des.later_beta);

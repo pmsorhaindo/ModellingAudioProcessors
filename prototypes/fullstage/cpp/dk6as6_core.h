@@ -18,7 +18,7 @@
  *   post-LPF  #103: the Off / 4k / 7k TPT SVF low-pass inside the oversampled block, after the nonlinearity and
  *             before decimation, with lpf.PostFilter's crossfade on a position change
  *   quality   standard 8x and hq 16x, no pre-warp (stage.QUALITY). There is no eco: eco is not a 6AS6 setting.
- *   resampler dk_core.h's streaming half-band FIR (ResamplerT); the design is DEFAULT_FIR below (one line, #113)
+ *   resampler dk_core.h's streaming half-band FIR (ResamplerT); the design is DEFAULT_FIR below: #113's k140
  *
  * Fixed-size state: 7 capacitor histories x (as the deviation from the operating point, #70), the valve currents
  * i = (Ip, Ig2[, Ig1]) of the last two samples (the warm start extrapolates them, 2 i[n-1] - i[n-2]), the two SVF
@@ -44,7 +44,10 @@
  *   - Python raises where an evaluation overflows (math.exp / ** OverflowError). The 3-current solve catches that and
  *     treats it as a failed evaluation (solver._resid3_safe); this port detects the same overflow and does the same.
  *     The 2-current solve does not catch it in Python (the stage would raise); here it continues with the best iterate.
- *   - NaN / inf input samples are replaced by 0 and counted (Stats::nonfinite_inputs), as in dk_core.h.
+ *   - NaN / inf input samples (after the drive gain) are replaced by 0 and counted (Stats::nonfinite_inputs), and
+ *     set_drive() / set_output() ignore a non-finite gain. If the state still goes non-finite (a finite input far
+ *     outside any signal, such as the largest double), that sample outputs 0 and the state returns to the operating
+ *     point, the resampler and filter states cleared (Stats::recoveries): realtime-safe, no reset() needed.
  *   - Python's out-of-law check warns; here it is counted (Stats::out_of_law).
  *
  * Do not build with -ffast-math (dk_core.h #errors): the fallbacks rely on NaN / inf comparisons.
@@ -64,9 +67,17 @@ using dkcore::Quality;
 using dkcore::PI;
 inline constexpr int LS_MAX = dkcore::LS_MAX;   // solver.LS_MAX (dk/solver.py, unchanged)
 
-// The one line that picks the 6AS6 stage's resampler (#113). SHIPPED_FIR is the resampler of every validated Python
-// result; K140_FIR is #113's recommendation (PR #129, not merged): set this to dkcore::K140_FIR to adopt it.
-inline constexpr const FirDesign& DEFAULT_FIR = dkcore::SHIPPED_FIR;
+// The one line that picks the 6AS6 stage's resampler: #113's K140_FIR (PR #129), adopted for the C++ core on PR #133
+// (Michael's decision there; #134). With SHIPPED_FIR, the resampler of every committed Python 6AS6 result, P1 0.6 mA
+// at 2 V and 44.1 kHz is over the aliasing gate from ~19957 Hz up (cpp/README-6as6.md, "Antialiasing"). The port is
+// checked against Python with SHIPPED_FIR selected explicitly (Settings::fir); the k140 stage against ngspice on its own
+// (cpp/validate_cpp_6as6.py --fir k140).
+inline constexpr const FirDesign& DEFAULT_FIR = dkcore::K140_FIR;
+inline const char* fir_name(const FirDesign& d) {
+    return d.later_taps == dkcore::K140_FIR.later_taps && d.first_beta == dkcore::K140_FIR.first_beta ? "k140"
+         : d.later_taps == dkcore::SHIPPED_FIR.later_taps && d.first_beta == dkcore::SHIPPED_FIR.first_beta ? "shipped"
+         : "other";
+}
 
 // ---- the valve: fit6as6 `dual_control` (#55), dk6as6/pentode.py ---------------------------------------------------
 
@@ -527,20 +538,26 @@ struct DM {
  * matrices take differences of entries of Si), so naive sums leave the matrices ~1e-12 from exact; with Dot2 and the
  * refined inverse below they round once (cpp/matrix_rounding_6as6.py). Non-RT only. */
 inline void two_sum(double a, double b, double& s, double& e) { s = a + b; const double z = s - a; e = (a - (s - z)) + (b - z); }
-inline double dot2(const double* x, int sx, const double* y, int sy, int n, double init = 0.0) {
+// sum_k x[k] y[k] + init, compensated; x and y are contiguous arrays of n values: a row of DM::a, or a column copied
+// out by column(), so no pointer strides across the rows of the 2-D array
+inline double dot2(const double* x, const double* y, int n, double init = 0.0) {
     double s = init, c = 0.0;
     for (int k = 0; k < n; ++k) {
-        const double p = x[k * sx] * y[k * sy], pe = std::fma(x[k * sx], y[k * sy], -p);
+        const double p = x[k] * y[k], pe = std::fma(x[k], y[k], -p);
         double t, te;
         two_sum(s, p, t, te);
         s = t; c += te + pe;
     }
     return s + c;
 }
+inline void column(const DM& m, int j, double (&c)[NS_MAX]) { for (int k = 0; k < m.r; ++k) c[k] = m.a[k][j]; }
 inline DM mul(const DM& x, const DM& y) {
     DM o(x.r, y.c);
-    for (int i = 0; i < x.r; ++i)
-        for (int j = 0; j < y.c; ++j) o.a[i][j] = dot2(&x.a[i][0], 1, &y.a[0][j], NS_MAX, x.c);
+    double c[NS_MAX];
+    for (int j = 0; j < y.c; ++j) {
+        column(y, j, c);
+        for (int i = 0; i < x.r; ++i) o.a[i][j] = dot2(x.a[i], c, x.c);
+    }
     return o;
 }
 inline DM tr(const DM& x) {
@@ -570,11 +587,16 @@ inline bool invert(const DM& in, DM& out) {        // Gauss-Jordan, partial pivo
     // iterative refinement with a compensated residual: X <- X + X (I - S X), twice
     for (int pass = 0; pass < 2; ++pass) {
         DM R(N, N);
-        for (int i = 0; i < N; ++i)
-            for (int j = 0; j < N; ++j) R.a[i][j] = -dot2(&in.a[i][0], 1, &out.a[0][j], NS_MAX, N, i == j ? -1.0 : 0.0);
+        double c[NS_MAX];
+        for (int j = 0; j < N; ++j) {
+            column(out, j, c);
+            for (int i = 0; i < N; ++i) R.a[i][j] = -dot2(in.a[i], c, N, i == j ? -1.0 : 0.0);
+        }
         DM X = out;
-        for (int i = 0; i < N; ++i)
-            for (int j = 0; j < N; ++j) out.a[i][j] = dot2(&X.a[i][0], 1, &R.a[0][j], NS_MAX, N, X.a[i][j]);
+        for (int j = 0; j < N; ++j) {
+            column(R, j, c);
+            for (int i = 0; i < N; ++i) out.a[i][j] = dot2(X.a[i], c, N, X.a[i][j]);
+        }
     }
     return true;
 }
@@ -762,8 +784,12 @@ inline Status operating_point(double rk, const PentodeParams& par, const Newton&
     return Status::ok;
 }
 
-// scipy.optimize.brentq (scipy/optimize/Zeros/brentq.c), maxiter 100, as stage.cathode_resistor calls it. f returns
-// false if an evaluation failed (Python raises: the error propagates). Returns the root in x.
+// scipy.optimize.brentq, maxiter 100, as stage.cathode_resistor calls it. f returns a Status other than ok if an
+// evaluation failed (Python raises: the error propagates). Returns the root in x.
+// Adapted from SciPy's scipy/optimize/Zeros/brentq.c (SciPy 1.18.1, "Written by Charles Harris"): the control flow and
+// expressions are kept, the callback, status codes and statistics adapted. Copyright (c) 2001-2002 Enthought, Inc.
+// 2003, SciPy Developers. All rights reserved. Used under SciPy's BSD 3-Clause licence, whose full text, conditions and
+// disclaimer are in THIRD_PARTY_NOTICES.md ("SciPy") at the repository root.
 template <class Fn> inline Status brentq(Fn f, double xa, double xb, double xtol, double rtol, double& x) {
     double xpre = xa, xcur = xb, xblk = 0.0, fpre, fcur, fblk = 0.0, spre = 0.0, scur = 0.0, sbis, delta, stry, dpre, dblk;
     Status st;
@@ -925,6 +951,7 @@ public:
         reset();
         return true;
     }
+    void clear_states() { for (auto& f : svf_) f.reset(); }   // the SVF states only (recovery from a non-finite state)
     void reset() {                                       // states to zero, the mix settled on the target position
         for (auto& f : svf_) f.reset();
         for (int k = 0; k < 3; ++k) g_from_[k] = g_to_[k];
@@ -968,7 +995,8 @@ struct Stats {                            // audio-thread side; since reset()
     std::uint64_t nonconverged = 0;       // samples that kept a best iterate (#7; with grid current: after 3 starts)
     std::uint64_t restarted = 0;          // samples whose first start failed (grid path, #112)
     std::uint64_t out_of_law = 0;         // internal samples outside the law in force (stage.py's runtime guard)
-    std::uint64_t nonfinite_inputs = 0;   // base-rate input samples that were NaN / inf and were replaced by 0
+    std::uint64_t nonfinite_inputs = 0;   // input samples that were NaN / inf after the drive gain, replaced by 0
+    std::uint64_t recoveries = 0;         // samples whose state went non-finite: the state went back to the op point
     std::uint32_t nonconv_block = 0, out_of_law_block = 0;   // ... in the last process() / process_internal() call
     int max_iterations = 0;
     std::uint64_t histogram[HIST] = {};
@@ -1002,8 +1030,9 @@ public:
     }
 
     // ---- any thread ---------------------------------------------------------------------------------------------
-    void set_drive(double g) { drive_.store(g, std::memory_order_relaxed); }     // linear gain before the stage
-    void set_output(double g) { output_.store(g, std::memory_order_relaxed); }   // linear gain after it
+    // linear gains before / after the stage; a non-finite value is ignored (the last finite one stays)
+    void set_drive(double g) { if (std::isfinite(g)) drive_.store(g, std::memory_order_relaxed); }
+    void set_output(double g) { if (std::isfinite(g)) output_.store(g, std::memory_order_relaxed); }
     void set_lpf(Lpf p) { lpf_req_.store(std::uint8_t(p), std::memory_order_relaxed); }
 
     // ---- audio thread -------------------------------------------------------------------------------------------
@@ -1031,7 +1060,13 @@ public:
         dkcore::ScopedFlushDenormals ftz;
         begin_block();
         if (!prepared_) { for (std::size_t i = 0; i < n; ++i) out[i] = 0.0; return; }
-        for (std::size_t i = 0; i < n; ++i) out[i] = lpf_.tick(pack_.grid ? tick<true>(vin[i], rec, i) : tick<false>(vin[i], rec, i));
+        for (std::size_t i = 0; i < n; ++i) {
+            double x = vin[i];
+            if (!std::isfinite(x)) { x = 0.0; ++stats_.nonfinite_inputs; }
+            const double y = lpf_.tick(pack_.grid ? tick<true>(x, rec, i) : tick<false>(x, rec, i));
+            if (!(std::isfinite(y) && state_finite())) { recover(); out[i] = 0.0; continue; }
+            out[i] = y;
+        }
     }
 
     bool prepared() const { return prepared_; }
@@ -1128,12 +1163,31 @@ private:
         double u[dkcore::MAX_OS], y[dkcore::MAX_OS];
         const int os = rs_.os();
         for (std::size_t i = 0; i < n; ++i) {
-            double x = double(in[i]);
+            double x = drive * double(in[i]);            // checked after the gain: a finite sample times a gain can overflow
             if (!std::isfinite(x)) { x = 0.0; ++stats_.nonfinite_inputs; }
-            rs_.up(drive * x, u);
+            rs_.up(x, u);
             for (int j = 0; j < os; ++j) y[j] = lpf_.tick(tick<GRID>(u[j], rec, i * std::size_t(os) + std::size_t(j)));
-            out[i] = S(og * rs_.down(y));
+            const double yd = rs_.down(y);
+            // an input finite but far outside any signal (e.g. the largest double) can still drive the solve to inf /
+            // NaN; it must not stay in the state: back to the operating point, filters cleared, this sample silent
+            if (!(std::isfinite(yd) && state_finite())) { recover(); out[i] = S(0); continue; }
+            out[i] = S(og * yd);
         }
+    }
+    // the persistent per-sample state (capacitor histories, currents) is finite: v * 0 is 0 for finite v, NaN else
+    bool state_finite() const noexcept {
+        double z = 0.0;
+        for (double v : x_) z += v * 0.0;
+        for (int k = 0; k < NI_MAX; ++k) z += i_[k] * 0.0 + q_[k] * 0.0;
+        return z == 0.0;
+    }
+    // realtime-safe: what reset() does to the state, without clearing the stats or the post-filter position
+    void recover() noexcept {
+        for (double& v : x_) v = 0.0;
+        for (int k = 0; k < NI_MAX; ++k) i_[k] = q_[k] = pack_.i_dc[k];
+        rs_.reset();
+        lpf_.clear_states();
+        ++stats_.recoveries;
     }
     template <class S> void process_t(const S* in, S* out, std::size_t n, const Record* rec) noexcept {
         dkcore::ScopedFlushDenormals ftz;

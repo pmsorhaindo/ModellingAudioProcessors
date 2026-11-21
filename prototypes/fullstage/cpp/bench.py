@@ -143,7 +143,8 @@ def table_6as6(rec):
     R = {(r["quality"], r["variant"], r["level_v"], r["block"], r["instances"]): r for r in rec["results"]}
     qs = [q for q in ("standard", "hq") if any(k[0] == q for k in R)]
     lv = sorted({k[2] for k in R})
-    lines = ["**default setting (P1, 0.45 mA, grid current, filter off, shipped FIR)** — % of one core at 48 kHz real "
+    fir = next((r["fir"] for r in rec["results"] if r["variant"] == "P1_0.45mA"), "?")
+    lines = [f"**default setting (P1, 0.45 mA, grid current, filter off, {fir} FIR)** — % of one core at 48 kHz real "
              "time (median), ns per base-rate sample (median, min–max), cycles per base-rate sample (median; * = not "
              "all on P-cores), Newton iterations per internal sample (mean, max)", "",
              "| setting | instances | peak | % core b64 | % core b512 | ns b64 | ns b512 | cycles b64 | cycles b512 | "

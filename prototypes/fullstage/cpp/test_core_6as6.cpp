@@ -2,10 +2,11 @@
  * realtime properties: no allocation in process(), FTZ/DAZ scoping, block-size invariance, the #7 / #112 fallbacks.
  *
  *   test_core_6as6 [vectors_6as6.txt]   run every test; one JSON line of measured errors; exit 1 on any failure
- *   test_core_6as6 cli FS OS MODE BIAS HARDNESS LPF DRIVE OUTPUT FIR [rec]
+ *   test_core_6as6 cli FS OS MODE BIAS HARDNESS LPF DRIVE OUTPUT FIR [rec]     (FIR: default / shipped / k140)
  *                    stdin: float64 base-rate input; stdout: float64 output (then, with "rec", the internal-rate
  *                    Vg1k and Vg2k); stderr: one JSON line (pack, operating point, latency, stats). MODE P1 / T / P2,
- *                    LPF off / 4k / 7k, FIR shipped / k140. Experimental settings are allowed (as validate.py runs
+ *                    LPF off / 4k / 7k, FIR default (the stage's DEFAULT_FIR) / shipped / k140. Experimental
+ *                    settings are allowed (as validate.py runs
  *                    them). Used by cpp/validate_cpp_6as6.py and cpp/aliasing_6as6.py.
  *   test_core_6as6 law | solve2 | solve3 | restarts
  *                    stdin rows -> stdout: the valve law / the solvers, for the bit-exact comparison with the live
@@ -14,6 +15,8 @@
 #include "dk6as6_core.h"
 
 #include <algorithm>
+#include <cfloat>
+#include <climits>
 #include <cinttypes>
 #include <cstdio>
 #include <fstream>
@@ -602,6 +605,75 @@ static void test_denormals_and_float() {
     check(e == 0.0, "float I/O = the double path rounded to float");
 }
 
+// #104 review: a finite but absurd sample, a gain that overflows the input, or a non-finite gain must not leave the
+// stage emitting non-finite output: later blocks are finite and back on the operating point without reset()
+static void test_nonfinite_recovery() {
+    long allocs = 0;
+    double worst_after = 0.0;
+    bool finite = true;
+    for (Quality q : {STANDARD, HQ})
+        for (Mode m : {Mode::P1, Mode::T}) {
+            dk6as6::Stage s;
+            Settings set; set.mode = m; set.bias_ma = 0.45;
+            check(s.prepare(48000.0, q, set) == Status::ok, "recovery: prepare");
+            const double yrest = s.pack().y_dc[0];
+            Vec x(512, 0.0), y(512), z(512, 0.0), w(512);
+            x[10] = DBL_MAX;          // otherwise silent, so after the recovery the stage must sit on its op point x[20] = -DBL_MAX; x[30] = NAN; x[40] = INFINITY;
+            {
+                CountAllocs c;
+                s.process(x.data(), y.data(), x.size());                // the bad samples
+                s.set_drive(NAN);                                        // ignored: the drive stays 1
+                s.set_output(INFINITY);                                  // ignored
+                s.process(z.data(), w.data(), z.size());
+                s.set_drive(1e308);                                      // finite, but 0.5 V x 1e308 x ... overflows
+                std::fill(x.begin(), x.end(), 4.0);
+                s.process(x.data(), y.data(), 8);
+                s.set_drive(1.0);
+                for (int b = 0; b < 6; ++b) s.process(z.data(), w.data(), z.size());   // silence, no reset()
+                allocs += c.n();
+            }
+            for (double v : y) finite = finite && std::isfinite(v);
+            for (double v : w) { finite = finite && std::isfinite(v); worst_after = std::max(worst_after, std::fabs(v - yrest)); }
+            const Stats& st = s.stats();
+            check(st.recoveries >= 1 && st.nonfinite_inputs >= 2, "recovery: counted");
+        }
+    // set_drive(NaN) left the drive at 1: a small sine through the core equals a fresh stage's
+    dk6as6::Stage a, b;
+    a.prepare(48000.0); b.prepare(48000.0);
+    a.set_drive(NAN); a.set_output(NAN);
+    Vec x(256), ya(256), yb(256);
+    for (size_t i = 0; i < x.size(); ++i) x[i] = 0.3 * std::sin(0.05 * double(i));
+    a.process(x.data(), ya.data(), x.size()); b.process(x.data(), yb.data(), x.size());
+    bool same = true;
+    for (size_t i = 0; i < x.size(); ++i) same = same && same_bits(ya[i], yb[i]);
+    metric("recovery_after_max_dev_v", worst_after);
+    check(finite, "recovery: every output finite");
+    check(worst_after < 1e-6, "recovery: silence settles back on the operating point without reset()");
+    check(same, "recovery: a non-finite gain is ignored");
+    check(!ALLOC_HOOKS || allocs == 0, "recovery: no allocation");
+}
+
+// #104 review: an invalid or absurdly long FIR design is rejected by prepare(), without overflowing the geometry
+static void test_fir_design_rejected() {
+    const dkcore::FirDesign huge{INT_MAX, 9.0, 23, 9.0, nullptr, 0};
+    const dkcore::FirDesign huge_later{127, 9.0, INT_MAX, 9.0, nullptr, 0};
+    const dkcore::FirDesign even{128, 9.0, 23, 9.0, nullptr, 0};
+    const dkcore::FirDesign neg{-5, 9.0, 23, 9.0, nullptr, 0};
+    bool ok = true;
+    for (const auto* d : {&huge, &huge_later, &even, &neg}) {
+        ok = ok && dkcore::fir_geometry(8, 48000.0, *d).stages == 0;
+        dk6as6::Stage::Resampler r;
+        ok = ok && !r.prepare(8, 48000.0, *d);
+        dk6as6::Stage s;
+        Settings set; set.fir = *d;
+        ok = ok && s.prepare(48000.0, STANDARD, set) == Status::bad_argument;
+    }
+    const dkcore::FirDesign too_long{4095, 9.0, 23, 9.0, nullptr, 0};    // valid 4m + 3, but over the capacity
+    dk6as6::Stage::Resampler r;
+    ok = ok && dkcore::fir_geometry(8, 48000.0, too_long).stages == 3 && !r.prepare(8, 48000.0, too_long);
+    check(ok, "invalid / oversized FIR designs rejected");
+}
+
 // ---- CLI modes ---------------------------------------------------------------------------------------------------
 static Vec read_stdin() {
     Vec v;
@@ -613,6 +685,10 @@ static Vec read_stdin() {
 static void write_stdout(const double* p, size_t n) { std::fwrite(p, sizeof(double), n, stdout); }
 static Mode parse_mode(const std::string& m) { return m == "T" ? Mode::T : m == "P2" ? Mode::P2 : Mode::P1; }
 static Lpf parse_lpf(const std::string& l) { return l == "4k" ? Lpf::k4 : l == "7k" ? Lpf::k7 : Lpf::off; }
+// "default": the stage's own DEFAULT_FIR (what the aliasing guard runs); "shipped" / "k140" explicitly
+static const FirDesign& parse_fir(const std::string& f) {
+    return f == "k140" ? dkcore::K140_FIR : f == "shipped" ? dkcore::SHIPPED_FIR : DEFAULT_FIR;
+}
 
 static void json_mat(std::ostringstream& o, const char* k, const double* a, int C, int rc, int cc) {
     o << ", \"" << k << "\": [";
@@ -626,7 +702,7 @@ static int cli(int argc, char** argv) {
     const double fs = std::strtod(argv[2], nullptr);
     const int os = std::atoi(argv[3]);
     Settings set = settings_of(parse_mode(argv[4]), std::strtod(argv[6], nullptr), std::strtod(argv[5], nullptr),
-                               parse_lpf(argv[7]), std::string(argv[10]) == "k140" ? dkcore::K140_FIR : dkcore::SHIPPED_FIR);
+                               parse_lpf(argv[7]), parse_fir(argv[10]));
     const bool rec = argc > 11 && std::string(argv[11]) == "rec";
     dk6as6::Stage s;
     const Status st = s.prepare(fs, Quality{os, 0.0}, set);
@@ -651,7 +727,8 @@ static int cli(int argc, char** argv) {
     std::ostringstream o;
     o.precision(17);
     o << "{\"status\": \"ok\", \"fs\": " << p.fs << ", \"rk\": " << p.rk << ", \"nu\": " << p.nu << ", \"ni\": " << p.ni
-      << ", \"supported\": " << (p.supported ? "true" : "false")
+      << ", \"supported\": " << (p.supported ? "true" : "false") << ", \"fir\": \"" << fir_name(parse_fir(argv[10]))
+      << "\", \"default_fir\": \"" << fir_name(DEFAULT_FIR) << "\""
       << ", \"latency_samples\": " << s.latency_samples() << ", \"up_delay_internal\": " << s.up_delay_internal()
       << ", \"macs\": " << s.resampler().macs();
     json_mat(o, "A", &p.A[0][0], NX, NX, NX); json_mat(o, "B", &p.B[0][0], NU_MAX, NX, p.nu);
@@ -746,6 +823,8 @@ int main(int argc, char** argv) {
     test_internal(V);
     test_cases(V);
     test_fallbacks();
+    test_nonfinite_recovery();
+    test_fir_design_rejected();
     test_settings();
     test_rates_and_silence();
     test_denormals_and_float();
