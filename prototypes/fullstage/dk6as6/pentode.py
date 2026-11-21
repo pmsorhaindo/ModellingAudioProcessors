@@ -18,6 +18,11 @@ eq. (11), https://www.dafx.de/paper-archive/2011/Papers/76_e.pdf), borrowed, not
   guess) is the control for it, not a fitted value. DZ's constant Ig0 (8.025e-8 A, "due to stability reasons") is
   left out: it is not a current law, and through the 1.07 MOhm grid circuit it would shift the grid DC by -86 mV.
   No g3 current (Ig3 = 0): no mode needs one (#111; dk6as6/RESULTS.md, "Modes").
+  Bounds on the borrowed shape (#131, still no 6AS6 data): GRID_SHAPES names the three columns of DZ's Table 1, each a
+  measured 12AX7. "RSD-1" (GRID_SHAPE) is the nominal law above, unchanged; "RSD-2" and "EHX-1" (GRID_BOUNDS) take XI,
+  Cg, Gg and the cathode coefficient G from their own column, scaled the same way (Gg = hardness x (2 / KG1) / G x Gg),
+  and are selectable only explicitly (grid(shape=...), Stage(grid_shape=...)): estimated, unvalidated bounds for a
+  sensitivity study, not alternative defaults (dk6as6/RESULTS.md, "Grid-current bounds (#131)").
 Without grid current (hardness 0, the stage's GRID_OFF) the cathode current is Ip + Ig2 and currents() is the whole law.
 
 currents() is a scalar (math module) transcription of model6as6._f with the analytic Jacobian, written for the
@@ -37,7 +42,7 @@ FIT_RESULTS = os.path.join(FIT6AS6, "results", "fit_results.json")
 sys.path.insert(0, FIT6AS6)
 import model6as6  # noqa: E402  (the fit's own equations: reference for the tests, VA0)
 sys.path.insert(0, os.path.dirname(HERE))
-from dk.triode import DZ_12AX7_RSD1  # noqa: E402  (Dempwolf & Zoelzer Table 1, RSD-1: the 12AX7 stage's parameters)
+from dk.triode import DZ_12AX7_RSD1, DZ_12AX7_RSD2, DZ_12AX7_EHX1  # noqa: E402  (Dempwolf & Zoelzer Table 1)
 
 _FIT = json.load(open(FIT_RESULTS))
 DUAL_CONTROL = _FIT["dual_control"]["params"]
@@ -48,16 +53,26 @@ VA_FLOOR = 1e-3      # V, model6as6.plate_term: Va floored at 1 mV in the power 
 # g1 grid current (#112, module docstring): ratio of the fitted cathode coefficients, 6AS6 (2 / KG1) over 12AX7 RSD-1 G
 PERVEANCE_RATIO = (2.0 / DUAL_CONTROL["KG1"]) / DZ_12AX7_RSD1["G"]
 HARDNESS = 1.0       # the default grid hardness (our choice, #112: model the grid current rather than leave it out)
+# The borrowed grid-current shape (#131): DZ Table 1's three measured 12AX7s (dk/triode.py), each estimated and
+# unvalidated for the 6AS6. RSD-1 is the nominal (#112) law; RSD-2 and EHX-1 are the bounds, explicit opt-ins only.
+GRID_SHAPES = {"RSD-1": DZ_12AX7_RSD1, "RSD-2": DZ_12AX7_RSD2, "EHX-1": DZ_12AX7_EHX1}
+GRID_SHAPE = "RSD-1"
+GRID_BOUNDS = ("RSD-2", "EHX-1")
 
 
-def grid(hardness=HARDNESS, p=DUAL_CONTROL):
-    """The g1 grid-current parameters at `hardness` (0 = none): XI and CG from DZ RSD-1, GG = hardness x the cathode-
-    coefficient ratio of the valve parameter set p to RSD-1 x the RSD-1 Gg. UNVALIDATED: no 6AS6 grid-current data."""
+def grid(hardness=HARDNESS, p=DUAL_CONTROL, shape=GRID_SHAPE):
+    """The g1 grid-current parameters at `hardness` (0 = none) for the DZ Table 1 column `shape` (GRID_SHAPES): XI and
+    CG from that column, GG = hardness x the cathode-coefficient ratio of the valve parameter set p to that column's G
+    x its Gg. UNVALIDATED: no 6AS6 grid-current data. The nominal shape's dict is #112's exactly (no "shape" key, so
+    its records are unchanged); a bound's carries "shape"."""
     if not hardness >= 0.0:
         raise ValueError(f"grid hardness {hardness} must be >= 0")
-    ratio = (2.0 / p["KG1"]) / DZ_12AX7_RSD1["G"]
-    return dict(GG=hardness * ratio * DZ_12AX7_RSD1["Gg"], XI=DZ_12AX7_RSD1["xi"], CG=DZ_12AX7_RSD1["Cg"],
-                hardness=hardness)
+    if shape not in GRID_SHAPES:
+        raise ValueError(f"unknown grid shape {shape!r}, expected one of {sorted(GRID_SHAPES)}")
+    dz = GRID_SHAPES[shape]
+    ratio = (2.0 / p["KG1"]) / dz["G"]
+    return dict(GG=hardness * ratio * dz["Gg"], XI=dz["xi"], CG=dz["Cg"], hardness=hardness,
+                **({} if shape == GRID_SHAPE else dict(shape=shape)))
 
 
 GRID = grid()

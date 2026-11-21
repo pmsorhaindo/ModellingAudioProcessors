@@ -22,6 +22,10 @@ latency, the resampler and iteration_stats()):
                   12AX7 grid law scaled by the fitted cathode-perveance ratio, 0 = no grid current (the #111 stage
                   exactly: same 2-port circuit and solver). UNVALIDATED: no 6AS6 grid-current data exists; the value
                   is our stated guess, the knob the control for it (dk6as6/RESULTS.md, "Grid current (#112)").
+  grid_shape    : the borrowed grid-current shape (#131), a pentode.GRID_SHAPES key: "RSD-1" (default,
+                  pentode.GRID_SHAPE, the #112 law exactly) or the bounds "RSD-2" / "EHX-1" (pentode.GRID_BOUNDS), DZ
+                  Table 1's other two 12AX7s scaled the same way. A bound has no supported envelope: experimental=True
+                  only (dk6as6/RESULTS.md, "Grid-current bounds (#131)"). Estimated, unvalidated, like the nominal.
 circuit.py has the values and the wiring.
 """
 import warnings
@@ -32,7 +36,7 @@ from dk.resample import Resampler
 from dk.solver import MAX_IT, TOL_V, TOL_F
 from . import circuit
 from .solver import solve, solve_grid, solve_grid_restarts
-from .pentode import DUAL_CONTROL, HARDNESS, grid as grid_law
+from .pentode import DUAL_CONTROL, HARDNESS, GRID_SHAPE, grid as grid_law
 
 QUALITY = {"hq": (16, None), "standard": (8, None)}   # (os, prewarp_hz)
 BIAS_MA = 0.45                     # default target cathode current, mA (S6's default; #102)
@@ -42,7 +46,8 @@ RK_LOG10 = (2.7, 6.0)              # cathode_resistor's bracket, log10(Rk / ohm)
 NEWTON = dict(max_it=MAX_IT, tol_v=TOL_V, tol_f=TOL_F)
 # The supported envelope (#111 review; #112), target cathode current in mA per mode, per grid hardness: SUPPORTED_MA for
 # the default (pentode.HARDNESS, with the g1 grid current, #112) and SUPPORTED_MA_NO_GRID for grid_hardness=0 (the #111
-# stage). Any other hardness has no reference, so it is experimental only. A mode / bias is supported only where all
+# stage). Any other hardness, and any grid shape but the nominal pentode.GRID_SHAPE (the #131 bounds), has no
+# supported envelope, so it is experimental only. A mode / bias is supported only where all
 # three hold (dk6as6/RESULTS.md, "Supported envelope" and "Grid current (#112)"):
 #   in the law   for host signals bounded by 8 V peak (tones over 20 Hz-20 kHz from silence, step and slope onsets and
 #                step offsets, standard and hq: dk6as6/envelope.py), read on the interpolated internal-rate voltages:
@@ -88,28 +93,33 @@ class OutOfLawWarning(UserWarning):
     plate below the cathode; with it the plate below the cathode or a negative plate / screen current (Ik < Ig1)."""
 
 
-def envelope(grid_hardness=HARDNESS):
+def envelope(grid_hardness=HARDNESS, grid_shape=GRID_SHAPE):
     """The supported envelope {mode: (lo, hi) mA} at a grid hardness: SUPPORTED_MA at the default, SUPPORTED_MA_NO_GRID
-    at 0, none at any other (no reference runs it)."""
+    at 0, none at any other (no reference runs it); none for a grid-current bound shape (#131: experimental only)."""
+    if grid_hardness and grid_shape != GRID_SHAPE:
+        return {}
     return {HARDNESS: SUPPORTED_MA, 0.0: SUPPORTED_MA_NO_GRID}.get(grid_hardness, {})
 
 
-def supported(mode, bias_ma, grid_hardness=HARDNESS):
-    """True if `bias_ma` mA in `mode` is inside envelope(grid_hardness) (to 1e-9 mA)."""
-    lo, hi = envelope(grid_hardness).get(mode, (np.inf, -np.inf))
+def supported(mode, bias_ma, grid_hardness=HARDNESS, grid_shape=GRID_SHAPE):
+    """True if `bias_ma` mA in `mode` is inside envelope(grid_hardness, grid_shape) (to 1e-9 mA)."""
+    lo, hi = envelope(grid_hardness, grid_shape).get(mode, (np.inf, -np.inf))
     return lo - 1e-9 <= bias_ma <= hi + 1e-9
 
 
-def _grid(grid_hardness, par):
-    """pentode.grid() at grid_hardness, or None for no grid current (hardness 0: the #111 2-port stage)."""
-    return grid_law(grid_hardness, par) if grid_hardness else None
+def _grid(grid_hardness, par, grid_shape=GRID_SHAPE):
+    """pentode.grid() at grid_hardness and grid_shape, or None for no grid current (hardness 0: the #111 2-port stage;
+    the shape is then irrelevant, but still checked)."""
+    g = grid_law(grid_hardness, par, grid_shape)
+    return g if grid_hardness else None
 
 
-def operating_point(rk, par=DUAL_CONTROL, newton=tuple(NEWTON.values()), mode=circuit.MODE, grid_hardness=HARDNESS):
+def operating_point(rk, par=DUAL_CONTROL, newton=tuple(NEWTON.values()), mode=circuit.MODE, grid_hardness=HARDNESS,
+                    grid_shape=GRID_SHAPE):
     """DC operating point with cathode resistor rk, wired as `mode`: capacitors open, the stage's Newton solver from
     zero valve current, source-stepping all supplies (HT, and EC2 where there is one) in 10 steps as the 12AX7 stage
     does on HT. With grid current (grid_hardness > 0) ik = ip + ig2 + ig1, the cathode current."""
-    g = _grid(grid_hardness, par)
+    g = _grid(grid_hardness, par, grid_shape)
     m0 = circuit.build(1.0, rk, dc=True, mode=mode, grid=g is not None)
     u = np.r_[0.0, circuit.sources(mode=mode)]
     p = m0["H"] @ u
@@ -135,7 +145,7 @@ def operating_point(rk, par=DUAL_CONTROL, newton=tuple(NEWTON.values()), mode=ci
 
 
 def cathode_resistor(bias_ma=BIAS_MA, par=DUAL_CONTROL, newton=tuple(NEWTON.values()), mode=circuit.MODE,
-                     grid_hardness=HARDNESS):
+                     grid_hardness=HARDNESS, grid_shape=GRID_SHAPE):
     """The cathode resistor (ohms) whose DC operating point in `mode` draws bias_ma mA of cathode current (Ip + Ig2,
     + Ig1 with grid current; at rest Ig1 < 1e-19 A except in T at 0.6 mA, 0.17 nA at Vg1k = -0.95 V, where Rk moves
     by 1.8e-4 from the no-grid one):
@@ -143,7 +153,7 @@ def cathode_resistor(bias_ma=BIAS_MA, par=DUAL_CONTROL, newton=tuple(NEWTON.valu
     bracket. Converged to 1e-13 in log10(Rk), i.e. Ik to ~1e-12 relative."""
     ik = bias_ma * 1e-3
     def err(lg):
-        return operating_point(10.0 ** lg, par, newton, mode, grid_hardness)["ik"] / ik - 1.0
+        return operating_point(10.0 ** lg, par, newton, mode, grid_hardness, grid_shape)["ik"] / ik - 1.0
     lo, hi = RK_LOG10
     if not err(lo) > 0.0 > err(hi):
         raise OperatingPointError(f"bias {bias_ma} mA is outside what Rk = 10^{lo}..10^{hi} ohm can set in {mode}")
@@ -179,28 +189,35 @@ def bias_knob(bias_ma):
 
 
 def bias_point(bias_ma=BIAS_MA, par=DUAL_CONTROL, newton=tuple(NEWTON.values()), mode=circuit.MODE,
-               grid_hardness=HARDNESS):
+               grid_hardness=HARDNESS, grid_shape=GRID_SHAPE):
     """What a bias meter needs for a setting: the DC operating point at the Rk that sets bias_ma mA in `mode`. Returns
     the solved rheostat rk (ohm), the cathode voltage vk = Rk * Ik (V, positive: the "positive voltage on its cathode"
     the manuals describe), the plate voltage va (V), ip, ig2, ig1 and ik = ip + ig2 + ig1 (A; ig1 = 0 without grid
     current)."""
-    dc = operating_point(cathode_resistor(bias_ma, par, newton, mode, grid_hardness), par, newton, mode, grid_hardness)
+    dc = operating_point(cathode_resistor(bias_ma, par, newton, mode, grid_hardness, grid_shape), par, newton, mode,
+                         grid_hardness, grid_shape)
     return dict(bias_ma=bias_ma, rk=float(dc["rk"]), vk=float(dc["nodes"]["k"]), va=float(dc["nodes"]["a"]),
                 ip=float(dc["ip"]), ig2=float(dc["ig2"]), ig1=float(dc["ig1"]), ik=float(dc["ik"]))
 
 
 class Stage(_Stage12AX7):
     def __init__(self, fs, bias=BIAS_MA, drive=1.0, output=1.0, pentode=DUAL_CONTROL, quality="standard", filt="fir",
-                 newton=None, mode=circuit.MODE, experimental=False, grid_hardness=HARDNESS):
+                 newton=None, mode=circuit.MODE, experimental=False, grid_hardness=HARDNESS, grid_shape=GRID_SHAPE):
         if mode not in circuit.MODES:
             raise ValueError(f"unknown mode {mode!r}, expected one of {sorted(circuit.MODES)}")
-        self.mode, self.supported = mode, supported(mode, bias, grid_hardness)
+        self.grid_shape = grid_shape
+        _grid(grid_hardness, pentode, grid_shape)          # an unknown shape or a negative hardness fails here
+        self.mode, self.supported = mode, supported(mode, bias, grid_hardness, grid_shape)
         if not self.supported:
-            env = envelope(grid_hardness)
+            env = envelope(grid_hardness, grid_shape)
             rng = "%g-%g mA" % env[mode] if mode in env else "none"
-            why = (f"{mode} at {bias:g} mA with grid hardness {grid_hardness:g} is outside the supported envelope "
+            bound = bool(grid_hardness) and grid_shape != GRID_SHAPE
+            why = (f"{mode} at {bias:g} mA with grid hardness {grid_hardness:g}"
+                   + (f", grid shape {grid_shape}" if bound else "") + f" is outside the supported envelope "
                    f"({mode}: {rng}): " + ((WHY_UNSUPPORTED if grid_hardness else WHY_UNSUPPORTED_NO_GRID).get(
                        mode, "outside the documented 0.1-0.6 mA") if env else
+                                          f"grid shape {grid_shape} is a #131 bound of the borrowed grid law, for "
+                                          f"sensitivity studies only" if bound else
                                           f"only hardness {HARDNESS:g} (the default) and 0 are validated"))
             if not experimental:
                 raise UnsupportedSettingError(why + " (experimental=True runs it anyway)")
@@ -215,8 +232,8 @@ class Stage(_Stage12AX7):
         self.rs = Resampler(fs, self.os, filt)
         self.fs = fs * self.os
         self.drive, self.output, self.bias, self.par = drive, output, bias, pentode
-        self.grid_hardness, self.grid = grid_hardness, _grid(grid_hardness, pentode)
-        self.rk = cathode_resistor(bias, pentode, self.newton, mode, grid_hardness)
+        self.grid_hardness, self.grid = grid_hardness, _grid(grid_hardness, pentode, grid_shape)
+        self.rk = cathode_resistor(bias, pentode, self.newton, mode, grid_hardness, grid_shape)
         self.m = circuit.build(self.fs, self.rk, prewarp_hz=self.prewarp_hz, mode=mode, grid=self.grid is not None)
         self.K = self.m["K"].tolist()
         self.supplies = circuit.sources(mode=mode)
@@ -226,7 +243,7 @@ class Stage(_Stage12AX7):
     def operating_point(self):
         """The DC operating point at this stage's Rk, valve parameters, Newton settings and mode (module
         operating_point(); overrides dk.stage.Stage's, which solves the 12AX7 circuit)."""
-        return operating_point(self.rk, self.par, self.newton, self.mode, self.grid_hardness)
+        return operating_point(self.rk, self.par, self.newton, self.mode, self.grid_hardness, self.grid_shape)
 
     def swap_bias(self, bias):
         raise NotImplementedError("the 6AS6 stage's Rk is fixed for the run; live bias changes are #115")

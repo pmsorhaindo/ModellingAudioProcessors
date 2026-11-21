@@ -21,13 +21,14 @@ sys.path.insert(0, ROOT)
 from spice.tests.test_netlists import parse, num, close, edges, node, subckt, lines  # noqa: E402 -- after the sys.path setup
 from spice import run_refs as R12  # noqa: E402 -- after the sys.path setup
 from dk6as6 import circuit, pentode  # noqa: E402 -- after the sys.path setup
-from dk6as6.stage import cathode_resistor, BIAS_MA  # noqa: E402 -- after the sys.path setup
+from dk6as6.stage import BIAS_MA  # noqa: E402 -- after the sys.path setup
 from spice6as6 import run_refs as R  # noqa: E402 -- after the sys.path setup
 
 VALUES = circuit.VALUES
 CASES = R.cases(list(R.PARAMS) + [f"dual/{m}" for m in R.MODE_BIASES if m != "P1"]   # every committed reference:
-                + [f"dualg/{m}" for m in R.GRID_BIASES if m != "P1"])                  # (model, mode, bias mA)
-RK = {(m, md, b): cathode_resistor(b, R.PARAMS[m], mode=md, grid_hardness=R.HARDNESS[m]) for m, md, b in CASES}
+                + [f"dualg/{m}" for m in R.GRID_BIASES if m != "P1"]                   # (model, mode, bias mA)
+                + [f"{g}/{m}" for g in R.GRID_SHAPE for m in R.BOUND_BIASES])          # the #131 bounds
+RK = {(m, md, b): R.rk_of(m, b, md) for m, md, b in CASES}
 
 
 def with_rk(model, bias=BIAS_MA, values=VALUES, mode="P1"):
@@ -183,8 +184,8 @@ def test_committed_references_were_made_with_these_settings(model, mode, bias):
     assert gen["params"] == R.PARAMS[model]
     assert gen["bias_ma"] == bias and gen["rk"] == pytest.approx(RK[model, mode, bias], rel=1e-9)
     assert gen.get("mode", "P1") == ref.get("mode", "P1") == mode
-    if R.HARDNESS[model]:   # #112: the grid law the reference ran, and the split runs' pieces
-        assert gen["grid"] == pentode.grid(R.HARDNESS[model], R.PARAMS[model])
+    if R.HARDNESS[model]:   # #112: the grid law the reference ran (#131: its shape), and the split runs' pieces
+        assert gen["grid"] == pentode.grid(R.HARDNESS[model], R.PARAMS[model], R.shape(model))
         assert gen["split"] == R.split_analyses() + ["burst"] and "ig1" in ref["op"]
     else:
         assert "grid" not in gen and "ig1" not in ref["op"]
@@ -286,16 +287,17 @@ def test_subckt_is_the_dk_valve_law(model, mode):
         assert _eval(b["BG2"][2], *v) == pytest.approx(ig2, rel=10 * rel, abs=1e-25), v
 
 
-@pytest.mark.parametrize("mode", ["P1", "T"])
-def test_grid_subckt_is_the_dk_valve_law_with_grid_current(mode):
+@pytest.mark.parametrize("model, mode", [("dualg", "P1"), ("dualg", "T"), ("dualg_rsd2", "T"), ("dualg_ehx1", "T")])
+def test_grid_subckt_is_the_dk_valve_law_with_grid_current(model, mode):
     """#112: the dualg subckt's three B-sources, evaluated in Python, give pentode.currents_grid (Ip, Ig2, Ig1) at the
-    DK stage's default hardness. Ip and Ig2 are (Ik - Ig1) x share, so as in test_pentode their error is relative to
-    the sum of the magnitudes; Ig1 relative to itself, except where SPICE's ln(1 + exp(-|x|)) (no log1p) loses
-    ~1e-16 / exp(x) relative (deep cut-off, where Ig1 < 1e-22 A; abs 1e-25 A, as test_subckt_is_the_dk_valve_law)."""
-    b = _bsources("dualg", mode)
+    DK stage's default hardness (#131: and each bound subckt with its own shape). Ip and Ig2 are (Ik - Ig1) x share, so
+    as in test_pentode their error is relative to the sum of the magnitudes; Ig1 relative to itself, except where
+    SPICE's ln(1 + exp(-|x|)) (no log1p) loses ~1e-16 / exp(x) relative (deep cut-off, where Ig1 < 1e-22 A; abs
+    1e-25 A, as test_subckt_is_the_dk_valve_law)."""
+    b = _bsources(model, mode)
     assert set(b) == {"BP", "BG2", "BG1"} and b["BG1"][:2] == ("G1", "K")
-    g = pentode.grid(R.HARDNESS["dualg"])
-    assert g == pentode.GRID
+    g = R.grid_of(model)
+    assert g == (pentode.GRID if model == "dualg" else pentode.grid(shape=R.GRID_SHAPE[model]))
     for v in itertools.product([-8.0, -3.3, -1.0, -0.3, 0.0, 0.3, 3.0], [60.0, 116.7, 140.0], [-8.0, -3.3, 0.0, 3.0],
                                [0.3, 20.0, 181.7, 300.0]):
         ip, ig2, ig1, _ = pentode.currents_grid(*v, pentode.DUAL_CONTROL, g)
@@ -332,7 +334,8 @@ def test_grid_subckts_leave_the_111_ones_alone():
     for mode in ("P1", "T"):
         assert set(_bsources("dual", mode)) == {"BP", "BG2"}
         assert R.models("dualg", mode)[0] != R.models("dual", mode)[0]
-    assert R.HARDNESS == {"dual": 0.0, "r51": 0.0, "dualg": pentode.HARDNESS}
+    assert R.HARDNESS == {"dual": 0.0, "r51": 0.0, "dualg": pentode.HARDNESS, "dualg_rsd2": pentode.HARDNESS,
+                          "dualg_ehx1": pentode.HARDNESS}
 
 
 @pytest.mark.parametrize("model, mode", [("dual", "P1"), ("dualg", "T")])
