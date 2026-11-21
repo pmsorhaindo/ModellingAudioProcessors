@@ -174,6 +174,9 @@ inline double pypow(double x, double y, bool& raised) {
     if (std::isinf(r) && std::isfinite(x) && std::isfinite(y)) raised = true;
     return r;
 }
+// A literal exponent the optimiser cannot see: compilers fold std::pow(x, 2.0) into x * x, but CPython's (Va / KVB) ** 2
+// calls libm pow, which is not x * x on every libm (Apple's differs by an ulp for some x)
+inline double opaque(double y) { volatile double v = y; return v; }
 inline double softplus(double x) { return (x > 0.0 ? x : 0.0) + std::log1p(std::exp(-std::fabs(x))); }
 inline double sigmoid(double x) {
     if (x >= 0.0) return 1.0 / (1.0 + std::exp(-x));
@@ -236,7 +239,7 @@ inline void cathode_share(double vg1, double vg2, double vg3, double va, const P
     const double dz_g1 = -p.RI * dik0_g1 / p.S3, dz_g2 = -p.RI * dik0_g2 / p.S3, dz_g3 = 1.0 / p.S3,
                  dz_a = dup / p.S3;
     const double ds = s * p.P3 * sm;
-    const double dknee = va > 0.0 ? 2.0 / PI / p.KVB / (1.0 + pypow(va / p.KVB, 2.0, raised)) : 0.0;
+    const double dknee = va > 0.0 ? 2.0 / PI / p.KVB / (1.0 + pypow(va / p.KVB, opaque(2.0), raised)) : 0.0;
     const double df_z = p.FMAX * knee * ds, df_a = p.FMAX * dknee * s;
     const double dik_z = ik0 * p.KR * sm * (1.0 - sm);
     dik[0] = dik0_g1 * kf + dik_z * dz_g1;
@@ -510,14 +513,25 @@ struct DM {
     DM() { std::memset(a, 0, sizeof a); }
     DM(int rr, int cc) : r(rr), c(cc) { std::memset(a, 0, sizeof a); }
 };
+/* Compensated dot product (Ogita, Rump & Oishi 2005, "Accurate sum and dot product", Dot2): the result is as accurate
+ * as if computed in twice the working precision, then rounded. The products of the build cancel (the incidence
+ * matrices take differences of entries of Si), so naive sums leave the matrices ~1e-12 from exact; with Dot2 and the
+ * refined inverse below they round once (cpp/matrix_rounding_6as6.py). Non-RT only. */
+inline void two_sum(double a, double b, double& s, double& e) { s = a + b; const double z = s - a; e = (a - (s - z)) + (b - z); }
+inline double dot2(const double* x, int sx, const double* y, int sy, int n, double init = 0.0) {
+    double s = init, c = 0.0;
+    for (int k = 0; k < n; ++k) {
+        const double p = x[k * sx] * y[k * sy], pe = std::fma(x[k * sx], y[k * sy], -p);
+        double t, te;
+        two_sum(s, p, t, te);
+        s = t; c += te + pe;
+    }
+    return s + c;
+}
 inline DM mul(const DM& x, const DM& y) {
     DM o(x.r, y.c);
     for (int i = 0; i < x.r; ++i)
-        for (int j = 0; j < y.c; ++j) {
-            double s = 0.0;
-            for (int k = 0; k < x.c; ++k) s += x.a[i][k] * y.a[k][j];
-            o.a[i][j] = s;
-        }
+        for (int j = 0; j < y.c; ++j) o.a[i][j] = dot2(&x.a[i][0], 1, &y.a[0][j], NS_MAX, x.c);
     return o;
 }
 inline DM tr(const DM& x) {
@@ -525,12 +539,7 @@ inline DM tr(const DM& x) {
     for (int i = 0; i < x.r; ++i) for (int j = 0; j < x.c; ++j) o.a[j][i] = x.a[i][j];
     return o;
 }
-inline DM scale_rows(const double* d, const DM& x) {
-    DM o(x.r, x.c);
-    for (int i = 0; i < x.r; ++i) for (int j = 0; j < x.c; ++j) o.a[i][j] = d[i] * x.a[i][j];
-    return o;
-}
-inline bool invert(const DM& in, DM& out) {        // Gauss-Jordan, partial pivoting (as dk_core.h)
+inline bool invert(const DM& in, DM& out) {        // Gauss-Jordan, partial pivoting (as dk_core.h), refined
     const int N = in.r;
     DM a = in;
     out = DM(N, N);
@@ -548,6 +557,15 @@ inline bool invert(const DM& in, DM& out) {        // Gauss-Jordan, partial pivo
             const double f = a.a[r][col];
             for (int c = 0; c < N; ++c) { a.a[r][c] -= f * a.a[col][c]; out.a[r][c] -= f * out.a[col][c]; }
         }
+    }
+    // iterative refinement with a compensated residual: X <- X + X (I - S X), twice
+    for (int pass = 0; pass < 2; ++pass) {
+        DM R(N, N);
+        for (int i = 0; i < N; ++i)
+            for (int j = 0; j < N; ++j) R.a[i][j] = -dot2(&in.a[i][0], 1, &out.a[0][j], NS_MAX, N, i == j ? -1.0 : 0.0);
+        DM X = out;
+        for (int i = 0; i < N; ++i)
+            for (int j = 0; j < N; ++j) out.a[i][j] = dot2(&X.a[i][0], 1, &R.a[0][j], NS_MAX, N, X.a[i][j]);
     }
     return true;
 }
