@@ -34,7 +34,12 @@ jobs:
         include:
           - prototype: valvelab
           - prototype: fullstage
-            pytest_args: --ignore=dk6as6 --ignore=spice6as6
+            pytest_args: --ignore=dk6as6 --ignore=spice6as6 --ignore=cpp/tests/test_cpp_core_6as6.py
+          # #104: the C++ 6AS6 core against the Python stage (vectors, bit-exact law and solvers, the ngspice
+          # validation reproduced at standard and hq) in its own shard
+          - prototype: fullstage
+            shard: cpp 6as6
+            pytest_args: cpp/tests/test_cpp_core_6as6.py
           - prototype: fullstage
             shard: 6as6 stage
             pytest_args: dk6as6/tests/test_dk6as6_stage.py
@@ -85,7 +90,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - pytest_args: --ignore=dk6as6 --ignore=spice6as6
+          - pytest_args: --ignore=dk6as6 --ignore=spice6as6 --ignore=cpp/tests/test_cpp_core_6as6.py
+          - shard: cpp 6as6
+            pytest_args: cpp/tests/test_cpp_core_6as6.py
           - shard: 6as6 stage
             pytest_args: dk6as6/tests/test_dk6as6_stage.py
           - shard: 6as6 validation
@@ -163,6 +170,41 @@ jobs:
           path: |
             prototypes/fullstage/aliasing_guard_results.json
             prototypes/fullstage/aliasing_guard_44100_results.json
+          if-no-files-found: warn
+
+  # The C++ 6AS6 core's aliasing guard (#104, #98 per-tone convention): every supported setting (P1 0.1-0.6 mA, T
+  # 0.1-0.5 mA, grid current on) x standard / hq x 2 / 8 V at its full sweep's worst tone and 19037 Hz, full 1 s windows
+  # after the 1.25 s settle, against the shipped 12AX7 stage's budget for the same quality and drive and each tone's
+  # committed baseline (cpp/aliasing_6as6_baseline[_44100].json, 1.5 dB). One job per rate. To update intentionally:
+  # python -m cpp.aliasing_6as6 guard --fs N --update-baseline --reason "..."
+  aliasing-6as6-cpp:
+    name: aliasing (6as6 C++ core, ${{ matrix.fs }} Hz)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        fs: [48000, 44100]
+    defaults:
+      run:
+        working-directory: prototypes/fullstage
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: prototypes/fullstage/requirements.txt
+      - name: Install requirements
+        run: python -m pip install -r requirements.txt
+      - name: 6AS6 C++ aliasing guard (gate + per-tone baseline ratchet)
+        run: python -m cpp.aliasing_6as6 guard --fs ${{ matrix.fs }} --workers "$(nproc)" --json aliasing_6as6_cpp_${{ matrix.fs }}.json
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aliasing-6as6-cpp-${{ matrix.fs }}
+          path: prototypes/fullstage/aliasing_6as6_cpp_${{ matrix.fs }}.json
           if-no-files-found: warn
 
   # Blocking lint (#87). Settings (line length 120, select E and F) are in ruff.toml at the repo root, shared with

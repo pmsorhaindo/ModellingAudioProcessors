@@ -109,6 +109,9 @@ stage only after that acknowledgement. Latency reporting:
 
 ## Known limits
 
+- The plugin wraps the 12AX7 stage only. The 6AS6 stage (Gyre's v1 distortion stage) exists in the core since #104
+  (`prototypes/fullstage/cpp/dk6as6_core.h`, [README-6as6.md](../prototypes/fullstage/cpp/README-6as6.md)); how one
+  wrapper exposes both, and the 6AS6 parameter set, is #114, and its smoothing and mode switching #115.
 - Sample rates other than 48 kHz are untested against the reference (#74). The plugin prepares at whatever rate the
   host gives. The wrapper's nulls were run at 44.1, 48 and 96 kHz, and the validators process at many more rates;
   neither tells whether the model is accurate there.

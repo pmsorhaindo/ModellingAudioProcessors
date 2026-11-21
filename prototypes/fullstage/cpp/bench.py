@@ -6,6 +6,8 @@ Method and results: cpp/BENCHMARK.md. Run from prototypes/fullstage:
   python -m cpp.bench --only standard_libm --reps 5        # a subset (bench.cpp --only), not for the record
   python -m cpp.bench --seconds 0.011 --reps 1             # a functional smoke (512 samples); its numbers mean nothing
   python -m cpp.bench --table cpp/bench_<machine>.json     # the BENCHMARK.md tables from a results file
+  python -m cpp.bench --core 6as6 --out cpp/bench_6as6_<machine>.json   # the 6AS6 core (#104, cpp/bench_6as6.cpp):
+                                                                 # 60 configurations, the same method
 Pin on Linux with taskset (taskset -c 2 python -m cpp.bench ...); macOS has no pinning API (bench.cpp sets QoS).
 """
 import argparse
@@ -73,9 +75,12 @@ def host_info():
     return h
 
 
-def run(flags=DEFAULT_FLAGS, reps=11, seconds=2.0, only=None):
+CORES = {"12ax7": "bench", "6as6": "bench_6as6"}       # --core: the harness built for each core
+
+
+def run(flags=DEFAULT_FLAGS, reps=11, seconds=2.0, only=None, core="12ax7"):
     flags = shlex.split(flags)
-    exe = B.build(tuple(flags), name="bench")
+    exe = B.build(tuple(flags), name=CORES[core])
     cxx = B.compiler()
     commit = _sh(["git", "-C", HERE, "rev-parse", "--short", "HEAD"])
     dirty = bool(_sh(["git", "-C", HERE, "status", "--porcelain", "--", "."]))
@@ -88,7 +93,7 @@ def run(flags=DEFAULT_FLAGS, reps=11, seconds=2.0, only=None):
         raise SystemExit(f"bench failed ({p.returncode}): output not deterministic or bad arguments")
     out = json.loads(p.stdout)
     build = {"cxx": cxx, "cxx_version": (_sh([cxx, "--version"]) or "").splitlines()[0],
-             "flags": B.CXXFLAGS + flags, "source": "cpp/bench.cpp", "git": commit, "dirty": dirty}
+             "flags": B.CXXFLAGS + flags, "source": f"cpp/{CORES[core]}.cpp", "git": commit, "dirty": dirty}
     return {"host": host_info(), "build": build, "state_before": before, "state_after": after,
             "meta": out["meta"], "results": out["results"]}
 
@@ -130,6 +135,46 @@ def _newton(r):
 def _ratio(a, b, key):
     va, vb = (a or {}).get(key), (b or {}).get(key)
     return "—" if va is None or vb is None else f"{va / vb:.2f}"
+
+
+def table_6as6(rec):
+    """The cpp/README-6as6.md tables of a 6AS6 record: the default setting per quality / peak / block, mono and two
+    instances; then each variant (x1, block 64) against the default at the same quality and peak."""
+    R = {(r["quality"], r["variant"], r["level_v"], r["block"], r["instances"]): r for r in rec["results"]}
+    qs = [q for q in ("standard", "hq") if any(k[0] == q for k in R)]
+    lv = sorted({k[2] for k in R})
+    lines = ["**default setting (P1, 0.45 mA, grid current, filter off, shipped FIR)** — % of one core at 48 kHz real "
+             "time (median), ns per base-rate sample (median, min–max), cycles per base-rate sample (median; * = not "
+             "all on P-cores), Newton iterations per internal sample (mean, max)", "",
+             "| setting | instances | peak | % core b64 | % core b512 | ns b64 | ns b512 | cycles b64 | cycles b512 | "
+             "Newton it. |", "|---|---|---|---|---|---|---|---|---|---|"]
+    def ns(r):
+        return "—" if not r else f"{r['ns_per_sample']:.0f} ({r['ns_min']:.0f}–{r['ns_max']:.0f})"
+    for q in qs:
+        for inst in (1, 2):
+            for v in lv:
+                a, b = R.get((q, "P1_0.45mA", v, 64, inst)), R.get((q, "P1_0.45mA", v, 512, inst))
+                if not (a or b):
+                    continue
+                r = a or b
+                lines.append(f"| {q} {r['os']}× | x{inst} | {v:g} V | {_cell(a, 'pct_core', '.2f')} | "
+                             f"{_cell(b, 'pct_core', '.2f')} | {ns(a)} | {ns(b)} | {_cycles(a)} | {_cycles(b)} | "
+                             f"{r['newton_mean']:.2f}, {r['newton_max']} |")
+    lines += ["", "**one change from the default** (x1, block 64): cost relative to the default at the same quality "
+              "and peak, median ns and cycles", "",
+              "| variant | setting | peak | % core | ns / default | cycles / default | Newton it. |",
+              "|---|---|---|---|---|---|---|"]
+    for var in dict.fromkeys(k[1] for k in R):
+        if var == "P1_0.45mA":
+            continue
+        for q in qs:
+            for v in lv:
+                a, d = R.get((q, var, v, 64, 1)), R.get((q, "P1_0.45mA", v, 64, 1))
+                if a:
+                    lines.append(f"| {var} | {q} | {v:g} V | {_cell(a, 'pct_core', '.2f')} | "
+                                 f"{_ratio(a, d, 'ns_per_sample')} | {_ratio(a, d, 'cycles_per_sample')} | "
+                                 f"{a['newton_mean']:.2f}, {a['newton_max']} |")
+    return "\n".join(lines)
 
 
 def table(rec):
@@ -252,11 +297,13 @@ def main():
     ap.add_argument("--only", help="comma-separated substrings of configuration names")
     ap.add_argument("--out", help="write the results file here (else stdout)")
     ap.add_argument("--table", metavar="RESULTS_JSON", help="print the markdown tables of a results file and exit")
+    ap.add_argument("--core", choices=sorted(CORES), default="12ax7", help="which core's harness (default 12ax7)")
     a = ap.parse_args(_argv_with_flags(sys.argv[1:]))
     if a.table:
-        print(table(json.load(open(a.table))))
+        rec = json.load(open(a.table))
+        print(table_6as6(rec) if rec["meta"].get("core") == "cpp/dk6as6_core.h" else table(rec))
         return
-    rec = run(a.flags, a.reps, a.seconds, a.only)
+    rec = run(a.flags, a.reps, a.seconds, a.only, a.core)
     if a.out:
         with open(a.out, "w") as f:
             dump(rec, f)

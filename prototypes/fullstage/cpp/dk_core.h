@@ -116,26 +116,49 @@ inline constexpr double FIR_BETA = 9.0;
 // Validated exceptions only. Unmeasured rates retain the historical geometry, without an aliasing claim.
 struct FirRate { double fs; int taps; };
 inline constexpr FirRate FIRST_FIR_BY_RATE[] = {{44100.0, FIR_FIRST_44100_TAPS}};
-template <std::size_t N> constexpr int max_first_fir_taps(const FirRate (&rates)[N]) {
-    int taps = FIR_FIRST_TAPS;
+template <std::size_t N> constexpr int max_first_fir_taps(const FirRate (&rates)[N], int fallback = FIR_FIRST_TAPS) {
+    int taps = fallback;
     for (const auto& row : rates) if (row.taps > taps) taps = row.taps;
     return taps;
 }
 // Size the first filter from every registered geometry, including the unlisted-rate fallback.
 inline constexpr int FIR_MAX_TAPS = max_first_fir_taps(FIRST_FIR_BY_RATE);
-constexpr int first_fir_taps(double fs) {
-    for (const auto& row : FIRST_FIR_BY_RATE) if (fs == row.fs) return row.taps;
-    return FIR_FIRST_TAPS;
+
+/* A half-band FIR cascade design (#104): Kaiser-window half-bands, stage 0 (next to the base rate) per host rate,
+ * stages 1.. sharing one later design. SHIPPED_FIR is dk/resample.py's FIR_FIRST / FIR_FIRST_44100 / FIR_LATER, the
+ * resampler of every validated Python result and of the 12AX7 core. K140_FIR is #113's recommendation (PR #129,
+ * dk6as6/resampler_study.py CANDIDATES["k140"]): Kaiser's beta for a 140 dB stopband, 0.1102 (140 - 8.7) = 14.47
+ * (Oppenheim & Schafer 3rd ed. eq. 7.75), and per stage the shortest 4m + 3 length whose one-pass stopband over its
+ * folding band is >= 140 dB with <= 0.005 dB passband ripple to 20 kHz: 123 taps (48 kHz) / 219 (44.1 kHz), later
+ * stages 47. It was derived for 48 and 44.1 kHz only; other rates use the 48 kHz first stage, without a claim.
+ * cpp/tests/test_cpp_core_6as6.py re-derives both lengths. */
+struct FirDesign {
+    int first_taps; double first_beta;      // stage 0 at a rate not listed in `rates`
+    int later_taps; double later_beta;      // stages 1, 2, ...
+    const FirRate* rates; int n_rates;      // stage-0 length per validated host rate
+};
+template <class T, std::size_t N> constexpr int count_of(const T (&)[N]) { return int(N); }
+inline constexpr FirDesign SHIPPED_FIR{FIR_FIRST_TAPS, FIR_BETA, FIR_LATER_TAPS, FIR_BETA, FIRST_FIR_BY_RATE,
+                                       count_of(FIRST_FIR_BY_RATE)};
+inline constexpr double K140_BETA = 14.47;
+inline constexpr FirRate K140_FIRST_BY_RATE[] = {{48000.0, 123}, {44100.0, 219}};
+inline constexpr FirDesign K140_FIR{123, K140_BETA, 47, K140_BETA, K140_FIRST_BY_RATE, count_of(K140_FIRST_BY_RATE)};
+inline constexpr int K140_FIRST_MAX_TAPS = max_first_fir_taps(K140_FIRST_BY_RATE, 123), K140_LATER_TAPS = 47;
+
+constexpr int first_fir_taps(double fs, const FirDesign& d) {
+    for (int i = 0; i < d.n_rates; ++i) if (fs == d.rates[i].fs) return d.rates[i].taps;
+    return d.first_taps;
 }
+constexpr int first_fir_taps(double fs) { return first_fir_taps(fs, SHIPPED_FIR); }
 struct FirGeometry { int stages = 0, pad = 0, latency_samples = 0, up_delay_internal = 0; };
-constexpr FirGeometry fir_geometry(int os, double fs) {
+constexpr FirGeometry fir_geometry(int os, double fs, const FirDesign& des = SHIPPED_FIR) {
     if (!(fs > 0.0 && fs < INFINITY) || os < 2 || os > MAX_OS) return {};
     int n = 0;
     while ((1 << n) < os) ++n;
     if ((1 << n) != os) return {};
     int d = 0;
     for (int i = 0; i < n; ++i) {
-        const int nt = i == 0 ? first_fir_taps(fs) : FIR_LATER_TAPS;
+        const int nt = i == 0 ? first_fir_taps(fs, des) : des.later_taps;
         d += (nt - 1) * os / (1 << (i + 1));
     }
     const int pad = ((-d) % os + os) % os;
@@ -998,7 +1021,7 @@ inline double bessel_i0(double x) {        // power series; x <= ~20 here (Kaise
 }
 }  // namespace detail
 
-// scipy.signal.firwin(ntaps, 0.5, window=("kaiser", beta)): half-band lowpass, scaled to unit DC gain. ntaps <= 127.
+// scipy.signal.firwin(ntaps, 0.5, window=("kaiser", beta)): half-band lowpass, scaled to unit DC gain.
 inline void firwin_halfband(int ntaps, double beta, double* h) {
     const double alpha = 0.5 * (ntaps - 1);
     double s = 0.0;
@@ -1049,11 +1072,11 @@ template <int N, class T> struct FirHalfBand {
     double h[N]{};
     int nt = 0;
     Fir<BR, T> upe, upo, dne, dno;
-    void prepare(int taps) {
+    void prepare(int taps, double beta = FIR_BETA) {
         assert(taps >= 3 && taps <= N && taps % 2 == 1);
         nt = taps;
         double e[BR], o[BR];
-        firwin_halfband(nt, FIR_BETA, h);
+        firwin_halfband(nt, beta, h);
         const int ne = (nt + 1) / 2, no = nt / 2;
         for (int k = 0; k < ne; ++k) e[k] = 2.0 * h[2 * k];
         for (int k = 0; k < no; ++k) o[k] = 2.0 * h[2 * k + 1];
@@ -1074,16 +1097,21 @@ template <int N, class T> struct FirHalfBand {
 };
 
 /* Streaming FIR cascade, same arithmetic/order as dk.resample. Geometry comes from fir_geometry().
- * Fixed first/later capacities, no allocation or virtual dispatch; prepare designs coefficients off the audio thread.
+ * Fixed first/later capacities (FIRST_N, LATER_N: the default fits SHIPPED_FIR; a longer design needs its own
+ * instantiation, e.g. K140_FIRST_MAX_TAPS / K140_LATER_TAPS), no allocation or virtual dispatch; prepare designs
+ * coefficients off the audio thread and returns false for a design that does not fit.
  * up starts at zero; the first down after reset primes the decimator from its first sample (the DC point). */
-template <class T> class ResamplerT {
+template <class T, int FIRST_N = FIR_MAX_TAPS, int LATER_N = FIR_LATER_TAPS> class ResamplerT {
 public:
-    bool prepare(int os, double fs_base) {
-        const auto g = fir_geometry(os, fs_base);
+    bool prepare(int os, double fs_base, const FirDesign& des = SHIPPED_FIR) {
+        const auto g = fir_geometry(os, fs_base, des);
         if (!g.stages) return false;
+        const int n0 = first_fir_taps(fs_base, des);
+        if (n0 > FIRST_N || (g.stages > 1 && des.later_taps > LATER_N) || n0 % 4 != 3 || des.later_taps % 4 != 3)
+            return false;
         os_ = os; nst_ = g.stages;
-        first_.prepare(first_fir_taps(fs_base));
-        for (int i = 1; i < nst_; ++i) later_[i-1].prepare(FIR_LATER_TAPS);
+        first_.prepare(n0, des.first_beta);
+        for (int i = 1; i < nst_; ++i) later_[i-1].prepare(des.later_taps, des.later_beta);
         pad_ = g.pad; latency_ = g.latency_samples; up_delay_ = g.up_delay_internal;
         double pd[MAX_OS + 1] = {};
         pd[pad_] = 1.0;
@@ -1142,8 +1170,8 @@ public:
     }
 private:
     int os_ = 0, nst_ = 0, pad_ = 0, latency_ = 0, up_delay_ = 0;
-    FirHalfBand<FIR_MAX_TAPS, T> first_;
-    FirHalfBand<FIR_LATER_TAPS, T> later_[3];
+    FirHalfBand<FIRST_N, T> first_;
+    FirHalfBand<LATER_N, T> later_[3];
     Fir<MAX_OS + 1, T> delay_;
     bool primed_ = false;
 };

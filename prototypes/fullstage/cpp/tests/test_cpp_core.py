@@ -298,7 +298,8 @@ def test_bias_options_smoke():
 
 
 def test_bench_records():
-    files = sorted(glob.glob(os.path.join(ROOT, "cpp", "bench_*.json")))
+    files = sorted(f for f in glob.glob(os.path.join(ROOT, "cpp", "bench_*.json"))
+                   if not os.path.basename(f).startswith("bench_6as6"))      # the 6AS6 records: test_cpp_core_6as6.py
     if not files:
         pytest.skip("no cpp/bench_*.json committed yet (cpp/BENCHMARK.md, 'Running the official benchmark')")
     for f in files:

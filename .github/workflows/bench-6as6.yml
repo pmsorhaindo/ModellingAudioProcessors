@@ -1,0 +1,44 @@
+name: bench 6AS6 (x86-64)
+
+# The 6AS6 core's CPU benchmark (#104) on GitHub's x86-64 Linux runner, with the #20 harness (cpp/bench.py --core 6as6,
+# cpp/bench_6as6.cpp; method in cpp/BENCHMARK.md). Informational, not a gate: a shared VM with no pinning, whose clock is
+# not exposed, and whose hardware counters are usually unavailable (the results file then says null). It runs when the
+# core or the harness changes, and on manual dispatch; the results file is uploaded as an artifact.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - prototypes/fullstage/cpp/dk6as6_core.h
+      - prototypes/fullstage/cpp/dk_core.h
+      - prototypes/fullstage/cpp/bench_6as6.cpp
+      - prototypes/fullstage/cpp/bench_common.h
+      - prototypes/fullstage/cpp/bench.py
+      - .github/workflows/bench-6as6.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: bench (6as6, x86-64 linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: prototypes/fullstage
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # bench.py needs the standard library only. 5 timed passes of 1 s (the #20 record uses 11 x 2 s), so the job
+      # stays well inside its timeout on a 4-core runner; the record says so (meta.reps, meta.seconds_per_pass).
+      - name: Benchmark (one core, x86-64 baseline build -O3)
+        run: python -m cpp.bench --core 6as6 --reps 5 --seconds 1 --out bench_6as6_x86_64_linux_ci.json
+      - name: Tables
+        run: python -m cpp.bench --table bench_6as6_x86_64_linux_ci.json >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-6as6-x86-64-linux
+          path: prototypes/fullstage/bench_6as6_x86_64_linux_ci.json
