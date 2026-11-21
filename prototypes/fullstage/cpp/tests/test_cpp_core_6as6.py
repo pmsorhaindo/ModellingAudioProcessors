@@ -278,7 +278,12 @@ def test_aliasing_records():
     for r in recs:
         assert r["total_dbc"] <= AQ.gate(r["fs"], r["quality"], r["drive"]), r
         assert r["nonconverged"] == 0 and r["out_of_law"] == 0, r
-    assert sw["summary"] == json.loads(json.dumps(AQ.summary(recs)))
+    now = json.loads(json.dumps(AQ.summary(recs)))        # recomputed here: libm's log10 may differ by an ulp
+    assert len(now) == len(sw["summary"])
+    for a, b in zip(now, sw["summary"]):
+        assert a.keys() == b.keys()
+        for k in a:
+            assert (a[k] == pytest.approx(b[k], rel=1e-12, abs=1e-12)) if isinstance(a[k], float) else a[k] == b[k], k
     # the band-edge scan (#113's finding, reproduced on the C++ core): with the shipped FIR, P1 0.6 mA at 2 V and
     # 44.1 kHz is over the gate from 19957 Hz up (both qualities: the resampler's, not the stage's); k140 is >= 40 dB
     # inside it at every scanned point; 48 kHz is inside with both
