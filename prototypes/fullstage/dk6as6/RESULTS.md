@@ -909,6 +909,13 @@ where g1 gets within ~1 V of the cathode: T at ≥ 0.35 mA. There it **halves th
 the grid current's exponential onset also **adds H4/H5 at moderate drive** (0.5 V: H4 −68.0 dBc against −97.6, H5
 −74.8 against −117.6). That is a prediction of the borrowed DZ shape, the part of this law least supported by 6AS6 data.
 
+**T's "mainly even harmonics" at 8 V.** With grid current T at 8 V clips on the grid from 0.45 mA: g1 is clamped near
+0 V and the plate runs down to ~10 V. That brings H3 within 2 dB of H2 (0.45 mA: H2 −22.6, H3 −24.5 dBc; 0.5 mA:
+−20.4 / −21.6). Without grid current those settings were not physical. Up to 2 V everywhere, and at 8 V up to 0.35 mA,
+T stays even-dominant by over 10 dB (`test_mode_harmonic_character` asserts that). The manuals' "T: mainly even
+harmonics" is not level-specific, so this is reported as a model prediction (`test_t_grid_clipping_at_8v_is_not_even_dominant`
+pins it), not counted against T's envelope.
+
 ### Aliasing with grid current (`python -m dk6as6.aliasing --grid` → `aliasing_grid[_T].json`; 8× FIR, 48 kHz)
 `dk/aliasing.py`'s metric, the #121 quality gate unchanged (`aliasing.QUALITY_GATE_DBC`, the shipped 12AX7 stage's
 budget: −118.3 dBc at 2 V, −48.6 dBc at 8 V). Full 19-tone sweeps at T 0.45, 0.5 and 0.6 mA. At the other currents

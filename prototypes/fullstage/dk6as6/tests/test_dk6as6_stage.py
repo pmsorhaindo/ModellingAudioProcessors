@@ -404,14 +404,30 @@ def test_p2_is_quieter_and_inverted(bias):
 
 
 def test_mode_harmonic_character(res):
-    """The manuals' character of each mode where this model shows it: T even-dominant at every drive inside the valve
-    law (H2 over 10 dB above H3, "even harmonics"; validate.exp_capped marks the drives outside it); P2 frequency
-    doubling (H2 >= H1) at 2 V. P1's "odd harmonics" holds only in a narrow band and is not asserted (dk6as6/RESULTS.md,
-    Modes)."""
+    """The manuals' character of each mode where this model shows it: T even-dominant (H2 over 10 dB above H3, "even
+    harmonics") at every drive inside the valve law without grid current (validate.exp_capped marks the drives outside
+    it), and with grid current (#112) up to 2 V, below where g1 conducts; P2 frequency doubling (H2 >= H1) at 2 V. P1's
+    "odd harmonics" holds only in a narrow band and is not asserted (dk6as6/RESULTS.md, Modes). T at 8 V with grid
+    current is test_t_grid_clipping_at_8v_is_not_even_dominant."""
     m = mode_of(res)
-    h = {a: res["sine"][a]["H_dBc"] for a in AMPS if not res["sine"][a].get("spice_exp_capped")}   # in the law
+    h = {a: res["sine"][a]["H_dBc"] for a in AMPS if not res["sine"][a].get("spice_exp_capped")   # in the law
+         and (res["model"] != "dualg" or float(a) <= 2.0)}
     if m == "T":
         assert all(v[1] > v[2] + 10 for v in h.values()), h
+
+
+def test_t_grid_clipping_at_8v_is_not_even_dominant():
+    """#112, a model prediction reported, not a pass criterion: with grid current, T at 8 V clips on the grid from
+    0.45 mA (g1 clamped near 0 V), so H3 comes within ~2 dB of H2 (0.45 mA: H2 -22.6, H3 -24.5 dBc; 0.5 mA: -20.4 /
+    -21.6), against the manuals' "mainly even harmonics" for T; at 0.35 mA and below, and at 2 V everywhere, T stays
+    even by over 10 dB (results_grid_T.json; dk6as6/RESULTS.md, "Grid current (#112)")."""
+    g = json.load(open(V.results_file("T", "dualg")))
+    for b in ("0.45", "0.5"):
+        h = g[b]["standard"]["sine"]["8"]["H_dBc"]
+        assert 0.0 < h[1] - h[2] < 3.0, (b, h)
+    for b in ("0.1", "0.25", "0.35"):
+        h = g[b]["standard"]["sine"]["8"]["H_dBc"]
+        assert h[1] > h[2] + 10, (b, h)
 
 
 def test_newton_always_converges(res):
