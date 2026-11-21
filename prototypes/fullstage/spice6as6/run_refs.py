@@ -34,6 +34,7 @@ Usage: python spice6as6/run_refs.py [dual] [r51] [dual:0.25] [dual/T] [dual/P2:0
        python spice6as6/run_refs.py --write-netlist   (rewrites models/*.inc and stage_6as6*.cir; no ngspice needed)
        python spice6as6/run_refs.py --convergence [dual] [dual/T:0.25]  (TIGHT rerun vs the committed JSONs; ~2x)
 """
+import fcntl
 import json
 import math
 import os
@@ -372,7 +373,7 @@ def run(model, bias, solver=SOLVER, out="out", write=True, mode=MODE, split=Fals
     os.makedirs(sdir)
     def one(name):
         tagn = name.replace(":", "_")
-        fn = os.path.join(HERE, f"_gen_{out.replace('/', '_')}_{c}_{tagn}.cir")
+        fn = os.path.join(HERE, f"_gen_{out.replace('/', '_')}_{c}_{rid}_{tagn}.cir")   # unique per run
         open(fn, "w").write(netlist(model, name, bias, out=stage, solver=solver, rk=rk, mode=mode))
         try:
             code, log = ngspice(["-b", fn])
@@ -409,18 +410,22 @@ GENERATOR = "generator.json"          # the run's generator record, inside its r
 def publish(sdir, o, c, rid):
     """Publish a complete, analysed staged run of case c: rename it to <o>/<c>_run_<rid> (atomic, one filesystem), then
     replace the pointer <o>/<c>.current atomically; delete the run directories of c older than the one just
-    superseded (kept so a reader that resolved it can finish)."""
-    new = os.path.join(o, f"{c}_run_{rid}")
-    os.rename(sdir, new)
-    ptr = os.path.join(o, f"{c}.current")
-    prev = open(ptr).read().strip() if os.path.exists(ptr) else None
-    tmp = f"{ptr}.{rid}.tmp"
-    open(tmp, "w").write(os.path.basename(new) + "\n")
-    os.replace(tmp, ptr)
-    keep = {os.path.basename(new), prev}
-    for d in os.listdir(o):
-        if d.startswith(f"{c}_run_") and d not in keep:
-            shutil.rmtree(os.path.join(o, d), ignore_errors=True)
+    superseded (kept so a reader that resolved it can finish). The three steps hold an exclusive per-case lock
+    (<o>/<c>.lock), so two publishers of one case cannot interleave: pruning never removes a directory another
+    publisher is about to point at (PR #128 review)."""
+    with open(os.path.join(o, f"{c}.lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)                   # released when the file closes
+        new = os.path.join(o, f"{c}_run_{rid}")
+        os.rename(sdir, new)
+        ptr = os.path.join(o, f"{c}.current")
+        prev = open(ptr).read().strip() if os.path.exists(ptr) else None
+        tmp = f"{ptr}.{rid}.tmp"
+        open(tmp, "w").write(os.path.basename(new) + "\n")
+        os.replace(tmp, ptr)
+        keep = {os.path.basename(new), prev}
+        for d in os.listdir(o):
+            if d.startswith(f"{c}_run_") and d not in keep:
+                shutil.rmtree(os.path.join(o, d), ignore_errors=True)
 
 
 def run_dir(model, bias, out="out", mode=MODE):

@@ -490,6 +490,43 @@ def test_reanalysis_overlapping_a_publish_reads_one_run(tmp_path, monkeypatch):
     assert R.analyse_published("dual", BIAS_MA, out, write=False)["op"]["va"] == 151.0
 
 
+def test_two_publishers_of_one_case_cannot_leave_a_dangling_pointer(tmp_path, monkeypatch):
+    """PR #128 review (3rd), the reviewer's interleaving: A is current; publisher B renames its run directory and is
+    paused there; publisher C publishes. Without the per-case lock C's pruning deleted B, then B pointed .current at
+    it. With it C waits for B; afterwards .current names an existing run directory with its files."""
+    import threading
+    o = str(tmp_path / "out")
+    os.makedirs(o)
+    c = R.case("dual", BIAS_MA)
+    def staged(name):
+        d = os.path.join(o, f"_staging_{name}")
+        os.makedirs(d)
+        open(os.path.join(d, R.GENERATOR), "w").write(name)
+        return d
+    R.publish(staged("A"), o, c, "A")
+    paused, resume = threading.Event(), threading.Event()
+    rename = os.rename
+    def slow_rename(src, dst):
+        rename(src, dst)
+        if src.endswith("_staging_B"):                    # B: paused right after its rename
+            paused.set()
+            resume.wait(10)
+    monkeypatch.setattr(R.os, "rename", slow_rename)
+    tb = threading.Thread(target=R.publish, args=(staged("B"), o, c, "B"))
+    tb.start()
+    assert paused.wait(10)
+    tc = threading.Thread(target=R.publish, args=(staged("C"), o, c, "C"))
+    tc.start()
+    tc.join(0.3)
+    assert tc.is_alive()                                   # C waits for B's lock instead of pruning B
+    resume.set()
+    tb.join(10)
+    tc.join(10)
+    d = R.run_dir("dual", BIAS_MA, o)
+    assert d.endswith("_run_C") and open(os.path.join(R.HERE, d, R.GENERATOR)).read() == "C"
+    assert sorted(f for f in os.listdir(o) if "_run_" in f) == [f"{c}_run_B", f"{c}_run_C"]   # A pruned, B kept
+
+
 def test_ngspice_has_a_wall_clock_limit(tmp_path, monkeypatch):
     """An ngspice that never returns is killed at NGSPICE_TIMEOUT_S and run() raises TimeoutError, with nothing left
     running and its generated netlist removed (#111: two ngspice children hung for ~2 h after writing their output)."""
