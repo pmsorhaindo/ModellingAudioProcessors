@@ -685,7 +685,8 @@ not a listening threshold; between the measured tones the guard measures nothing
   job, each matrix leg by name, is present and passed (macOS may be skipped where it does not run), with no unlisted job.
   Its self-test covers eleven cases. **Making `ci gate` a required check on `main` is a repository setting for
   Michael.**
-- #127 landed with #128 (the 6AS6 tests in four shards on Linux and macOS); this PR is rebased on it. {SHARDS}
+- #127 landed with #128 (the 6AS6 tests in four shards on Linux and macOS); this PR is rebased on it.
+  On run 44914992226 (head b88779b): Linux fullstage 3:51, 6as6 stage 5:22, envelope 5:53, validation 3:53, rest 5:21; macOS fullstage 3:48, 6as6 stage 3:21, envelope 7:14, validation 4:14, rest 5:56, so at most 7:14 of 20:00 (36 %, within #127's 60 %); the 6AS6 guard jobs 9:18 (48 kHz) and 9:47 (44.1 kHz), 49 %.
 
 ### A/B samples (not committed; `~/Developer/MAP-wt-113-samples`)
 A 3 s exponential chirp 4–20 kHz from silence, 48 kHz, every file in a pair at one gain (the reference at −1 dBFS),
