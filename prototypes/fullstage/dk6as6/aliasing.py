@@ -117,7 +117,9 @@ GRID_MODES = tuple(LIMIT_DBC_GRID)
 # criterion and does not invent one (dk/RESULTS.md, #96 "A"). Supported settings: stage.SUPPORTED_MA.
 QUALITY_GATE_DBC = LIMIT_DBC_12AX7[("standard", "fir")]          # {2.0: -118.3, 8.0: -48.6}
 # The CI check of T and P2 (P1's is in the test): (mode, bias mA, drive V, the sweep's worst tone there)
-CI_CASES_MODES = [("T", 0.3, 8.0, 19037), ("P2", 0.25, 8.0, 19037)]   # grid_hardness 0 (#111 records); T: its top
+# grid_hardness 0 (#111 records; P2 only since #112, for CI time: T's no-grid sweep and LIMIT_DBC_T stay tested from
+# aliasing_T.json; the default stage's T is CI_CASES_GRID)
+CI_CASES_MODES = [("P2", 0.25, 8.0, 19037)]
 # ... and of the default stage, with grid current (#112): (mode, bias mA, drive V, the grid sweep's worst tone there):
 # P1 at its top (its worst, -98.44 dBc), T at the top of its envelope at both drives
 CI_CASES_GRID = [("P1", 0.6, 8.0, 19037), ("T", 0.5, 2.0, 19037), ("T", 0.5, 8.0, 17037)]

@@ -648,7 +648,9 @@ Worst total over the sweep (1037–19037 Hz):
 
 (dBc; worst tone 19037 Hz unless shown. P1 is #120's sweep, reproduced byte for byte. T swept since the review at
 0.3 mA, the top of its envelope: −135.02 dBc at 2 V, −119.64 dBc at 8 V; and at 0.35 mA: −133.35 / −117.98 dBc. CI checks
-the regression baselines at T 0.3 mA / 8 V and P2 0.25 mA / 8 V, and the gate on the committed sweeps.)
+the regression baselines at T 0.3 mA / 8 V and P2 0.25 mA / 8 V, and the gate on the committed sweeps. Since #112 CI
+re-measures P2 0.25 mA / 8 V here and the default stage's T at its grid-current top; T's no-grid limits stay tested
+against `aliasing_T.json`.)
 
 - **Two separate things** (PR #121 review). `aliasing.LIMIT_DBC` (the full sweep's worst + 3 dB, as for P1) are
   regression baselines: chosen from the measurements, they show reproducibility, not quality. The quality gate is

@@ -32,13 +32,13 @@ pytestmark = pytest.mark.filterwarnings("ignore::dk6as6.stage.ExperimentalWarnin
 
 
 # CI time (both fullstage jobs have a 20 min timeout; #112 keeps the 6as6 shard near #121's 11 min): the default stage
-# (dualg) at standard at every P1 grid reference bias plus hq at the highest, and T at standard at the top of its
-# supported envelope. The no-grid stage (grid_hardness=0) is the #111 stage bit for bit; its every-bias results are
-# results[_<mode>].json, and test_p1_grid_current_is_negligible ties P1 0.6 mA to the default stage. P2 is experimental
-# only (stage.SUPPORTED_MA): its known 0.6 mA burst failure is tested below. Every mode at every bias, standard and hq,
-# is in results[_grid][_<mode>].json (python -m dk6as6.validate [--grid]), checked by
+# (dualg) at standard at the ends of P1's grid references (0.1, 0.45 mA) plus hq at 0.45 mA, and T at standard at the
+# top of its supported envelope. The no-grid stage (grid_hardness=0) is the #111 stage bit for bit; its every-bias
+# results are results[_<mode>].json, and test_p1_grid_current_is_negligible ties P1 0.6 mA to the default stage. P2 is
+# experimental only (stage.SUPPORTED_MA): its known 0.6 mA burst failure is tested below. Every mode at every bias,
+# standard and hq, is in results[_grid][_<mode>].json (python -m dk6as6.validate [--grid]), checked by
 # test_committed_validation_every_supported_setting_passes.
-CASES = ([("P1", "standard", b, "dualg") for b in GRID_BIASES["P1"]]
+CASES = ([("P1", "standard", b, "dualg") for b in (GRID_BIASES["P1"][0], GRID_BIASES["P1"][-1])]
          + [("P1", "hq", GRID_BIASES["P1"][-1], "dualg"), ("T", "standard", SUPPORTED_MA["T"][1], "dualg")])
 
 
