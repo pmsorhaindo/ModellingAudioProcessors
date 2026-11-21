@@ -66,7 +66,10 @@ are replaced by 0 and counted; `set_drive()` / `set_output()` ignore a non-finit
 non-finite (a finite input far outside any signal, such as the largest double: #104 review), that sample outputs 0 and
 the state goes back to the operating point with the resampler and filter states cleared (`Stats::recoveries`),
 realtime-safe and without `reset()`; `test_nonfinite_recovery` checks the output is finite and back on the operating
-point (to 5e-26 V) in later silent blocks. A finite signal never takes that path (the vectors are bit-identical).
+point (to 5e-26 V) in later silent blocks. An output sample whose gained value does not fit the destination type
+(a finite but huge `set_output()` gain; for float I/O anything beyond `FLT_MAX`) is range-checked in double before the
+conversion, written as 0 and counted (`Stats::nonfinite_outputs`); the state is not touched (`test_output_overflow`,
+double and float I/O). A finite signal at a sane gain never takes either path (the vectors are bit-identical).
 The Python stage has no such path (NaN would propagate).
 
 ## Using it

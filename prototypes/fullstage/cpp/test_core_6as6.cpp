@@ -618,7 +618,8 @@ static void test_nonfinite_recovery() {
             check(s.prepare(48000.0, q, set) == Status::ok, "recovery: prepare");
             const double yrest = s.pack().y_dc[0];
             Vec x(512, 0.0), y(512), z(512, 0.0), w(512);
-            x[10] = DBL_MAX;          // otherwise silent, so after the recovery the stage must sit on its op point x[20] = -DBL_MAX; x[30] = NAN; x[40] = INFINITY;
+            // otherwise silent, so after the recovery the stage must sit on its operating point
+            x[10] = DBL_MAX; x[20] = -DBL_MAX; x[30] = NAN; x[40] = INFINITY;
             {
                 CountAllocs c;
                 s.process(x.data(), y.data(), x.size());                // the bad samples
@@ -635,7 +636,9 @@ static void test_nonfinite_recovery() {
             for (double v : y) finite = finite && std::isfinite(v);
             for (double v : w) { finite = finite && std::isfinite(v); worst_after = std::max(worst_after, std::fabs(v - yrest)); }
             const Stats& st = s.stats();
-            check(st.recoveries >= 1 && st.nonfinite_inputs >= 2, "recovery: counted");
+// the first recovery clears the resampler, which also flushes the second extreme sample still in its delay line
+            check(st.recoveries >= 1 && st.nonfinite_inputs == 2 + 8, "recovery: counted (+-DBL_MAX recovered; NaN, "
+                  "inf and the 8 overflowing driven samples replaced)");
         }
     // set_drive(NaN) left the drive at 1: a small sine through the core equals a fresh stage's
     dk6as6::Stage a, b;
@@ -651,6 +654,42 @@ static void test_nonfinite_recovery() {
     check(worst_after < 1e-6, "recovery: silence settles back on the operating point without reset()");
     check(same, "recovery: a non-finite gain is ignored");
     check(!ALLOC_HOOKS || allocs == 0, "recovery: no allocation");
+}
+
+// #104 review round 2: a finite output gain that overflows the destination type must not write inf (double path) or
+// an out-of-range value (float path: undefined in C++); the sample is 0 and counted, the state untouched
+static void test_output_overflow() {
+    bool ok = true;
+    const size_t n = 4800;
+    Vec x(n);
+    for (size_t i = 0; i < n; ++i) x[i] = 0.5 * std::sin(2 * PI * 997.0 * double(i) / 48000.0);
+    for (int pass = 0; pass < 2; ++pass) {          // 0: double I/O, 1: float I/O
+        dk6as6::Stage s, ref;                       // ref sees the same input at unity output gain throughout
+        s.prepare(48000.0); ref.prepare(48000.0);
+        s.set_output(pass == 0 ? DBL_MAX : 1e38);   // 1e38: finite as a double, over FLT_MAX times the stage's volts
+        Vec y1(n), y2(n), r1(n), r2(n);
+        long allocs;
+        auto run = [&](dk6as6::Stage& st, Vec& y) {
+            if (pass == 0) { st.process(x.data(), y.data(), n); return; }
+            std::vector<float> xf(x.begin(), x.end()), yf(n);
+            st.process(xf.data(), yf.data(), n);
+            for (size_t i = 0; i < n; ++i) y[i] = yf[i];
+        };
+        { CountAllocs c; if (pass == 0) s.process(x.data(), y1.data(), n); allocs = c.n(); }
+        if (pass == 1) run(s, y1);
+        size_t bad = 0;
+        for (double v : y1) bad += !std::isfinite(v);
+        const Stats& st = s.stats();
+        ok = ok && bad == 0 && st.nonfinite_outputs > 0 && st.recoveries == 0 && st.nonconverged == 0;
+        ok = ok && (!ALLOC_HOOKS || allocs == 0);
+        // the state is untouched: back at unity gain, the next block equals that of a stage that never saw the gain
+        s.set_output(1.0);
+        run(s, y2);
+        run(ref, r1); run(ref, r2);
+        for (size_t i = 0; i < n; ++i) ok = ok && same_bits(y2[i], r2[i]);
+        metric(pass == 0 ? "output_overflow_double_zeroed" : "output_overflow_float_zeroed", double(st.nonfinite_outputs));
+    }
+    check(ok, "an overflowing output gain writes 0, counted; the state is untouched (double and float I/O)");
 }
 
 // #104 review: an invalid or absurdly long FIR design is rejected by prepare(), without overflowing the geometry
@@ -824,6 +863,7 @@ int main(int argc, char** argv) {
     test_cases(V);
     test_fallbacks();
     test_nonfinite_recovery();
+    test_output_overflow();
     test_fir_design_rejected();
     test_settings();
     test_rates_and_silence();

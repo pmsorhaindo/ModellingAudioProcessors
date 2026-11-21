@@ -47,7 +47,9 @@
  *   - NaN / inf input samples (after the drive gain) are replaced by 0 and counted (Stats::nonfinite_inputs), and
  *     set_drive() / set_output() ignore a non-finite gain. If the state still goes non-finite (a finite input far
  *     outside any signal, such as the largest double), that sample outputs 0 and the state returns to the operating
- *     point, the resampler and filter states cleared (Stats::recoveries): realtime-safe, no reset() needed.
+ *     point, the resampler and filter states cleared (Stats::recoveries): realtime-safe, no reset() needed. An output
+ *     sample whose gained value does not fit the destination type (double or float) is written as 0 and counted
+ *     (Stats::nonfinite_outputs).
  *   - Python's out-of-law check warns; here it is counted (Stats::out_of_law).
  *
  * Do not build with -ffast-math (dk_core.h #errors): the fallbacks rely on NaN / inf comparisons.
@@ -58,6 +60,7 @@
 #include "dk_core.h"
 
 #include <cfloat>
+#include <limits>
 
 namespace dk6as6 {
 
@@ -997,6 +1000,7 @@ struct Stats {                            // audio-thread side; since reset()
     std::uint64_t out_of_law = 0;         // internal samples outside the law in force (stage.py's runtime guard)
     std::uint64_t nonfinite_inputs = 0;   // input samples that were NaN / inf after the drive gain, replaced by 0
     std::uint64_t recoveries = 0;         // samples whose state went non-finite: the state went back to the op point
+    std::uint64_t nonfinite_outputs = 0;  // output samples whose gained value overflowed the destination type: 0 written
     std::uint32_t nonconv_block = 0, out_of_law_block = 0;   // ... in the last process() / process_internal() call
     int max_iterations = 0;
     std::uint64_t histogram[HIST] = {};
@@ -1171,7 +1175,11 @@ private:
             // an input finite but far outside any signal (e.g. the largest double) can still drive the solve to inf /
             // NaN; it must not stay in the state: back to the operating point, filters cleared, this sample silent
             if (!(std::isfinite(yd) && state_finite())) { recover(); out[i] = S(0); continue; }
-            out[i] = S(og * yd);
+            // a finite output gain can still overflow the destination: range-checked in double before the conversion
+            // (an out-of-range double -> float conversion is undefined), written as 0 and counted; the state is fine
+            const double o = og * yd;
+            if (!(std::fabs(o) <= double(std::numeric_limits<S>::max()))) { out[i] = S(0); ++stats_.nonfinite_outputs; continue; }
+            out[i] = S(o);
         }
     }
     // the persistent per-sample state (capacitor histories, currents) is finite: v * 0 is 0 for finite v, NaN else
