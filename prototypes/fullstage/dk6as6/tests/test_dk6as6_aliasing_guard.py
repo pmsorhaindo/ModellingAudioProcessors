@@ -14,7 +14,7 @@ from dk.aliasing import MARGIN_DB, CI_WINDOW_S, tone_bin
 from dk6as6 import aliasing_guard as AG, aliasing_quality as Q
 from dk6as6.stage import supported
 
-SWEEP = Q.records()
+SWEEP = Q.records() + json.load(open(Q.OUT_JSON))["band_edge_scan"]   # the grid, and the band-edge scan
 
 
 def full_sweep(fs, mode, bias, setting, drive):
@@ -64,16 +64,27 @@ def test_committed_baseline_passes_its_own_comparison(fs):
     assert rows and not G.failed(rows) and all(r["status"] == "ok" for r in rows)
 
 
-def test_a_regressed_tone_fails_even_under_its_limit():
-    fs = 48000
-    base = G.load_baseline(AG.baseline_path(fs))
-    k, tones = next(iter(AG.tones_by_key(fs).items()))
-    meas = json.loads(json.dumps(base["values"]))
-    meas[k]["tones"][str(tones[0])]["total_dbc"] += G.TOLERANCE_DB + 0.01
+@pytest.mark.parametrize("fs", AG.RATES)
+def test_a_regressed_non_worst_tone_fails_under_the_real_limit(fs):
+    """Every key whose baseline tones spread by more than the tolerance (there is at least one per rate): its best
+    (non-worst) tone degraded by 1.51 dB stays under the key's real limit and leaves the key's maximum unchanged, yet
+    fails as a regression (a per-tone ratchet, not a per-key maximum)."""
+    base = G.load_baseline(AG.baseline_path(fs))["values"]
     lim = AG.limits_by_key(fs)
-    lim = {kk: max(v, meas[kk]["tones"][str(tones[0])]["total_dbc"] + 1) if kk == k else v for kk, v in lim.items()}
-    bad = G.failed(G.compare(meas, base["values"], lim, AG.tones_by_key(fs)))
-    assert [(r["key"], r["tone"], r["status"]) for r in bad] == [(k, tones[0], "FAIL regression")]
+    def spread(k, tones):
+        v = [base[k]["tones"][str(t)]["total_dbc"] for t in tones]
+        return max(v) - min(v)
+    multi = {k: t for k, t in AG.tones_by_key(fs).items() if len(t) > 1 and spread(k, t) > G.TOLERANCE_DB + 0.01}
+    assert multi
+    for k, tones in multi.items():
+        vals = {t: base[k]["tones"][str(t)]["total_dbc"] for t in tones}
+        t = min(vals, key=vals.get)
+        meas = json.loads(json.dumps(base))
+        meas[k]["tones"][str(t)]["total_dbc"] += G.TOLERANCE_DB + 0.01
+        after = {u: meas[k]["tones"][str(u)]["total_dbc"] for u in tones}
+        assert max(after.values()) == max(vals.values()) and after[t] < lim[k], (k, t, after)
+        bad = G.failed(G.compare(meas, base, lim, AG.tones_by_key(fs)))
+        assert [(r["key"], r["tone"], r["status"]) for r in bad] == [(k, t, "FAIL regression")]
 
 
 def test_values_by_key_uses_the_6as6_keys():

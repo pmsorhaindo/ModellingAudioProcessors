@@ -1,8 +1,8 @@
 {
  "format_version": 2,
- "reason": "Initial 6AS6 baseline (#113): shipped resampler, CI window, settled #102/#110/#111 circuit",
+ "reason": "6AS6 baseline re-derived (#113 review): subset over the grid with the 19937 Hz band edge and the band-edge scan; shipped resampler, CI window, method unchanged",
  "updated": "2026-11-21",
- "git_rev": "dfc1edb",
+ "git_rev": "32f4b27",
  "tolerance_db": 1.5,
  "method": {
   "fs_base": 48000,
@@ -15,14 +15,20 @@
     16037
    ],
    "P1/0.6mA/4x/fir/8V": [
+    19987,
+    19937,
+    19837,
+    19637,
+    19237,
     19037,
     18037
    ],
    "P1/0.6mA/standard/fir/2V": [
-    19037,
-    16037
+    19637,
+    19437
    ],
    "P1/0.6mA/standard/fir/8V": [
+    19937,
     19037
    ],
    "T/0.3mA/standard/fir/8V": [
@@ -34,8 +40,8 @@
     16037
    ],
    "P1/0.6mA/hq/fir/8V": [
-    19037,
-    18037
+    19637,
+    19437
    ]
   },
   "settle_s": 1.25,
@@ -61,30 +67,34 @@
   },
   "P1/0.6mA/hq/fir/8V": {
    "tones": {
-    "19037": {
-     "total_dbc": -111.59247729198617,
-     "f_hz": 19040.0
+    "19637": {
+     "total_dbc": -108.01004723409953,
+     "f_hz": 19640.0
     },
-    "18037": {
-     "total_dbc": -113.61698301101003,
-     "f_hz": 18040.0
+    "19437": {
+     "total_dbc": -109.31675908282729,
+     "f_hz": 19440.0
     }
    }
   },
   "P1/0.6mA/standard/fir/2V": {
    "tones": {
-    "19037": {
-     "total_dbc": -123.70618504269964,
-     "f_hz": 19040.0
+    "19637": {
+     "total_dbc": -120.52577725202795,
+     "f_hz": 19640.0
     },
-    "16037": {
-     "total_dbc": -125.58506170571385,
-     "f_hz": 16040.0
+    "19437": {
+     "total_dbc": -121.4635539510936,
+     "f_hz": 19440.0
     }
    }
   },
   "P1/0.6mA/standard/fir/8V": {
    "tones": {
+    "19937": {
+     "total_dbc": -96.98063894110129,
+     "f_hz": 19940.0
+    },
     "19037": {
      "total_dbc": -98.45372436073265,
      "f_hz": 19040.0
@@ -117,6 +127,26 @@
   },
   "P1/0.6mA/4x/fir/8V": {
    "tones": {
+    "19987": {
+     "total_dbc": -61.39314421000606,
+     "f_hz": 19990.0
+    },
+    "19937": {
+     "total_dbc": -61.538494768721044,
+     "f_hz": 19940.0
+    },
+    "19837": {
+     "total_dbc": -61.83098516031152,
+     "f_hz": 19840.0
+    },
+    "19637": {
+     "total_dbc": -62.393280679922384,
+     "f_hz": 19640.0
+    },
+    "19237": {
+     "total_dbc": -60.60819703428953,
+     "f_hz": 19240.0
+    },
     "19037": {
      "total_dbc": -61.13971967980076,
      "f_hz": 19040.0

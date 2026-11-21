@@ -1,9 +1,13 @@
 """CI aliasing guard for the 6AS6 stage (#113), the 12AX7 guard's method (dk/aliasing_guard.py, #35 / #98) on
 dk6as6.stage.Stage: a lean subset of the full sweeps (dk6as6/aliasing_quality.json), checked two ways.
 
-1. Absolute limit: each tone's total must stay at or below its key's limit, the full sweep's worst total for that mode /
-   bias / setting / drive / rate (1 s windows) plus dk.aliasing.MARGIN_DB (3 dB), rounded up to 0.1 dB, as for every
-   aliasing limit in the repo. test_dk6as6_aliasing_guard.py recomputes every limit from the committed sweep.
+1. Absolute limit: each tone's total must stay at or below its key's limit, the worst total for that mode / bias /
+   setting / drive / rate over the assessment's grid (aliasing_quality.GRID_HZ: the #6 tones and the band-edge tone
+   19937 Hz; 1 s windows) plus dk.aliasing.MARGIN_DB (3 dB), rounded up to 0.1 dB, as for every aliasing limit in the
+   repo; at the keys the band-edge scan covers (aliasing_quality.json band_edge_scan, 19237-19987 Hz), its tones count
+   too. test_dk6as6_aliasing_guard.py recomputes every limit and tone set from the committed sweeps. Between the
+   measured tones the guard measures nothing: the image-rejection bound (resampler_study.band_edge_bound) is the
+   evidence there at 44.1 kHz (dk6as6/RESULTS.md, "The band edge").
 2. Regression ratchet: each tone must not read more than dk.aliasing_guard.TOLERANCE_DB (1.5 dB) worse than its own
    committed baseline (dk6as6/aliasing_baseline.json at 48 kHz, aliasing_baseline_44100.json; format_version 2,
    values[key].tones[tone] = {total_dbc, f_hz}, #98). Reading more than 1.5 dB better passes, with a note.
@@ -42,28 +46,43 @@ def key(mode, bias, setting, drive):
     return f"{mode}/{bias:g}mA/{setting}/fir/{drive:g}V"
 
 
-# The CI subset per rate: (mode, bias mA, setting, drive V): (limit dBc, CI tones). Limit = the full sweep's worst over
-# every tone + 3 dB, rounded up to 0.1 dB (module docstring); the tones are that sweep's worst tone (and any other
-# within 3 dB of it at the same key). Worst measured (aliasing_quality.json, 1 s windows) in the comments.
+# The CI subset per rate: (mode, bias mA, setting, drive V): (limit dBc, CI tones). Limit = the worst over every tone
+# measured at the key (the grid, and the band-edge scan where it ran) + 3 dB, rounded up to 0.1 dB (module docstring);
+# the tones are the worst tone and any other within 3 dB of it at the same key. The worst measured
+# (aliasing_quality.json, 1 s windows) is in the comments; hq is measured on a tone subset whose maxima are the grid's
+# to <= 0.07 dB (aliasing_quality.hq_bound).
 CI = {
     48000: {
-        ("P1", 0.6, "4x", 2.0): (-120.5, (19037, 16037)),                 # -123.60 at 19037 (19 tones)
-        ("P1", 0.6, "4x", 8.0): (-56.5, (19037, 18037)),                  # -59.52 at 18037 (19 tones)
-        ("P1", 0.6, "standard", 2.0): (-120.5, (19037, 16037)),           # -123.59 at 19037 (19 tones)
-        ("P1", 0.6, "standard", 8.0): (-95.4, (19037,)),                  # -98.44 at 19037 (19 tones)
-        ("T", 0.3, "standard", 8.0): (-116.6, (19037, 16037)),            # -119.64 at 19037 (16037-19037 Hz here;
-        #                                                                   aliasing_T.json has the full sweep)
-        ("P1", 0.6, "hq", 2.0): (-120.5, (19037, 16037)),                 # -123.59 at 19037 (3 tones)
-        ("P1", 0.6, "hq", 8.0): (-108.5, (19037, 18037)),                 # -111.50 at 19037 (5 tones)
+        ("P1", 0.6, "4x", 2.0): (-120.5, (19037, 16037)),
+        #   worst -123.60 dBc at 19037 Hz over 20 measured tones
+        ("P1", 0.6, "4x", 8.0): (-56.5, (19987, 19937, 19837, 19637, 19237, 19037, 18037)),
+        #   worst -59.52 dBc at 18037 Hz over 25 measured tones
+        ("P1", 0.6, "standard", 2.0): (-117.4, (19637, 19437)),
+        #   worst -120.49 dBc at 19637 Hz over 25 measured tones
+        ("P1", 0.6, "standard", 8.0): (-94.0, (19937, 19037)),
+        #   worst -97.01 dBc at 19937 Hz over 20 measured tones
+        ("T", 0.3, "standard", 8.0): (-116.6, (19037, 16037)),
+        #   worst -119.64 dBc at 19037 Hz over 20 measured tones
+        ("P1", 0.6, "hq", 2.0): (-120.5, (19037, 16037)),
+        #   worst -123.59 dBc at 19037 Hz over 6 measured tones
+        ("P1", 0.6, "hq", 8.0): (-104.9, (19637, 19437)),
+        #   worst -107.97 dBc at 19637 Hz over 12 measured tones
     },
     44100: {
-        ("P1", 0.6, "4x", 2.0): (-123.3, (19037,)),                       # -126.31 at 19037 (19 tones)
-        ("P1", 0.6, "4x", 8.0): (-56.6, (19037, 18037, 17037, 16037)),    # -59.63 at 17037 (19 tones)
-        ("P1", 0.6, "standard", 2.0): (-123.3, (19037,)),                 # -126.32 at 19037 (19 tones)
-        ("P1", 0.6, "standard", 8.0): (-87.8, (19037,)),                  # -90.83 at 19037 (19 tones)
-        ("T", 0.3, "standard", 8.0): (-118.4, (19037,)),                  # -121.46 at 19037 (19 tones)
-        ("P1", 0.6, "hq", 2.0): (-123.3, (19037,)),                       # -126.31 at 19037 (6 tones)
-        ("P1", 0.6, "hq", 8.0): (-106.6, (19037,)),                       # -109.62 at 19037 (5 tones)
+        ("P1", 0.6, "4x", 2.0): (-114.1, (19987, 19937)),
+        #   worst -117.12 dBc at 19987 Hz over 21 measured tones
+        ("P1", 0.6, "4x", 8.0): (-52.9, (19937,)),
+        #   worst -55.99 dBc at 19937 Hz over 20 measured tones
+        ("P1", 0.6, "standard", 2.0): (-114.1, (19987, 19937, 19637)),
+        #   worst -117.13 dBc at 19987 Hz over 25 measured tones
+        ("P1", 0.6, "standard", 8.0): (-87.8, (19987, 19937, 19837, 19637, 19437, 19237, 19037)),
+        #   worst -90.83 dBc at 19037 Hz over 25 measured tones
+        ("T", 0.3, "standard", 8.0): (-111.9, (19937,)),
+        #   worst -114.99 dBc at 19937 Hz over 20 measured tones
+        ("P1", 0.6, "hq", 2.0): (-114.1, (19987, 19937)),
+        #   worst -117.13 dBc at 19987 Hz over 8 measured tones
+        ("P1", 0.6, "hq", 8.0): (-101.1, (19987, 19937, 19637, 19237)),
+        #   worst -104.18 dBc at 19987 Hz over 12 measured tones
     },
 }
 
