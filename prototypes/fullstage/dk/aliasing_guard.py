@@ -139,14 +139,12 @@ def tones_by_key(fs=AL.FS):
 
 
 def markdown(rows, tol=TOLERANCE_DB, baseline_meta=None, wall_s=None, baseline_name="dk/aliasing_baseline.json",
-             fs=AL.FS, title="Aliasing guard", limit_name=None, module="dk.aliasing_guard"):
-    """The step-summary table. title / limit_name / module name the guard (defaults: this 12AX7 guard)."""
+             fs=AL.FS):
     def f(v, fmt):
         return "—" if v is None else format(v, fmt)
     bad, imp = failed(rows), [r for r in rows if r["status"] == "improved"]
-    limit_name = limit_name or f"aliasing.limits_for_rate({fs:g})"
-    head = (f"## {title}: {'FAIL' if bad else 'pass'} ({fs:g} Hz)\n\n"
-            f"Absolute limit `{limit_name}`; regression tolerance {tol} dB vs `{baseline_name}`"
+    head = (f"## Aliasing guard: {'FAIL' if bad else 'pass'} ({fs:g} Hz)\n\n"
+            f"Absolute limit `aliasing.limits_for_rate({fs:g})`; regression tolerance {tol} dB vs `{baseline_name}`"
             + (f" (updated {baseline_meta.get('updated')}: {baseline_meta.get('reason')})" if baseline_meta else "")
             + ". Each tone has its own baseline. Delta = measured − baseline (positive = more aliasing);"
             + " margin = limit − measured."
@@ -164,7 +162,7 @@ def markdown(rows, tol=TOLERANCE_DB, baseline_meta=None, wall_s=None, baseline_n
     if imp:
         lines.append(f"\n{len(imp)} improved by more than {tol} dB (" + ", ".join(
             f"{r['key']} at {r['tone']} Hz" for r in imp)
-                     + f"). If intended, tighten the ratchet: `python -m {module}"
+                     + "). If intended, tighten the ratchet: `python -m dk.aliasing_guard"
                      + (f" --fs {fs:g}" if fs != AL.FS else "")
                      + " --update-baseline --reason \"...\"`, and put the reason in the commit message.")
     return "\n".join(lines) + "\n"
@@ -205,15 +203,14 @@ def load_baseline(path=BASELINE_JSON):
     return base
 
 
-def write_baseline(path, measured, reason, fs=AL.FS, method_=None):
-    """method_: the guard's method record (default: this 12AX7 guard's, method(fs))."""
+def write_baseline(path, measured, reason, fs=AL.FS):
     validate_values(measured)
     if not reason.strip():
         raise ValueError("a baseline update needs a reason")
     with open(path, "w") as fh:
         json.dump(dict(format_version=FORMAT_VERSION, reason=reason, updated=datetime.date.today().isoformat(),
                        git_rev=git_rev(),
-                       tolerance_db=TOLERANCE_DB, method=method_ or method(fs), values=measured), fh, indent=1)
+                       tolerance_db=TOLERANCE_DB, method=method(fs), values=measured), fh, indent=1)
         fh.write("\n")
 
 

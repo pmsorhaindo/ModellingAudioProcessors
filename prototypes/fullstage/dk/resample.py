@@ -225,20 +225,16 @@ class _IirHB:
         return 0.5 * (A(self.a[0::2]) + zi * A(self.a[1::2]))
 
 
-def design(kind, os, fs, fir=None):
-    """The 2x stages of an os-times cascade. fir: None (the shipped FIR_FIRST / FIR_LATER, rate rule) or, for
-    experiments only (#113's stopband study), ((first taps, first Kaiser beta), (later taps, later beta))."""
+def design(kind, os, fs):
     n = int(round(math.log2(os)))
     assert 2 ** n == os and n >= 1, "half-band cascades need os = 2, 4, 8, 16, ..."
-    if fir is not None and kind != "fir":
-        raise ValueError("fir= designs apply to the FIR resampler only")
     st = []
     for i in range(n):
         R = fs * 2 ** (i + 1)
         tbw = 2 * (R / 4 - PASS_HZ) / R          # HIIR: passband edge R(1/4 - tbw/2) = 20 kHz, stop R/2 - 20 kHz
         if kind == "fir":
-            first, later = fir if fir is not None else ((first_fir_taps(fs), FIR_FIRST[1]), FIR_LATER)
-            st.append(_FirHB(*(first if i == 0 else later)))
+            first = (first_fir_taps(fs), FIR_FIRST[1])
+            st.append(_FirHB(*(first if i == 0 else FIR_LATER)))
         elif kind == "iir":
             st.append(_IirHB(hiir_nbr_coefs(IIR_ATTEN_DB, tbw), tbw))
         else:
@@ -249,12 +245,11 @@ def design(kind, os, fs, fir=None):
 class Resampler:
     """Streaming os-times up -> (stage at os*fs) -> down. Make one per signal path direction:
     `up(x)` (base rate in, internal rate out) and `down(y)` (internal in, base out), each stateful.
-    `channels` names extra decimated signals (each gets its own decimator state).
-    fir: experimental FIR designs (design()); None, the default, is the shipped resampler."""
+    `channels` names extra decimated signals (each gets its own decimator state)."""
 
-    def __init__(self, fs, os, kind="fir", fir=None):
+    def __init__(self, fs, os, kind="fir"):
         self.fs, self.os, self.kind = float(fs), int(os), kind
-        self.stages = design(kind, self.os, self.fs, fir)
+        self.stages = design(kind, self.os, self.fs)
         d_int = 0                                      # total delay at the internal rate (fir: exact)
         if kind == "fir":
             for i, s in enumerate(self.stages):         # stage i high rate = 2^(i+1) fs
