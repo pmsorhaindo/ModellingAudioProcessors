@@ -1487,7 +1487,8 @@ where g1 rests at −0.949 V, Ig1 at rest is 0.17 nA (RSD-1), 7.2 pA (RSD-2) and
 **Files.** `python -m dk6as6.grid_bounds [law] [envelope] [aliasing]` → `grid_bounds.json` (bounds only; the nominal
 numbers are the committed #112 / #113 records, which the same functions reproduce); `python spice6as6/run_refs.py
 --split 6 dualg_rsd2/T dualg_ehx1/T` → `spice6as6/reference_dualg_{rsd2,ehx1}_T_{0.45,0.5,0.6}mA.json` (ngspice 41,
-`spice/run_refs.SOLVER` unchanged); `python -m dk6as6.validate --bounds` → `results_grid_{rsd2,ehx1}_T.json`;
+`spice/run_refs.SOLVER` unchanged); `python -m dk6as6.validate --bounds` → `results_grid_{rsd2,ehx1}_T.json` (re-run with #134's k140 resampler, like the
+nominal `results_grid_T.json`; `grid.py` / `envelope.py` name the shipped FIR their records were made with);
 `python -m dk6as6.grid_bounds tables` prints every table below. The machine was shared (load 90–180), so no timing is
 reported.
 
@@ -1498,10 +1499,10 @@ experimental, so the results are recorded, not counted as supported passes. Stan
 | criterion (limit) | RSD-2 0.45 | RSD-2 0.5 | RSD-2 0.6 | EHX-1 0.45 | EHX-1 0.5 | EHX-1 0.6 |
 |---|---|---|---|---|---|---|
 | op point, worst rel. (< 0.001) | 1.5e-9 | 3.2e-9 | 6.6e-9 | 1.5e-9 | 3.2e-9 | 7.9e-9 |
-| small signal, stage / chain (< 0.1 dB) | 0.00019 / 0.00092 | 0.00023 / 0.00094 | 0.00035 / 0.00101 | 0.00019 / 0.00092 | 0.00023 / 0.00094 | 0.00035 / 0.00101 |
-| H2–H5 worst tested (< 0.1 dB) | 0.00383 (H4, 2 V; 9 tested) | 0.00102 (H4, 2 V; 10) | 0.00702 (H2, 2 V; 13) | 0.00388 (H4, 2 V; 9) | 0.00122 (H4, 2 V; 10) | 0.00292 (H2, 2 V; 13) |
-| burst shift / trajectory (< 0.5 % / 0.5 %) | 0.069 % / 0.0077 % | 0.056 % / 0.0061 % | 0.036 % / 0.0039 % | 0.069 % / 0.0076 % | 0.055 % / 0.0061 % | 0.036 % / 0.0039 % |
-| recovery: tail τ (< 1 %) | 0.0009 % | 0.0000 % | 0.0000 % | 0.0002 % | 0.0000 % | 0.0000 % |
+| small signal, stage / chain (< 0.1 dB) | 0.00019 / 0.00019 | 0.00023 / 0.00023 | 0.00035 / 0.00035 | 0.00019 / 0.00019 | 0.00023 / 0.00023 | 0.00035 / 0.00035 |
+| H2–H5 worst tested (< 0.1 dB) | 0.00369 (H4, 2 V; 9 tested) | 0.00088 (H4, 2 V; 10) | 0.00702 (H2, 2 V; 13) | 0.00374 (H4, 2 V; 9) | 0.00107 (H4, 2 V; 10) | 0.00290 (H2, 2 V; 13) |
+| burst shift / trajectory (< 0.5 % / 0.5 %) | 0.070 % / 0.0077 % | 0.056 % / 0.0062 % | 0.036 % / 0.0039 % | 0.069 % / 0.0077 % | 0.055 % / 0.0061 % | 0.036 % / 0.0039 % |
+| recovery: tail τ (< 1 %) | 0.0002 % | 0.0000 % | 0.0000 % | 0.0000 % | 0.0000 % | 0.0000 % |
 | Newton non-converged / max it. | 0 / 4 | 0 / 4 | 0 / 4 | 0 / 4 | 0 / 4 | 0 / 4 |
 
 So the DK solver handles the sharper bound onsets (Cg ~12 /V) as accurately as the nominal one. In the result tables
@@ -1542,7 +1543,7 @@ RSD-2 draws the least current below +1.34 V, so it blocks least.
 |---|---|---|---|---|---|
 | 0.45 mA | RSD-1 / RSD-2 / EHX-1 | 0.04691 (all) | 0.4697 (all) | 1.916 (all) | 10.03 / 9.992 / 10.05 |
 | 0.5 mA | RSD-1 / RSD-2 / EHX-1 | 0.06179 (all) | 0.6192 (all) | 2.554 / 2.558 / 2.556 | 13.25 / 13.20 / 13.28 |
-| 0.6 mA | RSD-1 | 0.1202 | 1.098 (H4 −68.0, H5 −74.8) | 4.085 | 19.36 |
+| 0.6 mA | RSD-1 | 0.1202 | 1.098 (H4 −68.0, H5 −74.8) | 4.086 | 19.36 |
 | 0.6 mA | RSD-2 | 0.1220 | 1.206 (H4 −83.6, H5 −87.5) | 4.078 | 19.33 |
 | 0.6 mA | EHX-1 | 0.1212 | 1.142 (H4 −71.3, H5 −77.4) | 4.139 | 19.39 |
 

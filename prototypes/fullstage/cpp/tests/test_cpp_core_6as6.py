@@ -241,6 +241,14 @@ def test_k140_design_is_one_design():
     assert "DEFAULT_FIR = dkcore::K140_FIR" in open(os.path.join(ROOT, "cpp", "dk6as6_core.h")).read()
 
 
+def test_cpp_stage_takes_the_nominal_grid_shape_only():
+    """dk6as6.validate.stage names grid_shape (#139); the C++ core has the nominal law only, so CppStage accepts
+    pentode.GRID_SHAPE and refuses #131's bounds before running anything."""
+    for s in pentode.GRID_BOUNDS:
+        with pytest.raises(NotImplementedError, match="nominal grid shape"):
+            VC.CppStage(48000.0, bias=0.5, mode="T", experimental=True, grid_shape=s)
+
+
 def test_validate_reproduced_6as6():
     _exe()
     out, bad = VC.main(workers=os.cpu_count(), write=False)

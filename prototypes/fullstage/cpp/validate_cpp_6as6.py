@@ -26,7 +26,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 from dk.resample import Resampler  # noqa: E402 -- after the sys.path setup
 from dk6as6 import circuit, pentode, validate  # noqa: E402 -- after the sys.path setup
-from dk6as6.stage import QUALITY, BIAS_MA, supported  # noqa: E402 -- after the sys.path setup
+from dk6as6.stage import QUALITY, BIAS_MA, GRID_SHAPE, supported  # noqa: E402 -- after the sys.path setup
 from spice6as6.run_refs import MODE_BIASES, GRID_BIASES  # noqa: E402 -- after the sys.path setup
 from cpp.build import build  # noqa: E402 -- after the sys.path setup
 from cpp.export_vectors_6as6 import K140  # noqa: E402 -- after the sys.path setup
@@ -59,14 +59,18 @@ def cli(vin, fs, os_, mode, bias, hardness, lpf="off", drive=1.0, output=1.0, fi
 
 
 class CppStage:
-    """dk6as6.stage.Stage(fs, bias, quality, filt="fir", mode, grid_hardness) on the C++ core, for
-    dk6as6.validate.run. Each instance runs one process() call from reset (the CLI starts a fresh core), which is
-    how validate uses Stage."""
+    """dk6as6.stage.Stage(fs, bias, quality, filt="fir", mode, grid_hardness, grid_shape) on the C++ core, for
+    dk6as6.validate.run. The C++ core has the nominal grid law only (pentode.GRID_SHAPE); #131's bounds are
+    Python-only sensitivity studies. Each instance runs one process() call from reset (the CLI starts a fresh core),
+    which is how validate uses Stage."""
 
     def __init__(self, fs, bias=BIAS_MA, drive=1.0, output=1.0, pentode=pentode.DUAL_CONTROL, quality="standard",
-                 filt="fir", newton=None, mode=circuit.MODE, experimental=False, grid_hardness=pentode.HARDNESS):
+                 filt="fir", newton=None, mode=circuit.MODE, experimental=False, grid_hardness=pentode.HARDNESS,
+                 grid_shape=GRID_SHAPE):
         if filt != "fir" or newton is not None or pentode is not validate.PARAMS["dual"]:
             raise NotImplementedError("CppStage: fir, the default Newton settings and the dual_control fit only")
+        if grid_shape != GRID_SHAPE:         # `pentode` is the fit here, not the module
+            raise NotImplementedError(f"CppStage: the nominal grid shape {GRID_SHAPE} only, not {grid_shape}")
         self.fs_base, self.bias, self.drive, self.output, self.par, self.mode = fs, bias, drive, output, pentode, mode
         self.os, self.prewarp_hz = QUALITY[quality] if isinstance(quality, str) else quality
         assert self.prewarp_hz is None

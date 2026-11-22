@@ -46,6 +46,7 @@ from spice6as6 import run_refs as R  # noqa: E402 -- after the sys.path setup
 
 FS = 48000.0
 JSON = os.path.join(HERE, "grid.json")
+FIR = "shipped"   # the resampler grid.json and grid_bounds.json were made with (#134: the default is k140)
 STATIC_VG1 = np.round(np.arange(-3.0, 2.0 + 1e-9, 0.05), 10)
 STATIC_POINTS = {"P1": (120.0, 0.0, 150.0), "T": (50.0, 50.0, 50.0)}    # (Vg2k, Vg3k, Vak)
 ENV_MODES = ("P1", "T")
@@ -141,7 +142,7 @@ def _shape(a, n):
 def _tone(a):
     (mode, bias, drive), shape = _shape(a, 3)
     warnings.simplefilter("ignore")
-    st = Stage(FS, bias=bias, mode=mode, experimental=True, grid_shape=shape)
+    st = Stage(FS, bias=bias, mode=mode, experimental=True, grid_shape=shape, fir=FIR)
     t = np.arange(int(modes.T * FS) + st.latency_samples) / FS
     r = aligned(st, drive * np.sin(2 * np.pi * 1000 * t), record=("out", "vgk", "vak", "ig1", "ipk"))
     i = r["_internal"]
@@ -158,7 +159,7 @@ def _tone(a):
 def _onset(a):
     (mode, bias, f0, quality), shape = _shape(a, 4)
     warnings.simplefilter("ignore")
-    st = Stage(FS, bias=bias, mode=mode, quality=quality, experimental=True, grid_shape=shape)
+    st = Stage(FS, bias=bias, mode=mode, quality=quality, experimental=True, grid_shape=shape, fir=FIR)
     t = np.arange(int(ONSET_S * FS) + st.latency_samples) / FS
     r = st.process(8.0 * np.sin(2 * np.pi * f0 * t), record=("out", "vgk", "vak", "ig1", "ipk"))["_internal"]
     s = st.iteration_stats()
@@ -170,7 +171,7 @@ def _onset(a):
 def _hf(a):
     (mode, bias, drive, f0), shape = _shape(a, 4)
     warnings.simplefilter("ignore")
-    st = Stage(FS, bias=bias, mode=mode, experimental=True, grid_shape=shape)
+    st = Stage(FS, bias=bias, mode=mode, experimental=True, grid_shape=shape, fir=FIR)
     t = np.arange(int(HF_S * FS) + st.latency_samples) / FS
     r = st.process(drive * np.sin(2 * np.pi * f0 * t), record=("out", "vgk", "vak", "ig1", "ipk"))["_internal"]
     s = st.iteration_stats()

@@ -127,19 +127,19 @@ def _onset(shape=None, bias=0.5, f0=18037.0, quality="standard"):
     kw = {} if shape is None else dict(grid_shape=shape)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        st = Stage(FS, bias=bias, mode="T", quality=quality, experimental=True, **kw)
+        st = Stage(FS, bias=bias, mode="T", quality=quality, experimental=True, fir=GR.FIR, **kw)
         t = np.arange(int(GR.ONSET_S * FS) + st.latency_samples) / FS
         return st, st.process(8.0 * np.sin(2 * np.pi * f0 * t), record=("out", "vgk", "vak", "ig1", "ipk"))
 
 
 def test_nominal_stage_is_bit_identical_to_main():
-    """The default stage and an explicit grid_shape="RSD-1" give the same samples bit for bit, and both reproduce
-    main's committed #112 records: T 0.5 mA's 8 V 18037 Hz onset (grid.json) and T 0.5 mA's burst trajectory and Rk
-    (results_grid_T.json, standard). The records were made on macOS arm64, where they reproduce exactly; other
-    platforms' numpy (CI's Linux) differ in the last ulps, so the onset is compared to 1e-12 relative (Ip + Ig2,
-    = Ik - Ig1, a difference, to 1e-14 A, ~1e-11 of the cathode current); the 120 ms burst, where those ulps pass
-    through ~46k Newton solves (TOL_V 1e-6 V), to 1e-8 V (Linux: 1.2e-10 V); Rk, solved to 1e-13 in log10 (~2e-13
-    relative), to 1e-11."""
+    """The default grid shape and an explicit grid_shape="RSD-1" give the same samples bit for bit, and both reproduce
+    the committed records: T 0.5 mA's 8 V 18037 Hz onset (grid.json, #112, with the shipped FIR it was made with,
+    grid.FIR) and T 0.5 mA's burst trajectory and Rk (results_grid_T.json, standard, #134's k140 default). The
+    records were made on macOS arm64, where they reproduce exactly; other platforms' numpy (CI's Linux) differ in
+    the last ulps, so the onset is compared to 1e-12 relative (Ip + Ig2, = Ik - Ig1, a difference, to 1e-14 A, ~1e-11
+    of the cathode current); the 120 ms burst, where those ulps pass through ~46k Newton solves (TOL_V 1e-6 V), to
+    1e-8 V (Linux: 1.2e-10 V); Rk, solved to 1e-13 in log10 (~2e-13 relative), to 1e-11."""
     a, ra = _onset()
     b, rb = _onset("RSD-1")
     assert a.rk == b.rk and all(np.array_equal(ra[k], rb[k]) for k in ra if k != "_internal")
