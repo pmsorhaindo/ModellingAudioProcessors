@@ -25,7 +25,7 @@ from dk.aliasing import FS, SWEEP_HZ, DRIVES, WINDOW_S, CI_WINDOW_S, BAND_HZ, MA
 from dk.aliasing import LIMIT_DBC as LIMIT_DBC_12AX7  # noqa: E402 -- after the sys.path setup
 from dk6as6.stage import Stage, BIAS_MA  # noqa: E402 -- after the sys.path setup
 from dk6as6.circuit import MODES, MODE  # noqa: E402 -- after the sys.path setup
-from dk6as6.pentode import HARDNESS  # noqa: E402 -- after the sys.path setup
+from dk6as6.pentode import HARDNESS, GRID_SHAPE  # noqa: E402 -- after the sys.path setup
 from spice6as6.run_refs import MODE_BIASES, GRID_BIASES  # noqa: E402 -- after the sys.path setup
 
 SETTLE_S = 1.25
@@ -124,19 +124,20 @@ CI_CASES_GRID = [("P1", BIAS_MA, 8.0, 19037), ("P1", 0.6, 8.0, 19037), ("T", 0.5
 
 
 def measure(drive, f, bias=BIAS_MA, quality="standard", filt="fir", window=WINDOW_S, settle=SETTLE_S, fs=FS,
-            mode=MODE, grid_hardness=HARDNESS):
+            mode=MODE, grid_hardness=HARDNESS, grid_shape=GRID_SHAPE):
     """dk.aliasing.measure for the 6AS6 stage at `bias` mA, wired as `mode`, at `grid_hardness` (the default: the g1
-    grid current; 0 for the #111 records)."""
+    grid current; 0 for the #111 records) and `grid_shape` (the nominal, or a #131 bound, which the record names)."""
     n, n0 = int(round(window * fs)), int(round(settle * fs))
     m = tone_bin(f, n, fs)
     st = Stage(fs, bias=bias, quality=quality, filt=filt, mode=mode, experimental=True,   # support: stage.supported()
-               grid_hardness=grid_hardness)
+               grid_hardness=grid_hardness, grid_shape=grid_shape)
     L = st.latency_samples
     x = drive * np.sin(2 * np.pi * m * np.arange(n0 + n + L) / n)
     y = st.process(x)["out"][n0 + L:n0 + L + n]
     return dict(setting=quality, os=st.os, filt=filt, bias_ma=bias, drive=float(drive), tone=int(f), fs_base=fs,
                 f_hz=m * fs / n, window_s=window, settle_s=settle, **({} if mode == "P1" else dict(mode=mode)),
                 **({} if not grid_hardness else dict(grid_hardness=grid_hardness, nonconverged=st.nonconv)),
+                **({} if not grid_hardness or grid_shape == GRID_SHAPE else dict(grid_shape=grid_shape)),
                 **alias_dbc(y, m, fs, st.os))
 
 

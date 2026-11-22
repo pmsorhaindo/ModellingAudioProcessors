@@ -12,6 +12,10 @@ reference (ii), ngspice running the same valve law. The bias control (#110) is i
 > `grid_hardness` control; "Grid current (#112)" at the end). Every result above "Grid current (#112)" is the stage at
 > `grid_hardness=0`, reproduced bit for bit. With grid current P1 is unchanged to rounding, and T is supported to
 > 0.5 mA instead of 0.3 mA.
+>
+> **#131 (part a): bounds on that borrowed law.** DZ Table 1's other two measured 12AX7s (RSD-2, EHX-1), scaled the
+> same way, are opt-in bounds (`Stage(grid_shape=...)`, experimental only); the default stays RSD-1, bit for bit.
+> "Grid-current bounds (#131)" at the end has how far the T 0.45–0.6 mA results move.
 
 ## Circuit values (#102)
 Copied from the #102 research pass
@@ -1252,7 +1256,7 @@ smallest finite residual over all three starts and count the sample as not conve
 overflowing step ends an attempt instead of raising (`dk6as6/tests/test_dk6as6_grid.py`: a live rescued-sample
 regression against an independent solve, and the review's failure case, which checks that selection). Worst case per
 sample is 3 × MAX_IT iterations; none of the measured signals needs a second start. The C++ port (#104) should budget
-from the measured ≤ 15.
+from the measured ≤ 15 (≤ 18 with the EHX-1 bound shape: "Grid-current bounds (#131)" below).
 
 ### Validation against the same-model ngspice references (`dk/validate.CRIT` unchanged; `results_grid[_T].json`)
 References `spice6as6/reference_dualg_{0.1,0.25,0.45}mA.json` (P1) and `reference_dualg_T_{0.1,0.25,0.35,0.45,0.5,0.6}mA.json`
@@ -1394,3 +1398,236 @@ onset and the internal aliasing passes the gate (−109.7 / −87.5 dBc). **That
 measured here, and the gate is defined at standard. The repo has no audibility criterion (#96), and this does not
 invent one. Regression baselines: `aliasing.LIMIT_DBC_GRID` (worst + 3 dB). CI re-measures P1 0.45 / 0.6 mA at 8 V and
 T 0.5 mA at 2 and 8 V (`CI_CASES_GRID`). Every grid sweep record carries Newton's unconverged count: zero everywhere.
+
+## Grid-current bounds (#131, part a; every grid-current number here is estimated, unvalidated)
+**Question:** #112's grid law borrows its shape (ξ, Cg) and, by a perveance scaling, its strength (Gg) from one
+measured 12AX7, Dempwolf & Zölzer's RSD-1. The 6AS6 positive-g1 measurement that would replace it is parked (#131: no
+tube available). How far do the #112 / #113 results move if the borrowed shape is instead one of the other two 12AX7s
+the same paper measured?
+
+**Basis.** Dempwolf & Zölzer, *A physically-motivated triode model for circuit simulations*, DAFx-11
+(https://www.dafx.de/paper-archive/2011/Papers/76_e.pdf), **Table 1, "Individually fitted parameters for 12AX7
+triodes", columns RSD-1, RSD-2 and EHX-1, rows G, Gg, ξ, Cg** (re-read from the PDF for #131; all eight rows of each
+column are in `dk/triode.py`, `DZ_12AX7_RSD1/RSD2/EHX1`, and `test_table1_columns_are_the_papers` pins them). Each
+column is scaled the way #112 scaled RSD-1: **Gg = hardness × (2/KG1) / G × Gg** of that column, with ξ and Cg as
+printed (`pentode.grid(shape=...)`, `test_bounds_are_scaled_as_the_nominal`).
+
+| shape (Table 1 column) | G, A/V^γ | Gg, A/V^ξ | ξ | Cg, /V | ratio (2/KG1)/G | 6AS6 Gg (hardness 1) |
+|---|---|---|---|---|---|---|
+| **RSD-1 (nominal, the #112 default)** | 2.242e-3 | 6.177e-4 | 1.314 | 9.901 | 1.2808 | 7.912e-4 |
+| RSD-2 (bound) | 2.173e-3 | 5.911e-4 | 1.358 | 11.76 | 1.3215 | 7.811e-4 |
+| EHX-1 (bound) | 1.371e-3 | 3.263e-4 | 1.156 | 11.99 | 2.0945 | 6.834e-4 |
+
+**How the bounds are selected (and what does not change).** `pentode.GRID_SHAPES` / `GRID_BOUNDS`,
+`Stage(grid_shape="RSD-2" | "EHX-1")` (also `operating_point`, `cathode_resistor`, `bias_point`, and the measurement
+functions of `grid.py`, `envelope.py`, `aliasing.py`); ngspice models `dualg_rsd2` / `dualg_ehx1` (`run_refs.py`,
+their own subckts `models/6as6_dualg_{rsd2,ehx1}_cg3k.inc`, T only); `validate.py --bounds`. **A bound has no supported
+envelope**: `Stage(grid_shape=bound)` raises `UnsupportedSettingError` unless `experimental=True`. **The nominal path is
+main's bit for bit** (`dk6as6/tests/test_dk6as6_grid_bounds.py`): `pentode.GRID` and every committed record's grid dict
+are #112's exactly (no new key), the nominal subckts and netlists regenerate byte-identical, and the default stage and
+an explicit `grid_shape="RSD-1"` give the same samples bit for bit, and reproduce main's committed T 0.5 mA onset
+(`grid.json`) and burst trajectory and Rk (`results_grid_T.json`) exactly on macOS arm64, where those records were made
+(on CI's Linux, whose numpy differs in the last ulps, the onset to 1e-12 relative and the burst trajectory to
+1e-8 V, against Newton's 1e-6 V tolerance).
+
+**Ig1 (A) at Vg1k: these are not two-sided bounds, and the curves cross** (corrected after the PR #139 review).
+RSD-1 has the softest onset (Cg 9.9 /V against ~12), so far below the cathode both bounds draw less current (RSD-2
+1/27 of RSD-1 at −1 V). **RSD-2 stays below RSD-1 up to +1.34 V.** **EHX-1 crosses above RSD-1 at −66.5 mV and back
+below at +383 mV**, so in that window it draws *more* (+1.5 % at −50 mV, +5.4 % at 0 V). At +0.5 V all three agree
+within 5 %, and at +2 V EHX-1 is 23 % lower. Which shape "starts conducting first" therefore depends on the current
+taken as the onset, so the comparison is tied to a stated threshold (Vg1k at which Ig1 reaches it, mV; bisection on
+`pentode.grid_current`):
+
+| onset threshold | RSD-1 | RSD-2 | EHX-1 |
+|---|---|---|---|
+| 1 µA | −278.3 | −203.8 | −262.0 |
+| 10 µA | −85.9 | −42.3 | −84.3 |
+| 20 µA (illustrative, ~1.4 V across the 68k stopper) | −19.2 | +15.9 | **−22.9** |
+
+So EHX-1 reaches 20 µA 3.8 mV before RSD-1, and at 1 µA or 10 µA it is later. The 0.2–0.3 V earlier onset that the
+6Ж2П datasheet hints at (#131 write-up) is far outside this spread. It is **131b's** opt-in sensitivity test, not
+covered here.
+
+| Vg1k | RSD-1 | RSD-2 | EHX-1 |
+|---|---|---|---|
+| −1.5 V | 1.3e-13 | 1.09e-15 | 3.62e-14 |
+| −1 V | 8.71e-11 | 3.19e-12 | 3.70e-11 |
+| −0.5 V | 5.79e-8 | 9.34e-9 | 3.78e-8 |
+| −0.16 V | 4.28e-6 | 1.94e-6 | 3.89e-6 |
+| −0.05 V | 1.466e-5 | 9.06e-6 | 1.488e-5 |
+| 0 V | 2.40e-5 | 1.67e-5 | 2.53e-5 |
+| +0.5 V | 3.19e-4 | 3.05e-4 | 3.07e-4 |
+| +1 V | 7.91e-4 | 7.81e-4 | 6.83e-4 |
+| +2 V | 1.97e-3 | 2.00e-3 | 1.52e-3 |
+
+At rest the shapes move nothing. T's operating points (Rk, Vg1k, Vak) agree to 4 digits at 0.35–0.55 mA. At 0.6 mA,
+where g1 rests at −0.949 V, Ig1 at rest is 0.17 nA (RSD-1), 7.2 pA (RSD-2) and 75 pA (EHX-1), and Rk differs by
+≤ 1.7e-4 (`grid_bounds.json` "law").
+
+**Files.** `python -m dk6as6.grid_bounds [law] [envelope] [aliasing]` → `grid_bounds.json` (bounds only; the nominal
+numbers are the committed #112 / #113 records, which the same functions reproduce); `python spice6as6/run_refs.py
+--split 6 dualg_rsd2/T dualg_ehx1/T` → `spice6as6/reference_dualg_{rsd2,ehx1}_T_{0.45,0.5,0.6}mA.json` (ngspice 41,
+`spice/run_refs.SOLVER` unchanged); `python -m dk6as6.validate --bounds` → `results_grid_{rsd2,ehx1}_T.json`;
+`python -m dk6as6.grid_bounds tables` prints every table below. The machine was shared (load 90–180), so no timing is
+reported.
+
+### Method check: DK against each bound's own ngspice reference (`dk/validate.CRIT` unchanged)
+**All 12 cases pass every criterion** (T 0.45 / 0.5 / 0.6 mA × RSD-2 / EHX-1 × standard / hq). These settings are
+experimental, so the results are recorded, not counted as supported passes. Standard 8×:
+
+| criterion (limit) | RSD-2 0.45 | RSD-2 0.5 | RSD-2 0.6 | EHX-1 0.45 | EHX-1 0.5 | EHX-1 0.6 |
+|---|---|---|---|---|---|---|
+| op point, worst rel. (< 0.001) | 1.5e-9 | 3.2e-9 | 6.6e-9 | 1.5e-9 | 3.2e-9 | 7.9e-9 |
+| small signal, stage / chain (< 0.1 dB) | 0.00019 / 0.00092 | 0.00023 / 0.00094 | 0.00035 / 0.00101 | 0.00019 / 0.00092 | 0.00023 / 0.00094 | 0.00035 / 0.00101 |
+| H2–H5 worst tested (< 0.1 dB) | 0.00383 (H4, 2 V; 9 tested) | 0.00102 (H4, 2 V; 10) | 0.00702 (H2, 2 V; 13) | 0.00388 (H4, 2 V; 9) | 0.00122 (H4, 2 V; 10) | 0.00292 (H2, 2 V; 13) |
+| burst shift / trajectory (< 0.5 % / 0.5 %) | 0.069 % / 0.0077 % | 0.056 % / 0.0061 % | 0.036 % / 0.0039 % | 0.069 % / 0.0076 % | 0.055 % / 0.0061 % | 0.036 % / 0.0039 % |
+| recovery: tail τ (< 1 %) | 0.0009 % | 0.0000 % | 0.0000 % | 0.0002 % | 0.0000 % | 0.0000 % |
+| Newton non-converged / max it. | 0 / 4 | 0 / 4 | 0 / 4 | 0 / 4 | 0 / 4 | 0 / 4 |
+
+So the DK solver handles the sharper bound onsets (Cg ~12 /V) as accurately as the nominal one. In the result tables
+below, DK and ngspice agree to the digits shown.
+
+### How far T 0.45–0.6 mA moves (DK standard 8×, 48 kHz)
+**4 V, 1 kHz burst: grid DC (cycle-mean Vgk), V** (`results_grid[_rsd2|_ehx1]_T.json`):
+
+| T, bias | shape | rest | shift (min − rest) | at 30 / 35 / 50 / 118.5 ms | tail τ |
+|---|---|---|---|---|---|
+| 0.45 mA | RSD-1 | −2.6527 | −0.854 | −3.507 / −2.662 / −2.661 / −2.657 | 107.1 ms |
+| 0.45 mA | RSD-2 | −2.6527 | −0.848 | −3.500 / −2.655 / −2.655 / −2.654 | 106.3 ms |
+| 0.45 mA | EHX-1 | −2.6527 | −0.853 | −3.505 / −2.660 / −2.659 / −2.656 | 107.0 ms |
+| 0.5 mA | RSD-1 | −2.0543 | −1.183 | −3.238 / −2.292 / −2.260 / −2.162 | 105.8 ms |
+| 0.5 mA | RSD-2 | −2.0543 | −1.162 | −3.217 / −2.272 / −2.243 / −2.153 | 105.9 ms |
+| 0.5 mA | EHX-1 | −2.0543 | −1.182 | −3.236 / −2.290 / −2.259 / −2.161 | 105.8 ms |
+| 0.6 mA | RSD-1 | −0.9488 | −2.188 | −3.137 / −1.969 / −1.830 / −1.401 | 102.5 ms |
+| 0.6 mA | RSD-2 | −0.9488 | −2.165 | −3.114 / −1.948 / −1.811 / −1.391 | 102.6 ms |
+| 0.6 mA | EHX-1 | −0.9488 | −2.189 | −3.138 / −1.970 / −1.831 / −1.401 | 102.5 ms |
+
+**The peak shift and the tail τ move by ≤ 2 %; the residual blocking after the burst does not** (corrected after the
+PR #139 review). The shift moves by ≤ 23 mV and ≤ 1.8 % (RSD-2; 0.5 mA: 21 mV, 1.8 %; 0.6 mA: 23 mV, 1.1 %) and the tail τ by ≤ 0.8 ms
+(0.7 %). The residual blocking (Vgk − rest after the burst), mV:
+
+| T, bias | at 35 ms: RSD-1 / RSD-2 / EHX-1 | at 118.5 ms: RSD-1 / RSD-2 / EHX-1 |
+|---|---|---|
+| 0.45 mA | −8.98 / −2.75 / −7.32 | −4.12 / −1.25 / −3.35 |
+| 0.5 mA | −237.6 / −218.0 / −235.9 | −108.0 / −99.1 / −107.2 |
+| 0.6 mA | −1020.3 / −998.8 / −1021.3 | −451.9 / −442.5 / −452.4 |
+
+At 35 ms it moves by up to 21.5 mV (0.6 mA, RSD-2), which is 2.1 % of the blocking there, 8.25 % at 0.5 mA (19.6 mV),
+and 69 % at 0.45 mA, where the blocking itself is only 9 mV (6.2 mV). EHX-1 stays within 2 mV of RSD-1 in every column of both tables.
+RSD-2 draws the least current below +1.34 V, so it blocks least.
+
+**THD vs drive, 1 kHz, %** (H2 / H3 / H4 dBc where they move):
+
+| T, bias | shape | 0.05 V | 0.5 V | 2 V | 8 V |
+|---|---|---|---|---|---|
+| 0.45 mA | RSD-1 / RSD-2 / EHX-1 | 0.04691 (all) | 0.4697 (all) | 1.916 (all) | 10.03 / 9.992 / 10.05 |
+| 0.5 mA | RSD-1 / RSD-2 / EHX-1 | 0.06179 (all) | 0.6192 (all) | 2.554 / 2.558 / 2.556 | 13.25 / 13.20 / 13.28 |
+| 0.6 mA | RSD-1 | 0.1202 | 1.098 (H4 −68.0, H5 −74.8) | 4.085 | 19.36 |
+| 0.6 mA | RSD-2 | 0.1220 | 1.206 (H4 −83.6, H5 −87.5) | 4.078 | 19.33 |
+| 0.6 mA | EHX-1 | 0.1212 | 1.142 (H4 −71.3, H5 −77.4) | 4.139 | 19.39 |
+
+THD moves by ≤ 0.05 percentage points at 8 V and ≤ 0.004 at 2 V up to 0.5 mA, and by ≤ 0.11 at 0.6 mA (0.5 V). Some
+low-level harmonics move more: at 0.5 mA, 2 V, H5 is −110.4 / −94.8 / −103.0 dBc.
+
+**1 kHz tones, last 100 cycles of 0.5 s** (max Vg1k, min Vak, THD; `grid_bounds.json` "envelope" tones; RSD-1 from
+`grid.json`, which has no 0.55 mA tone):
+
+| T, bias | drive | RSD-1 | RSD-2 | EHX-1 |
+|---|---|---|---|---|
+| 0.45 mA | 4 V | −0.29 V, 20.2 V, 3.81 % | −0.25 V, 19.1 V, 3.94 % | −0.28 V, 20.0 V, 3.84 % |
+| 0.45 mA | 8 V | −0.04 V, 13.5 V, 10.03 % | +0.00 V, 12.5 V, 9.99 % | −0.04 V, 13.6 V, 10.05 % |
+| 0.5 mA | 4 V | −0.13 V, 16.0 V, 3.95 % | −0.09 V, 14.6 V, 4.02 % | −0.13 V, 15.8 V, 3.98 % |
+| 0.5 mA | 8 V | −0.01 V, 12.9 V, 13.25 % | +0.02 V, 12.0 V, 13.20 % | −0.01 V, 13.1 V, 13.28 % |
+| 0.55 mA | 8 V | — | +0.04 V, 11.6 V, 16.41 % | +0.00 V, 12.7 V, 16.48 % |
+| 0.6 mA | 2 V | −0.15 V, 16.4 V, 4.09 % | −0.10 V, 15.0 V, 4.08 % | −0.15 V, 16.2 V, 4.14 % |
+| 0.6 mA | 8 V | +0.02 V, 12.3 V, 19.36 % | +0.05 V, 11.4 V, 19.33 % | +0.01 V, 12.5 V, 19.39 % |
+
+(Up to 6 V at 0.35–0.4 mA and up to 2 V at 0.45–0.5 mA the three are equal to the digits shown; all 24 points per
+shape are in the file.)
+
+**In the law (#121's stimulus class with grid current, `envelope.excursion`, 288 runs per shape, standard and hq):
+every T current 0.35–0.6 mA stays in the law with both bounds**, with no guard count and no unconverged sample. Worst
+max Vg1k, min Vak, min Ip + Ig2:
+
+| T, bias | RSD-1 (`envelope_grid.json`) | RSD-2 | EHX-1 |
+|---|---|---|---|
+| 0.35 mA | −0.078 V, 14.5 V, 36 µA | −0.043 V, 13.5 V, 36 µA | −0.077 V, 14.5 V, 36 µA |
+| 0.45 mA | +0.114 V, 9.5 V, 5.3 µA | +0.137 V, 8.8 V, 5.6 µA | +0.103 V, 9.8 V, 5.3 µA |
+| 0.5 mA | +0.156 V, 8.4 V, 1.6 µA | +0.176 V, 7.7 V, 1.7 µA | +0.144 V, 8.7 V, 1.6 µA |
+| 0.55 mA | +0.187 V, 7.6 V, 0.56 µA | +0.207 V, 7.0 V, 0.58 µA | +0.175 V, 7.9 V, 0.56 µA |
+| 0.6 mA | +0.210 V, 6.8 V, 0.22 µA | +0.229 V, 6.2 V, 0.23 µA | +0.198 V, 7.1 V, 0.22 µA |
+
+**Onsets and the steady-state band scan** (`grid._onset` at T 0.35–0.6 mA × 6 tones × standard / hq; `grid._hf` at
+0.35–0.6 mA × 4 / 6 / 8 V × 10 tones): every run is in the law and converges on every sample with no restart. **Newton
+takes up to 18 iterations with EHX-1** (standard; at 0.5–0.6 mA, 10–19 kHz), against ≤ 15 for RSD-1 and ≤ 14 for
+RSD-2. EHX-1 has the largest Cg with the smallest ξ, so its onset is the sharpest switch in a few samples. **Scope:**
+the 1 kHz tones, onsets and band scan record iterations and restarts. The stimulus-class runs (above) and the aliasing
+runs (below) record only unconverged samples (none) and the guard count (none, stimulus class), so 18 is the largest
+count *observed* in the recorded runs, not a bound over every run here.
+
+**Aliasing** (`aliasing.measure`, 1 s window after 1.25 s, 8× FIR, 48 kHz; the five top tones, and the full 19-tone
+sweep at T 0.5 mA; RSD-1 from `aliasing_grid_T.json`). Worst total, dBc (gate `aliasing.QUALITY_GATE_DBC`):
+
+| T, bias, drive | gate | RSD-1 | RSD-2 | EHX-1 |
+|---|---|---|---|---|
+| 0.45 mA, 2 V | −118.3 | −129.32 (resampler) | −129.32 | −129.32 |
+| 0.45 mA, 8 V | −48.6 | −66.14 (internal) | −63.92 | −65.12 |
+| **0.5 mA, 2 V (full)** | −118.3 | **−126.84** (resampler) | **−126.78** | **−126.81** |
+| **0.5 mA, 8 V (full)** | −48.6 | **−63.92** at 17037 Hz (internal) | **−62.47** at 17037 Hz | **−63.22** at 17037 Hz |
+| 0.55 mA, 2 V | −118.3 | **−109.66 (fails)** | **−96.92 (fails)** | **−104.44 (fails)** |
+| 0.55 mA, 8 V | −48.6 | −60.33 | −58.99 | −59.70 |
+| 0.6 mA, 2 V | −118.3 | **−87.49 (fails)** | **−84.25 (fails)** | **−85.86 (fails)** |
+| 0.6 mA, 8 V | −48.6 | −57.26 | −56.31 | −56.81 |
+
+**The CI guard's T keys** (`aliasing_guard.CI`, its 0.1 s CI window and tones, both rates; worst tone, dBc; RSD-1 is
+the committed baseline):
+
+| rate, key | limit | RSD-1 | RSD-2 (worst Δ vs baseline) | EHX-1 (worst Δ) |
+|---|---|---|---|---|
+| 48 kHz, T/0.5mA/4x/2V | −101.8 | −104.87 | −119.32 (−14.2 dB) | −108.68 (−3.8) |
+| 48 kHz, T/0.5mA/4x/8V | −40.8 | −43.88 | −43.31 (+0.6) | −43.59 (+0.3) |
+| 48 kHz, T/0.5mA/standard/8V | −60.3 | −63.39 | **−60.90 (+2.5)** | −62.26 (+1.1) |
+| 48 kHz, T/0.5mA/hq/8V | −80.7 | −83.79 | −82.11 (**+1.7**) | −82.92 (+0.9) |
+| 44.1 kHz, T/0.5mA/4x/2V | −97.3 | −100.45 | −115.20 (−14.5) | −104.40 (−3.9) |
+| 44.1 kHz, T/0.5mA/4x/8V | −39.4 | −42.67 | −42.37 (+0.5) | −42.48 (+0.3) |
+| 44.1 kHz, T/0.5mA/standard/8V | −56.4 | −59.41 | −58.12 (+1.3) | −58.79 (+0.6) |
+| 44.1 kHz, T/0.5mA/hq/8V | −77.3 | −80.36 | −78.61 (**+1.7**) | −79.53 (+0.8) |
+
+Every bound point is inside the guard's absolute limits. With RSD-2 the 48 kHz standard 8 V key keeps only 0.6 dB of
+its 3 dB margin, and three keys read more than the ratchet's 1.5 dB above the nominal baseline. The guard measures the
+nominal stage only (`aliasing_guard.GRID_HARDNESS`, shape RSD-1), so none of this changes CI. It does mean that
+**changing the default shape would need new baselines**, and with RSD-2 the standard 8 V limit too.
+
+### What this means for the #112 / #113 claims
+- **T's envelope end (0.5 mA), at the measured points:** at standard 8×, 48 kHz, T 0.5 mA passes the quality gate with
+  every shape at both drives (2 V by ≥ 8.4 dB, 8 V by ≥ 13.8 dB), and T 0.55 mA fails it at 2 V with every shape. The
+  0.5 mA end set by the 2 V gate therefore does not move between these shapes. The margin at 0.55 mA does move:
+  −96.9 to −109.7 dBc against the −118.3 dBc gate. The law limits (plate above the cathode, Ip + Ig2 ≥ 0, converged)
+  hold with each shape at every T current measured, 0.35–0.6 mA. **Not re-measured with the bounds:** T below 0.35 mA
+  (law) and below 0.45 mA (aliasing), 44.1 kHz except the guard's keys, and 4× / 16× except the guard's T 0.5 mA keys.
+  So this is not a re-derivation of the whole 0.1–0.5 mA envelope per shape.
+- **Blocking and recovery** (#112's "this is the blocking the issue asked for"): the peak shift and the ~0.1 s tail τ
+  move by ≤ 2 % across the bounds. The residual blocking after the burst moves by up to 21.5 mV at 35 ms (8.25 % at
+  0.5 mA), so it is shape-dependent in size. That blocking happens, and how it recovers, is common to the whole
+  borrowed law family. It is still not a 6AS6 measurement.
+- **THD and "halves the 8 V distortion" at 0.45–0.6 mA:** 8 V THD moves by ≤ 0.05 points, so that claim stands. **The
+  H4 / H5 that the grid onset adds at T 0.6 mA, 0.5 V does not stand as a number:** H4 is −68.0 / −83.6 / −71.3 dBc
+  (15.6 dB spread) and H5 −74.8 / −87.5 / −77.4. #112 already called it "a prediction of the borrowed DZ shape, the
+  part of this law least supported by 6AS6 data". The bounds show it is the most shape-sensitive result here, at an
+  unsupported setting.
+- **8× aliasing with grid current (#113):** at the measured 8 V points (8×, 48 kHz, T 0.45–0.6 mA) the bounds only
+  make the internal folding worse, by up to 2.2 dB (T 0.45 mA, RSD-2: −63.92 against −66.14 dBc) and 1.45 dB at T's
+  top (0.5 mA, RSD-2: −62.47 dBc, still 13.9 dB inside the gate). The 2 V maxima at 0.45–0.5 mA do not move (they are
+  the resampler's). #113's "internal folding at every factor" at 8 V is confirmed for the bounds only where it was
+  measured: T 0.5 mA at 4×, 8× and 16× on the guard's tones at both rates (0.1 s CI window; internal ≥ 20 dB above the
+  resampler share at every one), and T 0.45–0.6 mA at 8×. #113's figures are the nominal's and stay as stated, with up
+  to +2.2 dB of shape uncertainty at the measured 8 V points.
+- **Newton budget for the C++ port (#104):** "budget from the measured ≤ 15" becomes **≤ 18, the largest count observed**
+  with the bounds (EHX-1; tones, onsets and band scan, the runs that record iterations). It stays far below MAX_IT = 50,
+  and none of those runs needed a restart.
+- **What the bounds cannot say.** All three are 12AX7s, and all three are scaled by the same perveance assumption. A
+  real 6AS6 could differ in ways Table 1 does not span: the onset voltage, the grid / plate current division, or a
+  different Gg scaling. The columns' onsets differ by only a few to ~75 mV, depending on the threshold (EHX-1 is
+  3.8 mV *earlier* than RSD-1 at 20 µA, later at 1 µA and 10 µA). A 6AS6 that conducts 0.2–0.3 V earlier (the 6Ж2П
+  hint) lies well outside that spread. That is #131b. T-mode aliasing with these bounds is #132. The positive-g1
+  measurement stays parked in #131. **Every grid-current result stays labelled "estimated, unvalidated."**

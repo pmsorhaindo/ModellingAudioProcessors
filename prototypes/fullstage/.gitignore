@@ -1,1 +1,4 @@
 __pycache__/
+# grid_bounds.publish's lock and in-flight temporary files (#131)
+dk6as6/grid_bounds.json.lock
+dk6as6/grid_bounds.json.*.tmp

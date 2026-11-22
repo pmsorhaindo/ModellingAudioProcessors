@@ -29,7 +29,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from dk6as6.stage import Stage, QUALITY, ExperimentalWarning, OutOfLawWarning, NonConvergenceWarning  # noqa: E402
-from dk6as6.pentode import HARDNESS  # noqa: E402 -- after the sys.path setup
+from dk6as6.pentode import HARDNESS, GRID_SHAPE  # noqa: E402 -- after the sys.path setup
 
 FS = 48000.0
 DRIVE_V = 8.0
@@ -49,19 +49,22 @@ def stimulus(f, phase, latency, fs=FS):
     return np.r_[np.zeros(int(0.005 * fs)), x, np.zeros(int(0.02 * fs) + latency)]
 
 
-def excursion(mode, bias, quality, f, phase, grid_hardness=0.0):
+def excursion(mode, bias, quality, f, phase, grid_hardness=0.0, grid_shape=GRID_SHAPE):
     """(max Vg1k, min Vak, min Ip + Ig2) over the whole run at the internal rate, the guard's count and Newton's
-    unconverged samples, at grid_hardness (0: the #111 law, the default here so envelope.json stays reproducible)."""
+    unconverged samples, at grid_hardness (0: the #111 law, the default here so envelope.json stays reproducible) and
+    grid_shape (the nominal, or a #131 bound, which the row then names)."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", ExperimentalWarning)
         warnings.simplefilter("ignore", OutOfLawWarning)
         warnings.simplefilter("ignore", NonConvergenceWarning)
-        st = Stage(FS, bias=bias, mode=mode, quality=quality, experimental=True, grid_hardness=grid_hardness)
+        st = Stage(FS, bias=bias, mode=mode, quality=quality, experimental=True, grid_hardness=grid_hardness,
+                   grid_shape=grid_shape)
         r = st.process(stimulus(f, phase, st.latency_samples), record=("vgk", "a", "k", "ipk"))["_internal"]
     return dict(mode=mode, bias_ma=bias, quality=quality, f_hz=f, phase=phase, vg1k_max=float(r["vgk"].max()),
                 vak_min=float((r["a"] - r["k"]).min()), out_of_law=st.out_of_law,
                 **({} if not grid_hardness else dict(grid_hardness=grid_hardness, ipk_min=float(r["ipk"].min()),
-                                                     nonconverged=st.nonconv)))
+                                                     nonconverged=st.nonconv)),
+                **({} if not grid_hardness or grid_shape == GRID_SHAPE else dict(grid_shape=grid_shape)))
 
 
 def _job(a):

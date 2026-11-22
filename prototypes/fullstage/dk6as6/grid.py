@@ -132,10 +132,16 @@ def static():
 
 # --- the envelope: swings with grid current --------------------------------------------------------------------
 
+# Each job tuple may end in a grid shape (pentode.GRID_SHAPES key; the #131 bounds, dk6as6/grid_bounds.py); without one
+# it is the nominal law, as #112 ran it.
+def _shape(a, n):
+    return a[:n], (a[n] if len(a) > n else pentode.GRID_SHAPE)
+
+
 def _tone(a):
-    mode, bias, drive = a
+    (mode, bias, drive), shape = _shape(a, 3)
     warnings.simplefilter("ignore")
-    st = Stage(FS, bias=bias, mode=mode, experimental=True)
+    st = Stage(FS, bias=bias, mode=mode, experimental=True, grid_shape=shape)
     t = np.arange(int(modes.T * FS) + st.latency_samples) / FS
     r = aligned(st, drive * np.sin(2 * np.pi * 1000 * t), record=("out", "vgk", "vak", "ig1", "ipk"))
     i = r["_internal"]
@@ -150,9 +156,9 @@ def _tone(a):
 
 
 def _onset(a):
-    mode, bias, f0, quality = a
+    (mode, bias, f0, quality), shape = _shape(a, 4)
     warnings.simplefilter("ignore")
-    st = Stage(FS, bias=bias, mode=mode, quality=quality, experimental=True)
+    st = Stage(FS, bias=bias, mode=mode, quality=quality, experimental=True, grid_shape=shape)
     t = np.arange(int(ONSET_S * FS) + st.latency_samples) / FS
     r = st.process(8.0 * np.sin(2 * np.pi * f0 * t), record=("out", "vgk", "vak", "ig1", "ipk"))["_internal"]
     s = st.iteration_stats()
@@ -162,9 +168,9 @@ def _onset(a):
 
 
 def _hf(a):
-    mode, bias, drive, f0 = a
+    (mode, bias, drive, f0), shape = _shape(a, 4)
     warnings.simplefilter("ignore")
-    st = Stage(FS, bias=bias, mode=mode, experimental=True)
+    st = Stage(FS, bias=bias, mode=mode, experimental=True, grid_shape=shape)
     t = np.arange(int(HF_S * FS) + st.latency_samples) / FS
     r = st.process(drive * np.sin(2 * np.pi * f0 * t), record=("out", "vgk", "vak", "ig1", "ipk"))["_internal"]
     s = st.iteration_stats()

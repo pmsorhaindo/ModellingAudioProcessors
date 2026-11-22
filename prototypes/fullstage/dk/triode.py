@@ -28,6 +28,13 @@ from . import fastmath as fm
 
 DZ_12AX7_RSD1 = dict(G=2.242e-3, mu=103.2, gamma=1.26, C=3.40,
                      Gg=6.177e-4, xi=1.314, Cg=9.901, Ig0=8.025e-8)
+# The other two columns of the same Table 1 ("Individually fitted parameters for 12AX7 triodes", p. 5 of the paper,
+# re-read from the PDF for #131). Not used by the 12AX7 stage, which stays on RSD-1: they are the bounds of the 6AS6
+# stage's borrowed grid-current shape (dk6as6/pentode.GRID_SHAPES, #131).
+DZ_12AX7_RSD2 = dict(G=2.173e-3, mu=100.2, gamma=1.28, C=3.19,
+                     Gg=5.911e-4, xi=1.358, Cg=11.76, Ig0=4.527e-8)
+DZ_12AX7_EHX1 = dict(G=1.371e-3, mu=86.9, gamma=1.349, C=4.56,
+                     Gg=3.263e-4, xi=1.156, Cg=11.99, Ig0=3.917e-8)
 
 
 def softplus(x):

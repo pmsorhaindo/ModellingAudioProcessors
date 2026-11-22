@@ -10,6 +10,11 @@ reference_<model>[_<mode>]_<bias>mA.json (#26, #102, #111).
                  carry (Ik - Ig1) x share. Its own subckts (models/6as6_dualg{,_cg3k}.inc) and references
                  (reference_dualg[_<mode>]_<bias>mA.json, at GRID_BIASES); the 'dual' subckts and references (Ig1 = 0)
                  are unchanged and still validate the stage at grid_hardness=0.
+  models 'dualg_rsd2', 'dualg_ehx1' (#131): 'dualg' with the BOUND grid shapes RSD-2 / EHX-1 (pentode.GRID_BOUNDS,
+                 Stage(grid_shape=...): DZ Table 1's other two 12AX7s, scaled as RSD-1; estimated, unvalidated), T only
+                 (P1 draws no grid current, dk6as6/RESULTS.md), at BOUND_BIASES. Their own subckts
+                 (models/6as6_dualg_{rsd2,ehx1}_cg3k.inc) and references (reference_dualg_{rsd2,ehx1}_T_<bias>mA.json);
+                 'dualg' (the nominal RSD-1) and its files are unchanged.
 Mode (#111): the Distortion switch's wiring, dk6as6/circuit.MODES (P1, the default, keeps its #118 file names; T and
 P2 references are reference_dual_<mode>_<bias>mA.json, at MODE_BIASES[mode]).
 Bias: the cathode resistor of each reference is dk6as6.stage.cathode_resistor(bias, params, mode=mode), the Rk the DK
@@ -57,8 +62,12 @@ from dk6as6.stage import cathode_resistor, BIAS_MA  # noqa: E402 -- after the sy
 sys.path.insert(0, pentode.FIT6AS6)
 import emit_spice  # noqa: E402  (fit6as6's SPICE expressions)
 
-PARAMS = {"dual": pentode.DUAL_CONTROL, "r51": pentode.REFIT_51, "dualg": pentode.DUAL_CONTROL}
-HARDNESS = {"dual": 0.0, "r51": 0.0, "dualg": pentode.HARDNESS}   # grid hardness of each model (0: no Ig1 port)
+PARAMS = {"dual": pentode.DUAL_CONTROL, "r51": pentode.REFIT_51, "dualg": pentode.DUAL_CONTROL,
+          "dualg_rsd2": pentode.DUAL_CONTROL, "dualg_ehx1": pentode.DUAL_CONTROL}
+HARDNESS = {"dual": 0.0, "r51": 0.0, "dualg": pentode.HARDNESS,    # grid hardness of each model (0: no Ig1 port)
+            "dualg_rsd2": pentode.HARDNESS, "dualg_ehx1": pentode.HARDNESS}
+# The #131 bound models' grid shapes (pentode.GRID_BOUNDS); every other model runs the nominal pentode.GRID_SHAPE
+GRID_SHAPE = {"dualg_rsd2": "RSD-2", "dualg_ehx1": "EHX-1"}
 # target cathode currents of the P1 references, mA (#110: the range ends, lowest distortion, default)
 # dualg P1 stops at 0.45 mA: at 0.6 mA P1 draws Ig1 <= 1e-23 A on every validate.py signal, so its dual reference is
 # the same circuit to far below ngspice's abstol (1e-14 A); test_p1_grid_current_is_negligible checks the DK side. A
@@ -68,7 +77,32 @@ BIASES = {"dual": (0.1, 0.25, 0.45, 0.6), "r51": (0.45,), "dualg": (0.1, 0.25, 0
 MODE_BIASES = {"P1": BIASES["dual"], "T": (0.1, 0.25, 0.35, 0.45, 0.6), "P2": (0.1, 0.25, 0.45, 0.6)}
 # dualg (#112): T at its references' currents and wherever its envelope is tested (stage.SUPPORTED_MA)
 GRID_BIASES = {"P1": BIASES["dualg"], "T": (0.1, 0.25, 0.35, 0.45, 0.5, 0.6)}   # T 0.5: the top of its envelope
-SUBCKT = {"dual": "6AS6_DUAL", "r51": "6AS6_R51", "dualg": "6AS6_DUALG"}
+# the #131 bounds: T where the grid current moves the nominal results (0.45 mA up; dk6as6/RESULTS.md)
+BOUND_BIASES = {"T": (0.45, 0.5, 0.6)}
+SUBCKT = {"dual": "6AS6_DUAL", "r51": "6AS6_R51", "dualg": "6AS6_DUALG", "dualg_rsd2": "6AS6_DUALG_RSD2",
+          "dualg_ehx1": "6AS6_DUALG_EHX1"}
+
+
+def shape(model):
+    """The grid shape (pentode.GRID_SHAPES key) of `model`: its #131 bound, else the nominal."""
+    return GRID_SHAPE.get(model, pentode.GRID_SHAPE)
+
+
+def check_mode(model, mode):
+    """Raise ValueError if `model` has no subckt / references wired as `mode`: a #131 bound runs only in
+    BOUND_BIASES' modes (T). Called before any netlist is written or ngspice started (PR #139 review)."""
+    if model in GRID_SHAPE and mode not in BOUND_BIASES:
+        raise ValueError(f"{model} is a #131 grid-current bound, wired only as {sorted(BOUND_BIASES)}, not {mode}")
+
+
+def grid_of(model):
+    """pentode.grid() of `model` (its hardness, params and shape)."""
+    return pentode.grid(HARDNESS[model], PARAMS[model], shape(model))
+
+
+def rk_of(model, bias, mode=MODE):
+    """The cathode resistor the DK stage solves for `model` at `bias` mA wired as `mode`."""
+    return cathode_resistor(bias, PARAMS[model], mode=mode, grid_hardness=HARDNESS[model], grid_shape=shape(model))
 ANALYSES = ["main", "burst"]
 SUBCKT_PINS = ("P", "G2", "G3", "G1", "K")   # XV1: plate screen suppressor grid cathode (6AS6_fit.inc order)
 # Passive elements in netlist order: (SPICE name = VALUES key or Rk, node+, node-); the valve sits after Rgs; Rstrap
@@ -129,6 +163,9 @@ VALVES = {"dual": "fit6as6 dual_control (issue #55) behavioural subckt with the 
           "r51": "fit6as6 refit_51 (issue #51) behavioural subckt (models/6as6_r51{v}.inc)",
           "dualg": "fit6as6 dual_control (issue #55) with the UNVALIDATED g1 grid current (issue #112) behavioural\n"
                    "* subckt with the DK model's params (models/6as6_dualg{v}.inc)"}
+VALVES.update({m: "fit6as6 dual_control (issue #55) with the UNVALIDATED g1 grid current, #131 BOUND shape "
+                  f"{GRID_SHAPE[m]}\n* (issue #112 law), behavioural subckt with the DK model's params "
+                  f"(models/6as6_{m}{{v}}.inc)" for m in GRID_SHAPE})
 
 
 TWO_OVER_PI = "0.63661977"          # emit_spice's 2/pi, replaced by the full double
@@ -161,14 +198,23 @@ def subckt(model, values=VALUES, mode=MODE):
     """The text of models/6as6_<model><variant(mode)>.inc."""
     ik, sh = expressions(PARAMS[model])
     if HARDNESS[model]:
-        g = pentode.grid(HARDNESS[model], PARAMS[model])
+        g = grid_of(model)
         ig1 = grid_expression(g)
         sources = (f"Bp P K I=(({ik})-{ig1})*({sh})\nBg2 G2 K I=(({ik})-{ig1})*(1-({sh}))\nBg1 G1 K I={ig1}")
-        law = ("* g1 grid current (#112), NOT 6AS6 data: Ig1 = GG*(softplus(CG*Vg1k)/CG)^XI, Dempwolf & Zoelzer "
-               "DAFx-11\n* eq. (11) without Ig0, XI and CG of their 12AX7 RSD-1 (Table 1), GG = hardness "
-               f"{g['hardness']:g} x the\n* cathode-perveance ratio {pentode.PERVEANCE_RATIO:.6g} x the RSD-1 Gg "
-               "(dk6as6/pentode.py); taken out of Ik\n"
-               "* before the split: Ip = (Ik-Ig1)*sh, Ig2 = (Ik-Ig1)*(1-sh). No g3 current.")
+        if model in GRID_SHAPE:     # a #131 bound
+            sh_ = GRID_SHAPE[model]
+            ratio = (2.0 / PARAMS[model]["KG1"]) / pentode.GRID_SHAPES[sh_]["G"]
+            law = ("* g1 grid current (#112 law, #131 BOUND), NOT 6AS6 data: Ig1 = GG*(softplus(CG*Vg1k)/CG)^XI, "
+                   "Dempwolf &\n* Zoelzer DAFx-11 eq. (11) without Ig0, XI and CG of their 12AX7 "
+                   f"{sh_} (Table 1), GG = hardness {g['hardness']:g} x\n* the cathode-perveance ratio "
+                   f"{ratio:.6g} x the {sh_} Gg (dk6as6/pentode.py); taken out of Ik\n"
+                   "* before the split: Ip = (Ik-Ig1)*sh, Ig2 = (Ik-Ig1)*(1-sh). No g3 current.")
+        else:
+            law = ("* g1 grid current (#112), NOT 6AS6 data: Ig1 = GG*(softplus(CG*Vg1k)/CG)^XI, Dempwolf & Zoelzer "
+                   "DAFx-11\n* eq. (11) without Ig0, XI and CG of their 12AX7 RSD-1 (Table 1), GG = hardness "
+                   f"{g['hardness']:g} x the\n* cathode-perveance ratio {pentode.PERVEANCE_RATIO:.6g} x the RSD-1 Gg "
+                   "(dk6as6/pentode.py); taken out of Ik\n"
+                   "* before the split: Ip = (Ik-Ig1)*sh, Ig2 = (Ik-Ig1)*(1-sh). No g3 current.")
     else:
         sources = f"Bp P K I=({ik})*({sh})\nBg2 G2 K I=({ik})*(1-({sh}))"
         law = "* No g1 / g3 grid current."
@@ -218,9 +264,9 @@ def netlist(model, analysis, bias, out="out", values=VALUES, solver=SOLVER, rk=N
     """The complete ngspice netlist (text) of `analysis` ('main', 'burst', or a piece of 'main': 'opac', 'sine:<A>',
     split_analyses()) for `model` wired as `mode` at `bias` mA (Rk solved for it unless rk is given); wrdata goes to
     `out`/<case>_*."""
+    check_mode(model, mode)
     inc, sub = models(model, mode)
-    values = dict(values, Rk=cathode_resistor(bias, PARAMS[model], mode=mode, grid_hardness=HARDNESS[model])
-                  if rk is None else rk)
+    values = dict(values, Rk=rk_of(model, bias, mode) if rk is None else rk)
     name = case(model, bias, mode)
     ts, tm = f"{solver['tstep']:g}", f"{solver['tmax']:g}"
     f0 = f"{SINE['f0']:g}"
@@ -297,7 +343,7 @@ def model_file(model, mode=MODE):
 
 # The subckts and committed netlists: (model, mode) of each subckt variant in use; the modes with a committed netlist
 SUBCKTS = [("dual", "P1"), ("r51", "P1"), ("dual", "T"),      # T and P2 share the g3 -> k variant
-           ("dualg", "P1"), ("dualg", "T")]
+           ("dualg", "P1"), ("dualg", "T"), ("dualg_rsd2", "T"), ("dualg_ehx1", "T")]   # the #131 bounds: T only
 NETLIST_MODES = ("P1", "T", "P2")
 
 
@@ -352,7 +398,7 @@ def run(model, bias, solver=SOLVER, out="out", write=True, mode=MODE, split=Fals
     write=True (re)writes the committed reference_<tag>_<bias>mA.json, write=False is for convergence studies. Fails if
     models/ is stale. split=True (#112) runs 'main' as split_analyses(), the same analyses as shorter ngspice calls,
     `jobs` at a time (each still under NGSPICE_TIMEOUT_S); every call is waited for before a failure is raised, so
-    nothing is left running.
+    nothing is left running. A model / mode with no subckt (check_mode) raises before anything is written.
     Raw output, one immutable directory per run (PR #128 review): ngspice writes into a fresh staging directory, the
     run's generator record is saved beside the traces, and the staged run is ANALYSED IN PLACE, so a missing or
     unreadable trace fails the run (whatever ngspice's exit code) before anything is published. Only then is the
@@ -360,12 +406,13 @@ def run(model, bias, solver=SOLVER, out="out", write=True, mode=MODE, split=Fals
     name it. A published run directory is never written again; the previous one is kept until the next publish, so a
     reader that resolved the pointer (--analyse-only) reads one run's record and traces, never a mixture. A failed run
     deletes its staging directory and leaves the pointer and every published run untouched."""
+    check_mode(model, mode)
     if open(model_file(model, mode)).read() != subckt(model, mode=mode):
         raise RuntimeError(f"{model_file(model, mode)} is stale; run python spice6as6/run_refs.py --write-netlist")
     o = os.path.join(HERE, out)
     os.makedirs(o, exist_ok=True)
     spiceinit()
-    rk = cathode_resistor(bias, PARAMS[model], mode=mode, grid_hardness=HARDNESS[model])
+    rk = rk_of(model, bias, mode)
     c = case(model, bias, mode)
     rid = f"{time.strftime('%Y%m%dT%H%M%S')}_{os.getpid()}_{uuid.uuid4().hex[:8]}"
     stage = os.path.join(out, f"_staging_{c}_{rid}")      # relative to HERE, as `out` (or absolute)
@@ -449,14 +496,14 @@ def analyse_published(model, bias, out="out", write=True, mode=MODE):
 
 def generator(model, bias, solver=SOLVER, mode=MODE, split=False, rk=None):
     """The reference JSON's "generator" record of a run()."""
-    rk = cathode_resistor(bias, PARAMS[model], mode=mode, grid_hardness=HARDNESS[model]) if rk is None else rk
+    rk = rk_of(model, bias, mode) if rk is None else rk
     gen = dict(script="spice6as6/run_refs.py", ngspice=ngspice_version(), solver=solver, sine=SINE, burst=BURST,
                ac=dict(AC_GRID, edges_hz=AC_EDGES_HZ), spiceinit=spiceinit(), params=PARAMS[model], bias_ma=bias,
                rk=rk)
     if split:
         gen["split"] = split_analyses() + ["burst"]
     if HARDNESS[model]:
-        gen["grid"] = pentode.grid(HARDNESS[model], PARAMS[model])
+        gen["grid"] = grid_of(model)
     if mode != "P1":
         gen["mode"] = mode
     return gen
@@ -519,17 +566,23 @@ def biases_of(model, mode=MODE):
     """The reference currents (mA) of `model` wired as `mode`."""
     if model == "dualg":
         return GRID_BIASES[mode]
+    if model in GRID_SHAPE:
+        return BOUND_BIASES.get(mode, ())
     return BIASES[model] if mode == "P1" else MODE_BIASES[mode]
 
 
 def cases(args):
     """[(model, mode, bias)] from command-line args model[/mode][:bias], e.g. 'dual', 'dual:0.25', 'dual/T',
-    'dual/P2:0.45'; a bare model or model/mode means every bias of BIASES (P1) or MODE_BIASES."""
+    'dual/P2:0.45'; a bare model or model/mode means every bias of BIASES (P1) or MODE_BIASES. An explicit mode or
+    bias a #131 bound has no subckt for raises (check_mode, PR #139 review); a bare bound model (no mode) is its P1
+    case list, empty, so the default "every model" run still skips it."""
     out = []
     for arg in args:
         mm, _, b = arg.partition(":")
-        m, _, mode = mm.partition("/")
+        m, sep, mode = mm.partition("/")
         mode = mode or "P1"
+        if sep or b:
+            check_mode(m, mode)
         biases = biases_of(m, mode)
         out += [(m, mode, float(b))] if b else [(m, mode, x) for x in biases]
     return out

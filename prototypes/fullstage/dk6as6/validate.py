@@ -15,6 +15,10 @@ dk6as6/compare_fits.py; informational).
 Grid current (#112): model "dual" is the stage at grid_hardness=0 (Ig1 = 0, the #111 law); model "dualg" is the stage's
 default, with the UNVALIDATED g1 grid current (pentode.grid at pentode.HARDNESS), against reference_dualg_*.json, which
 run the same law (run_refs.HARDNESS). Same criteria, same signals.
+Grid-current bounds (#131): models "dualg_rsd2" / "dualg_ehx1" are the stage at grid_shape "RSD-2" / "EHX-1"
+(pentode.GRID_BOUNDS, run_refs.GRID_SHAPE; estimated, unvalidated) against reference_dualg_{rsd2,ehx1}_T_*.json, T at
+run_refs.BOUND_BIASES; --bounds runs them -> results_grid_{rsd2,ehx1}_T.json. Experimental settings (no bound has a
+supported envelope), so they are recorded, never counted as passes of a supported setting.
 bias: the target cathode current in mA (dk6as6/stage.py); references exist at spice6as6/run_refs.BIASES.
 mode: the Distortion switch (#111, dk6as6/circuit.MODES); T and P2 references exist at run_refs.MODE_BIASES[mode].
 Where the reference is not the same law: ngspice clamps a B-source exp() argument at SPICE_EXP_CAP, so the subckt's
@@ -47,10 +51,12 @@ from dk.validate import CRIT, aligned  # noqa: E402 -- after the sys.path setup
 from dk6as6.stage import Stage, QUALITY, BIAS_MA  # noqa: E402 -- after the sys.path setup
 from dk6as6 import linear, pentode  # noqa: E402 -- after the sys.path setup
 from dk6as6.circuit import MODE  # noqa: E402 -- after the sys.path setup
-from spice6as6.run_refs import MODE_BIASES, GRID_BIASES, HARDNESS, ref_file, biases_of  # noqa: E402,F401
+from spice6as6.run_refs import (MODE_BIASES, GRID_BIASES, BOUND_BIASES, HARDNESS, GRID_SHAPE, ref_file,  # noqa: E402,F401
+                                 biases_of, shape)
 
 FS = 48000.0
-PARAMS = {"dual": pentode.DUAL_CONTROL, "r51": pentode.REFIT_51, "dualg": pentode.DUAL_CONTROL}
+PARAMS = {"dual": pentode.DUAL_CONTROL, "r51": pentode.REFIT_51, "dualg": pentode.DUAL_CONTROL,
+          "dualg_rsd2": pentode.DUAL_CONTROL, "dualg_ehx1": pentode.DUAL_CONTROL}
 OP_KEYS = ("va", "vk", "ia", "ig2", "ik", "vgk")
 SPICE_EXP_CAP = 227.9559242   # ngspice 41 B-source exp() argument limit: ln(1 + exp(300)) evaluates to 227.9559
 
@@ -67,13 +73,23 @@ def ref(model, bias=BIAS_MA, mode=MODE):
 
 
 def results_file(mode=MODE, model="dual"):
-    g = "_grid" if model == "dualg" else ""
+    g = "_grid" if model == "dualg" else "_grid_" + model.split("_", 1)[1] if model in GRID_SHAPE else ""
     return os.path.join(HERE, f"results{g}.json" if mode == "P1" else f"results{g}_{mode}.json")
 
 
 def stage(model="dual", **kw):
-    """The DK stage of `model`: its valve parameters and grid hardness (run_refs.HARDNESS), experimental allowed."""
-    return Stage(FS, pentode=PARAMS[model], grid_hardness=HARDNESS[model], experimental=True, **kw)
+    """The DK stage of `model`: its valve parameters, grid hardness (run_refs.HARDNESS) and grid shape (run_refs.shape),
+    experimental allowed."""
+    return Stage(FS, pentode=PARAMS[model], grid_hardness=HARDNESS[model], grid_shape=shape(model), experimental=True,
+                 **kw)
+
+
+def op_record(st):
+    """The DK operating point in the reference's op keys (OP_KEYS), plus vg, vg2k, vg3k, vak; ig1 with grid current."""
+    dc = st.dc
+    return dict(va=dc["nodes"]["a"], vk=dc["nodes"]["k"], ia=dc["ip"], ig2=dc["ig2"], ik=dc["ik"], vgk=dc["vgk"],
+                vg=dc["nodes"]["g"], vg2k=dc["vg2k"], vg3k=dc["vg3k"], vak=dc["vak"],
+                **({} if st.grid is None else dict(ig1=dc["ig1"])))
 
 
 def small_signal(stage, f):
@@ -233,9 +249,7 @@ def run(T=0.5, quality="standard", filt="fir", model="dual", bias=BIAS_MA, mode=
         out["mode"] = mode
     out["resampler"] = dict(latency_samples=st.latency_samples, latency_ms=st.rs.latency_ms,
                             macs_up_down=st.resampler_macs)
-    dc = st.dc
-    out["op"] = dict(va=dc["nodes"]["a"], vk=dc["nodes"]["k"], ia=dc["ip"], ig2=dc["ig2"], ik=dc["ik"], vgk=dc["vgk"],
-                     vg=dc["nodes"]["g"], vg2k=dc["vg2k"], vg3k=dc["vg3k"], vak=dc["vak"])
+    out["op"] = op_record(st)
     r = ref(model, bias, mode)
     o = dict(op_rel={k: abs(out["op"][k] / r["op"][k] - 1) for k in OP_KEYS})
     o.update(ac_dev(st, r))
@@ -273,7 +287,8 @@ def rescore():
     from its stored DK burst record and its reference's, and rewrite the files. Returns {file: {bias: {quality:
     (status before, status after)}}}."""
     out = {}
-    for model, modes in (("dual", MODE_BIASES), ("dualg", GRID_BIASES)):
+    for model, modes in (("dual", MODE_BIASES), ("dualg", GRID_BIASES),
+                         *((m, BOUND_BIASES) for m in GRID_SHAPE)):
         for mode in modes:
             fn = results_file(mode, model)
             res = json.load(open(fn))
@@ -316,6 +331,8 @@ def _run(a):
 
 
 def main(mode=MODE, model="dual", workers=1):
+    if model in GRID_SHAPE and mode not in BOUND_BIASES:      # PR #139 review: nothing to run, so nothing written
+        raise ValueError(f"{model} is a #131 grid-current bound, validated only in {sorted(BOUND_BIASES)}, not {mode}")
     jobs = [(q, b, mode, model) for b in biases_of(model, mode) for q in QUALITY]
     if mode == "P1" and model == "dual":
         jobs.append(((4, None), BIAS_MA, mode, model))
@@ -344,10 +361,17 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("modes", nargs="*")
     ap.add_argument("--grid", action="store_true", help='model "dualg": the default stage, with grid current (#112)')
+    ap.add_argument("--bounds", action="store_true",
+                    help="models dualg_rsd2 / dualg_ehx1: the #131 grid-current bounds (experimental), T")
     ap.add_argument("--workers", type=int, default=1, help="processes (CPU time per run is then not one-core time)")
     a = ap.parse_args()
-    st = {m: main(m, "dualg" if a.grid else "dual", a.workers)
-          for m in (a.modes or list(GRID_BIASES if a.grid else MODE_BIASES))}
+    if a.bounds:
+        if set(a.modes) - set(BOUND_BIASES):
+            ap.error(f"--bounds runs only {sorted(BOUND_BIASES)}, not {sorted(set(a.modes) - set(BOUND_BIASES))}")
+        st = {f"{m}/{md}": main(md, m, a.workers) for m in GRID_SHAPE for md in (a.modes or list(BOUND_BIASES))}
+    else:
+        st = {m: main(m, "dualg" if a.grid else "dual", a.workers)
+              for m in (a.modes or list(GRID_BIASES if a.grid else MODE_BIASES))}
     print(json.dumps(st))
     # Every supported setting must pass; unsupported (experimental) ones are recorded, never counted as passes.
     bad = {m: {b: v for b, v in sm.items() if any(s != "passed" and ok for s, ok in v.values())}
