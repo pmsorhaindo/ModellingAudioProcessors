@@ -36,6 +36,8 @@ Run from prototypes/fullstage:
   python -m cpp.aliasing_6as6 sweep [--workers N]          -> cpp/aliasing_6as6.json (full sweep, 2.6k points)
   python -m cpp.aliasing_6as6 scan [--workers N]           -> the band-edge scan, added to cpp/aliasing_6as6.json
   python -m cpp.aliasing_6as6 table                         the summary tables (cpp/README-6as6.md)
+  python -m cpp.aliasing_6as6 guardgrid [--workers N]      -> dk6as6/aliasing_guard_k140.json: the k140 grid at the
+                                                              Python 6AS6 guard's keys (its limits and tones)
   python -m cpp.aliasing_6as6 guard --fs 48000|44100 [--workers N] [--json OUT]
                                     [--update-baseline --reason "..."]
 """
@@ -105,10 +107,17 @@ def latency(fs, os_, fir):
     return Resampler(fs, os_, "fir", fir=K140[float(fs)] if resolve(fir) == "k140" else None).latency_samples
 
 
+SETTING_OS = {"4x": 4}               # plain 4x (not a shipped setting): only for the Python guard's eco keys (#113)
+GUARD_GRID_JSON = os.path.join(ROOT, "dk6as6", "aliasing_guard_k140.json")
+# the Python 6AS6 guard's grid (dk6as6/aliasing_guard.py): #113's assessment grid and band-edge scan
+# (aliasing_quality.GRID_HZ, SCAN_HZ), plus the band-edge tones this module adds above 19937 Hz
+GUARD_GRID_EXTRA_HZ = (19957, 19977, 19997)
+
+
 def measure(fs, quality, fir, mode, bias, drive, tone, window=AL.WINDOW_S, settle=SETTLE_S):
     n, n0 = int(round(window * fs)), int(round(settle * fs))
     m = AL.tone_bin(tone, n, fs)
-    os_ = QUALITY[quality][0]
+    os_ = SETTING_OS.get(quality) or QUALITY[quality][0]
     L = latency(fs, os_, fir)
     x = drive * np.sin(2 * np.pi * m * np.arange(n0 + n + L) / n)
     t0 = time.perf_counter()
@@ -270,6 +279,36 @@ def guard(fs, workers, json_out=None, update=False, reason=None):
     return 1 if AG.failed(rows) or bad_nc else 0
 
 
+def guard_grid(workers):
+    """The k140 full grid at each key of the Python 6AS6 guard (dk6as6.aliasing_guard.CI: mode, bias, setting, drive per
+    rate), on this core with the stage's default design, 1 s windows after the 1.25 s settle, grid current on (the
+    guard's GRID_HARDNESS); and the same keys and the guard's tones in its CI window (dk.aliasing.CI_WINDOW_S), for the
+    Python / C++ parity of its baselines. -> dk6as6/aliasing_guard_k140.json, from which the guard's limits and tones
+    are derived (#113's rule: the worst + 3 dB; the highest <= 3 tones within 3 dB of it)."""
+    from dk6as6 import aliasing_guard as PG, aliasing_quality as Q
+    tones = tuple(sorted(set(Q.GRID_HZ) | set(Q.SCAN_HZ) | set(GUARD_GRID_EXTRA_HZ)))
+    keys = [(fs, m, b, st, d) for fs in RATES for (m, b, st, d) in PG.CI[fs]]
+    jobs = [(fs, st, "default", m, b, d, f) for fs, m, b, st, d in keys for f in tones]
+    grid = run(jobs, workers)
+    derived = {k: PG.derive([(r["tone"], r["total_dbc"]) for r in grid
+                             if (r["fs"], r["mode"], r["bias_ma"], r["quality"], r["drive"]) == k]) for k in keys}
+    ci_jobs = [(fs, st, "default", m, b, d, f, AL.CI_WINDOW_S) for (fs, m, b, st, d) in keys
+               for f in derived[(fs, m, b, st, d)][1]]
+    with ProcessPoolExecutor(workers, initializer=_init, initargs=(VC.exe(),)) as ex:
+        ci = list(ex.map(_job_w, ci_jobs, chunksize=1))
+    out = dict(method=dict(core="cpp/dk6as6_core.h", fir=resolve("default"), settle_s=SETTLE_S, window_s=AL.WINDOW_S,
+                           ci_window_s=AL.CI_WINDOW_S, grid_hardness=1.0, lpf="off", tones=list(tones),
+                           keys=[list(k) for k in keys]),
+               derived=[dict(key=list(k), limit_dbc=v[0], tones=list(v[1])) for k, v in derived.items()],
+               records=grid, ci_window=ci)
+    json.dump(out, open(GUARD_GRID_JSON, "w"), indent=1)
+    return out
+
+
+def _job_w(a):
+    return measure(*a[:7], window=a[7])
+
+
 def table(recs):
     lines = ["| rate | quality | drive | design | points | worst total dBc (where) | internal / resampler there, dBc | "
              "worst with internal removed (ideal ADAA), dBc | ideal ADAA lowers the worst by, dB | gate dBc | "
@@ -301,7 +340,7 @@ def scan_table(recs):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=("sweep", "scan", "table", "guard"))
+    ap.add_argument("cmd", choices=("sweep", "scan", "table", "guard", "guardgrid"))
     ap.add_argument("--workers", type=int, default=os.cpu_count())
     ap.add_argument("--fs", type=int, choices=RATES, default=48000)
     ap.add_argument("--json")
@@ -322,6 +361,9 @@ if __name__ == "__main__":
         d["scan"] = run(SCAN_JOBS, a.workers, os.path.join(HERE, ".aliasing_6as6_cache.jsonl"))
         json.dump(d, open(SWEEP_JSON, "w"), indent=1)
         print(scan_table(d["scan"]))
+    elif a.cmd == "guardgrid":
+        g = guard_grid(a.workers)
+        print(f"{len(g['records'])} grid points, {len(g['ci_window'])} CI-window points -> {GUARD_GRID_JSON}")
     elif a.cmd == "table":
         d = json.load(open(SWEEP_JSON))
         print(table(d["records"]))
