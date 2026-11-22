@@ -136,8 +136,10 @@ def test_nominal_stage_is_bit_identical_to_main():
     """The default stage and an explicit grid_shape="RSD-1" give the same samples bit for bit, and both reproduce
     main's committed #112 records: T 0.5 mA's 8 V 18037 Hz onset (grid.json) and T 0.5 mA's burst trajectory and Rk
     (results_grid_T.json, standard). The records were made on macOS arm64, where they reproduce exactly; other
-    platforms' numpy (CI's Linux) differ in the last ulps, so they are compared to 1e-12 relative, and Ip + Ig2
-    (= Ik - Ig1, a difference) to 1e-14 A, ~1e-11 of the stage's cathode current."""
+    platforms' numpy (CI's Linux) differ in the last ulps, so the onset is compared to 1e-12 relative (Ip + Ig2,
+    = Ik - Ig1, a difference, to 1e-14 A, ~1e-11 of the cathode current); the 120 ms burst, where those ulps pass
+    through ~46k Newton solves (TOL_V 1e-6 V), to 1e-8 V (Linux: 1.2e-10 V); Rk, solved to 1e-13 in log10 (~2e-13
+    relative), to 1e-11."""
     a, ra = _onset()
     b, rb = _onset("RSD-1")
     assert a.rk == b.rk and all(np.array_equal(ra[k], rb[k]) for k in ra if k != "_internal")
@@ -151,9 +153,9 @@ def test_nominal_stage_is_bit_identical_to_main():
     assert a.iteration_stats()["max"] == row["it_max"]
     rec = json.load(open(V.results_file("T", "dualg")))["0.5"]["standard"]
     m, _ = V.burst(model="dualg", bias=0.5, mode="T")
-    assert m["traj_vgk"] == pytest.approx(rec["burst"]["traj_vgk"], rel=1e-12)
-    assert m["min_vgk"] == pytest.approx(rec["burst"]["min_vgk"], rel=1e-12)
-    assert V.stage("dualg", bias=0.5, mode="T").rk == pytest.approx(rec["rk"], rel=1e-12)
+    assert m["traj_vgk"] == pytest.approx(rec["burst"]["traj_vgk"], rel=0, abs=1e-8)
+    assert m["min_vgk"] == pytest.approx(rec["burst"]["min_vgk"], rel=0, abs=1e-8)
+    assert V.stage("dualg", bias=0.5, mode="T").rk == pytest.approx(rec["rk"], rel=1e-11)
 
 
 @pytest.mark.parametrize("shape", P.GRID_BOUNDS)

@@ -1427,7 +1427,8 @@ main's bit for bit** (`dk6as6/tests/test_dk6as6_grid_bounds.py`): `pentode.GRID`
 are #112's exactly (no new key), the nominal subckts and netlists regenerate byte-identical, and the default stage and
 an explicit `grid_shape="RSD-1"` give the same samples bit for bit, and reproduce main's committed T 0.5 mA onset
 (`grid.json`) and burst trajectory and Rk (`results_grid_T.json`) exactly on macOS arm64, where those records were made
-(to 1e-12 on CI's Linux, whose numpy differs in the last ulps).
+(on CI's Linux, whose numpy differs in the last ulps, the onset to 1e-12 relative and the burst trajectory to
+1e-8 V, against Newton's 1e-6 V tolerance).
 
 **Ig1 (A) at Vg1k: these are not two-sided bounds.** RSD-1 has the softest onset (Cg 9.9 /V against ~12). Both bounds
 therefore draw *less* current below 0 V (RSD-2 down to 1/27 at −1 V). At +0.5 V all three agree within 5 %, and at
