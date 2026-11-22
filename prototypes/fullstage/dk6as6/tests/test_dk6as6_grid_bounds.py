@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from dk import triode  # noqa: E402 -- after the sys.path setup
 from dk6as6 import pentode as P, stage as stg, grid as GR, validate as V, aliasing as A6  # noqa: E402
 from dk6as6 import grid_bounds as GB  # noqa: E402 -- after the sys.path setup
+from dk6as6 import aliasing_guard as A6G  # noqa: E402 -- after the sys.path setup
 from dk6as6.stage import Stage, UnsupportedSettingError, ExperimentalWarning  # noqa: E402
 from spice6as6 import run_refs as R  # noqa: E402 -- after the sys.path setup
 
@@ -213,7 +214,35 @@ def test_bound_records_are_labelled_and_complete():
     for s, r in d["aliasing"].items():
         assert all(x["grid_shape"] == s for k in ("sweep", "guard") for x in r[k])
         jobs, guard = GB.alias_jobs(s)
-        assert len(r["sweep"]) == len(jobs) and len(r["guard"]) == len(guard)
+        sweep = lambda rows: sorted((x["bias_ma"], x["drive"], x["tone"]) for x in rows)       # noqa: E731
+        keyed = lambda rows, k: sorted((x[k], x["setting_key"], x["tone"]) for x in rows)      # noqa: E731
+        assert sweep(r["sweep"]) == sweep([dict(j, bias_ma=j["bias"]) for j in jobs])
+        assert keyed(r["guard"], "fs_base") == keyed(guard, "fs")
+
+
+def test_bound_study_keeps_its_shipped_fir_configuration():
+    """#131a was measured with the shipped FIR against #113's guard (PR #133 review round 3): its jobs name that FIR
+    and #113's keys, the nominal values it is compared with are those keys' and tones', and the report fills every
+    guard cell; the live guard (k140, #134) is a different configuration."""
+    assert GB.FIR == GR.FIR == "shipped"
+    for s in P.GRID_BOUNDS:
+        jobs, guard = GB.alias_jobs(s)
+        assert all(j["fir"] == "shipped" for j in jobs + guard)
+        assert all("/fir/" in j["setting_key"] for j in guard)
+    nom = json.load(open(GB.NOMINAL_GUARD_JSON))
+    assert nom["fir"] == "shipped"
+    assert {int(fs): {k: sorted(map(int, v["tones"])) for k, v in vals.items()} for fs, vals in nom["values"].items()} \
+        == {fs: {GB.guard_key(*k): sorted(t) for k, (_, t) in keys.items()} for fs, keys in GB.GUARD_T_KEYS.items()}
+    assert {GB.guard_key(*k) for k in GB.GUARD_T_KEYS[48000]}.isdisjoint(A6G.limits_by_key(48000))
+    rows = [ln for ln in GB.tables().splitlines() if "kHz, T/" in ln]
+    assert len(rows) == sum(map(len, GB.GUARD_T_KEYS.values())) and not any("—" in ln for ln in rows), rows
+    j = dict(next(j for j in GB.alias_jobs("RSD-2")[1] if j["fs"] == 44100), window=0.01, settle=0.0)
+    kw = {k: v for k, v in j.items() if k not in ("drive", "tone", "setting_key", "fir")}
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        got = GB._alias({k: v for k, v in j.items() if k != "setting_key"})       # as GB.aliasing calls it
+        assert got["total_dbc"] == A6.measure(j["drive"], j["tone"], fir="shipped", **kw)["total_dbc"]
+        assert got["total_dbc"] != A6.measure(j["drive"], j["tone"], fir="k140", **kw)["total_dbc"]
 
 
 @pytest.mark.parametrize("model", list(R.GRID_SHAPE))

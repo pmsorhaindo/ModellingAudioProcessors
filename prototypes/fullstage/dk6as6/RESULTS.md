@@ -1488,7 +1488,9 @@ where g1 rests at −0.949 V, Ig1 at rest is 0.17 nA (RSD-1), 7.2 pA (RSD-2) and
 numbers are the committed #112 / #113 records, which the same functions reproduce); `python spice6as6/run_refs.py
 --split 6 dualg_rsd2/T dualg_ehx1/T` → `spice6as6/reference_dualg_{rsd2,ehx1}_T_{0.45,0.5,0.6}mA.json` (ngspice 41,
 `spice/run_refs.SOLVER` unchanged); `python -m dk6as6.validate --bounds` → `results_grid_{rsd2,ehx1}_T.json` (re-run with #134's k140 resampler, like the
-nominal `results_grid_T.json`; `grid.py` / `envelope.py` name the shipped FIR their records were made with);
+nominal `results_grid_T.json`; `grid.py` / `envelope.py` name the shipped FIR their records were made with, and
+`grid_bounds.py` keeps #113's shipped-FIR guard keys, tones and limits, `GUARD_T_KEYS`, with those keys' nominal
+baseline values in `grid_bounds_nominal_guard.json`, so the guard table below still reproduces);
 `python -m dk6as6.grid_bounds tables` prints every table below. The machine was shared (load 90–180), so no timing is
 reported.
 
