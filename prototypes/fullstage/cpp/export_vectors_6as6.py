@@ -40,8 +40,7 @@ PATH = os.path.join(HERE, "vectors_6as6.txt")
 MODES = ("P1", "T", "P2")
 PAR_KEYS = ("MU", "EX", "KG1", "KP", "FMAX", "MU3", "V3C", "S3", "P3", "RI", "KVB", "KR", "XA")
 DEFAULT_NEWTON = (solver.MAX_IT, solver.TOL_V, solver.TOL_F)
-# #113's k140 design (PR #129, dk6as6/resampler_study.py CANDIDATES["k140"]): ((first taps, beta), (later, beta))
-K140 = {48000.0: ((123, 14.47), (47, 14.47)), 44100.0: ((219, 14.47), (47, 14.47))}
+K140 = S.K140                        # #113's k140 design, dk6as6.stage.K140 (the stage's default since #134)
 FIRS = ("shipped", "k140")
 LPFS = tuple(lpf.POSITIONS)          # off, 4k, 7k
 N = 480                              # base samples per case (10 ms at 48 kHz)
@@ -64,9 +63,7 @@ def stage(fs, os_, mode, hardness, bias, lpf_pos="off", fir="shipped"):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", S.ExperimentalWarning)
         st = lpf.Stage(fs, lpf=lpf_pos, bias=bias, mode=mode, quality=(os_, None), experimental=True,
-                       grid_hardness=hardness)
-    if fir == "k140":
-        st.rs = Resampler(fs, os_, "fir", fir=K140[fs])
+                       grid_hardness=hardness, fir=fir)
     return st
 
 

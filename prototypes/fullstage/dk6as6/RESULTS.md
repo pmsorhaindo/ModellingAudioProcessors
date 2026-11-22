@@ -12,6 +12,15 @@ reference (ii), ngspice running the same valve law. The bias control (#110) is i
 > file below through `dk6as6.validate` (`cpp/validate_cpp_6as6.py`, all 44 standard / hq settings: every criterion
 > reads the same, every supported setting passes), with its own aliasing sweep and guard at 44.1 and 48 kHz.
 
+> **#134: the stage's default resampler is #113's k140** (`stage.FIR = "k140"`, `stage.K140`; `Stage(fir="shipped")`
+> keeps the earlier design). The validation records `results*.json` are re-run with it: every supported setting passes
+> every criterion at standard and hq, as before. With the shipped FIR, P1 0.6 mA at 2 V and 44.1 kHz was over the
+> aliasing gate from 19957 Hz up; with k140 it reads −162.9 dBc there (gate −118.3). The sweeps of the aliasing sections
+> below (`aliasing*.json`, `lpf_aliasing.json`, `aliasing_quality.json`, `results_4x.json`, `resampler_study.json`)
+> are the shipped-FIR records of #110–#113: the helpers that reproduce them name that design, and they are not re-run.
+> The CI guard measures k140 ("Limits, baselines and the CI guard" below). Details:
+> [cpp/README-6as6.md](../cpp/README-6as6.md), "Resampler" and "Antialiasing".
+
 > **#112: the default stage now models g1 grid current** (an unvalidated, borrowed Dempwolf–Zölzer law with a
 > `grid_hardness` control; "Grid current (#112)" at the end). Every result above "Grid current (#112)" is the stage at
 > `grid_hardness=0`, reproduced bit for bit. With grid current P1 is unchanged to rounding, and T is supported to
@@ -666,6 +675,13 @@ Supported-mode k140 checkpoints at every factor (no-grid cases; dBc, filter off;
   recover part of it.
 
 ### Limits, baselines and the CI guard (`dk6as6/aliasing_guard.py`, CI jobs `aliasing (6as6, <rate> Hz)`)
+> **#134:** the guard now measures k140, the stage's default, with the design in every key (`P1/0.6mA/standard/k140/2V`).
+> Its keys are those below. Its limits and tones come from the k140 grid at those keys (`aliasing_guard_k140.json`,
+> 29 tones including 19957 / 19977 / 19997 Hz, measured on the C++ core, which reads the same as this stage to 1.1e-5
+> dB). Its baselines equal the C++ core's CI-window readings to ≤ 0.01 dB. Each limit also counts its tones'
+> CI-window readings, because with k140 at 2 V the 0.1 s window's floor (−149.6 dBc) lies above the 1 s worst
+> (−162.9 dBc). The table below is #113's shipped-FIR record.
+
 The guard measures the production default stage (grid current). Per rate the keys are each setting × drive's worst
 supported case, and at standard / 8 V also the other mode's worst, so each mode keeps a key. Each key's limit is the
 worst total over every tone measured there (the grid and the scan) + 3 dB, rounded up to 0.1 dB; its CI tones are the

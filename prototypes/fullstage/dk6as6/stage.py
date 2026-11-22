@@ -12,6 +12,11 @@ latency, the resampler and iteration_stats()):
                   12AX7 stage's default) and "hq" = 16x. No eco setting yet: the 12AX7's PREWARP_HZ was derived for
                   its circuit, and a 6AS6 one would need its own minimax derivation and validation.
   filt          : resampler, "fir" (default) or "iir" (dk/resample.py)
+  fir           : the FIR design (filt "fir"): "k140" (default; #134, Michael's decision on PR #133: #113's
+                  k140, the C++ core's DEFAULT_FIR, K140 below) or "shipped" (dk/resample.py's FIR_FIRST / FIR_LATER,
+                  the resampler of the #102-#113 sweeps in aliasing*.json, lpf_aliasing.json and
+                  aliasing_quality.json; the helpers that reproduce them name it explicitly). With "shipped", P1
+                  0.6 mA at 2 V and 44.1 kHz is over the aliasing gate from ~19957 Hz up (cpp/README-6as6.md).
   pentode       : valve parameter set (default pentode.DUAL_CONTROL, issue #55; pentode.REFIT_51 for comparison)
   mode          : the Distortion switch (#111), circuit.MODES: "P1" (default; g3 on the cathode, screen at the stiff
                   EC2 = 120 V), "T" (g2 + g3 strapped to the plate) or "P2" (g3 to ground, our hypothesis). Fixed
@@ -39,6 +44,21 @@ from .solver import solve, solve_grid, solve_grid_restarts
 from .pentode import DUAL_CONTROL, HARDNESS, GRID_SHAPE, grid as grid_law
 
 QUALITY = {"hq": (16, None), "standard": (8, None)}   # (os, prewarp_hz)
+# #113's k140 half-band FIR design (dk6as6/resampler_study.py CANDIDATES["k140"], which derives it: Kaiser's beta for a
+# 140 dB stopband, 0.1102 (140 - 8.7) = 14.47, and per stage the shortest 4m + 3 length with >= 140 dB over its
+# folding band and <= 0.005 dB ripple): ((first-stage taps, beta), (later taps, beta)) per host rate. Derived for 48 and
+# 44.1 kHz only; another rate uses the 48 kHz design, as the C++ core (dk_core.h K140_FIR) does, without a claim.
+# test_dk6as6_stage.py checks it against resampler_study.CANDIDATES and cpp/dk_core.h.
+K140 = {48000.0: ((123, 14.47), (47, 14.47)), 44100.0: ((219, 14.47), (47, 14.47))}
+FIRS = ("k140", "shipped")
+FIR = "k140"                       # the default design
+
+
+def fir_design(fir, fs):
+    """dk.resample's fir= argument for a design name: the k140 table at fs, or None (the shipped FIR)."""
+    if fir not in FIRS:
+        raise ValueError(f"fir must be one of {FIRS}, got {fir!r}")
+    return K140.get(float(fs), K140[48000.0]) if fir == "k140" else None
 BIAS_MA = 0.45                     # default target cathode current, mA (S6's default; #102)
 BIAS_RANGE_MA = (0.6, 0.1)         # target Ik at the knob's two ends, mA (#110; knob_bias)
 KNOB = (1.0, 11.0)                 # the panel's Bias scale (SOS 2003: "calibrated from one to 11")
@@ -70,7 +90,8 @@ WHY_UNSUPPORTED = {      # with grid current (the default); without it, WHY_UNSU
          "quality gate (aliasing.QUALITY_GATE_DBC) at 8x",
     "P2": "P2 (g3 to ground) is our hypothesis on the fit's weakest g3 region, and its aliasing fails the quality gate",
 }
-__all__ = ["Stage", "QUALITY", "BIAS_MA", "BIAS_RANGE_MA", "KNOB", "SUPPORTED_MA", "SUPPORTED_MA_NO_GRID", "envelope",
+__all__ = ["Stage", "QUALITY", "K140", "FIRS", "FIR", "fir_design",
+           "BIAS_MA", "BIAS_RANGE_MA", "KNOB", "SUPPORTED_MA", "SUPPORTED_MA_NO_GRID", "envelope",
            "knob_bias", "bias_knob",
            "bias_point", "cathode_resistor", "operating_point", "supported", "OperatingPointError",
            "NonConvergenceWarning", "UnsupportedSettingError", "ExperimentalWarning", "OutOfLawWarning"]
@@ -202,7 +223,8 @@ def bias_point(bias_ma=BIAS_MA, par=DUAL_CONTROL, newton=tuple(NEWTON.values()),
 
 class Stage(_Stage12AX7):
     def __init__(self, fs, bias=BIAS_MA, drive=1.0, output=1.0, pentode=DUAL_CONTROL, quality="standard", filt="fir",
-                 newton=None, mode=circuit.MODE, experimental=False, grid_hardness=HARDNESS, grid_shape=GRID_SHAPE):
+                 newton=None, mode=circuit.MODE, experimental=False, grid_hardness=HARDNESS, grid_shape=GRID_SHAPE,
+                 fir=FIR):
         if mode not in circuit.MODES:
             raise ValueError(f"unknown mode {mode!r}, expected one of {sorted(circuit.MODES)}")
         self.grid_shape = grid_shape
@@ -229,7 +251,8 @@ class Stage(_Stage12AX7):
         self.newton = (nw["max_it"], nw["tol_v"], nw["tol_f"])
         self.fs_base = fs
         self.os, self.prewarp_hz = QUALITY[quality] if isinstance(quality, str) else quality
-        self.rs = Resampler(fs, self.os, filt)
+        self.fir = fir if filt == "fir" else None
+        self.rs = Resampler(fs, self.os, filt, fir=fir_design(fir, fs) if filt == "fir" else None)
         self.fs = fs * self.os
         self.drive, self.output, self.bias, self.par = drive, output, bias, pentode
         self.grid_hardness, self.grid = grid_hardness, _grid(grid_hardness, pentode, grid_shape)

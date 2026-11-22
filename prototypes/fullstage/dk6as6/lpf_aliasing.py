@@ -46,7 +46,8 @@ def measure(fs, drive, f, bias=BIAS_MA, window=WINDOW_S, settle=SETTLE_S, qualit
     0.0 by default, the #110 record (P1: Ig1 < 1e-15 A, #112); pentode.HARDNESS for the default stage's grid current."""
     n, n0 = int(round(window * fs)), int(round(settle * fs))
     m = tone_bin(f, n, fs)
-    st = stage.Stage(fs, bias=bias, quality=quality, mode=mode, experimental=True, grid_hardness=grid_hardness)
+    st = stage.Stage(fs, bias=bias, quality=quality, mode=mode, experimental=True, grid_hardness=grid_hardness,
+                     fir="shipped")    # None = the shipped FIR at both ends (the records'; the stage default is k140)
     if fir_up is not None:
         st.rs = Resampler(fs, st.os, "fir", fir=fir_up)
     L = max(st.latency_samples, Resampler(fs, st.os, "fir", fir=fir_down).latency_samples)

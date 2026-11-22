@@ -124,17 +124,20 @@ CI_CASES_GRID = [("P1", BIAS_MA, 8.0, 19037), ("P1", 0.6, 8.0, 19037), ("T", 0.5
 
 
 def measure(drive, f, bias=BIAS_MA, quality="standard", filt="fir", window=WINDOW_S, settle=SETTLE_S, fs=FS,
-            mode=MODE, grid_hardness=HARDNESS, grid_shape=GRID_SHAPE):
+            mode=MODE, grid_hardness=HARDNESS, grid_shape=GRID_SHAPE, fir="shipped"):
     """dk.aliasing.measure for the 6AS6 stage at `bias` mA, wired as `mode`, at `grid_hardness` (the default: the g1
-    grid current; 0 for the #111 records) and `grid_shape` (the nominal, or a #131 bound, which the record names)."""
+    grid current; 0 for the #111 records) and `grid_shape` (the nominal, or a #131 bound, which the record names).
+    fir: the stage's FIR design, "shipped" by default here: the resampler of the #111 / #112 sweeps and limits in this
+    module (aliasing*.json); the stage's own default is k140 (#134)."""
     n, n0 = int(round(window * fs)), int(round(settle * fs))
     m = tone_bin(f, n, fs)
     st = Stage(fs, bias=bias, quality=quality, filt=filt, mode=mode, experimental=True,   # support: stage.supported()
-               grid_hardness=grid_hardness, grid_shape=grid_shape)
+               grid_hardness=grid_hardness, grid_shape=grid_shape, fir=fir)
     L = st.latency_samples
     x = drive * np.sin(2 * np.pi * m * np.arange(n0 + n + L) / n)
     y = st.process(x)["out"][n0 + L:n0 + L + n]
-    return dict(setting=quality, os=st.os, filt=filt, bias_ma=bias, drive=float(drive), tone=int(f), fs_base=fs,
+    return dict(setting=quality, os=st.os, filt=filt, **({} if fir == "shipped" else dict(fir=fir)),
+                bias_ma=bias, drive=float(drive), tone=int(f), fs_base=fs,
                 f_hz=m * fs / n, window_s=window, settle_s=settle, **({} if mode == "P1" else dict(mode=mode)),
                 **({} if not grid_hardness else dict(grid_hardness=grid_hardness, nonconverged=st.nonconv)),
                 **({} if not grid_hardness or grid_shape == GRID_SHAPE else dict(grid_shape=grid_shape)),
@@ -147,7 +150,7 @@ def output_relative(drive, f, bias=BIAS_MA, mode=MODE, window=WINDOW_S, settle=S
     Returns the dBc total plus harmonics_re_fund_db and total_re_output_db = total_dbc - harmonics_re_fund_db."""
     n, n0 = int(round(window * fs)), int(round(settle * fs))
     m = tone_bin(f, n, fs)
-    st = Stage(fs, bias=bias, mode=mode, experimental=True, grid_hardness=grid_hardness)
+    st = Stage(fs, bias=bias, mode=mode, experimental=True, grid_hardness=grid_hardness, fir="shipped")  # the records'
     L = st.latency_samples
     y = st.process(drive * np.sin(2 * np.pi * m * np.arange(n0 + n + L) / n))["out"][n0 + L:n0 + L + n]
     a = alias_dbc(y, m, fs, st.os)

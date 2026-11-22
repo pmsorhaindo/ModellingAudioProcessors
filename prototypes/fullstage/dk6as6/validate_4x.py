@@ -24,6 +24,7 @@ def _job(case):
     mode, bias = case
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", ExperimentalWarning)
+        V.FIR = "shipped"            # results_4x.json is #113's record, measured with the shipped FIR
         return mode, bias, V.run(quality=(4, None), bias=bias, mode=mode)
 
 
