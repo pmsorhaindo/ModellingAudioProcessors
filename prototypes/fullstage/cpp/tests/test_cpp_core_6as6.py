@@ -10,8 +10,9 @@ g++, c++ or clang++): skipped without one, except under CI (CI set), where a mis
                                Python functions on this machine, bit for bit, in a -O2 -ffp-contract=off build
   test_vectors_6as6_fresh      the committed cpp/vectors_6as6.txt still matches what the Python stage produces now
   test_k140_derivation         the k140 FIR lengths and beta re-derived from #113's rule (cpp/dk_core.h K140_FIR)
-  test_validate_k140_6as6      the same 44 settings with the core's default resampler (k140): every supported setting
-                               passes every CRIT criterion against the ngspice references
+  test_validate_shipped_6as6   the same 44 settings with the shipped FIR (the #102-#113 resampler): every supported
+                               setting passes every CRIT criterion against the ngspice references
+  test_k140_design_is_one_design  the Python stage's K140 = #113's derived k140 = dk_core.h's K140_FIR
   test_validate_reproduced_6as6  dk6as6.validate.run on the C++ core reproduces every committed dk6as6/results*.json
                                (44 settings: both models, every mode and reference current, standard and hq) within
                                validate_cpp_6as6.LIMITS; every criterion reads as Python's; supported settings pass
@@ -220,13 +221,24 @@ def test_k140_derivation():
             assert not (stop >= 140 and rip <= 0.005), (fs, n - 4, stop, rip)    # the shortest such length
 
 
-def test_validate_k140_6as6():
-    """The core's default resampler (k140, which the committed Python results do not use) against the same-model ngspice
-    references: every supported setting passes every dk/validate.CRIT criterion at standard and hq."""
+def test_validate_shipped_6as6():
+    """The #102-#113 resampler (the shipped FIR, which the committed Python results no longer use) against the
+    same-model ngspice references: every supported setting passes every dk/validate.CRIT criterion, standard and hq."""
     _exe()
-    out, bad = VC.main(workers=os.cpu_count(), write=False, fir="k140")
+    out, bad = VC.main(workers=os.cpu_count(), write=False, fir="shipped")
     assert not bad, [(r["model"], r["mode"], r["bias_ma"], r["quality"], r["failed"]) for r in bad]
-    assert len(out["rows"]) == 44 and all(r["fir"] == "k140" for r in out["rows"])
+    assert len(out["rows"]) == 44 and all(r["fir"] == "shipped" for r in out["rows"])
+
+
+def test_k140_design_is_one_design():
+    """dk6as6.stage.K140 (the Python stage's default since #134) is #113's derived k140 (resampler_study.CANDIDATES)
+    and cpp/dk_core.h's K140_FIR, and the C++ core's DEFAULT_FIR is k140."""
+    from dk6as6 import stage as S, resampler_study as RS
+    assert S.FIR == "k140" and {float(k): v for k, v in RS.CANDIDATES["k140"].items()} == S.K140
+    src = open(os.path.join(ROOT, "cpp", "dk_core.h")).read()
+    assert "K140_FIRST_BY_RATE[] = {{48000.0, 123}, {44100.0, 219}}" in src and "K140_BETA = 14.47" in src
+    assert "K140_FIR{123, K140_BETA, 47, K140_BETA" in src
+    assert "DEFAULT_FIR = dkcore::K140_FIR" in open(os.path.join(ROOT, "cpp", "dk6as6_core.h")).read()
 
 
 def test_validate_reproduced_6as6():

@@ -9,8 +9,9 @@ analysis itself, dk6as6/linear.py, and the resampler's analytical response stay 
 against Python's sample by sample in cpp/test_core_6as6.cpp). compare() lists every deviation from the committed Python
 result of the same setting; LIMITS are the tolerances cpp/tests/test_cpp_core_6as6.py asserts. Every criterion
 (dk/validate.CRIT, unchanged) must read the same as the Python result's, and every supported setting must pass.
-Run from prototypes/fullstage:  python -m cpp.validate_cpp_6as6 [--workers N] [--fir k140]   (~1 min; writes
-cpp/results_6as6.json, or with --fir k140 cpp/results_6as6_k140.json: the core's default resampler, which the
+Run from prototypes/fullstage:  python -m cpp.validate_cpp_6as6 [--workers N] [--fir shipped]   (~1 min; writes
+cpp/results_6as6.json: k140, the parity run against the committed Python results, which use k140 since #134; or with
+--fir shipped cpp/results_6as6_shipped.json: the #102-#113 resampler, which the
 Python results do not use, judged on dk/validate.CRIT alone)
 """
 import argparse
@@ -31,8 +32,8 @@ from cpp.build import build  # noqa: E402 -- after the sys.path setup
 from cpp.export_vectors_6as6 import K140  # noqa: E402 -- after the sys.path setup
 
 EXE = None          # test_core_6as6 used by CppStage (set by run(), or by the caller)
-FIR = "shipped"     # CppStage's resampler: "shipped" (the Python results' FIR: the parity run) or "k140" (the core's
-                    # DEFAULT_FIR: python -m cpp.validate_cpp_6as6 --fir k140, judged on CRIT alone)
+PARITY_FIR = "k140"  # the design of the committed Python results (dk6as6.stage.FIR, the default since #134)
+FIR = PARITY_FIR     # CppStage's resampler: PARITY_FIR (the parity run) or "shipped" (--fir shipped, CRIT alone)
 MODELS = {"dual": MODE_BIASES, "dualg": GRID_BIASES}     # (ii) references: no grid current / the default grid law
 
 
@@ -42,7 +43,7 @@ def exe():
     return EXE
 
 
-def cli(vin, fs, os_, mode, bias, hardness, lpf="off", drive=1.0, output=1.0, fir="shipped", rec=False):
+def cli(vin, fs, os_, mode, bias, hardness, lpf="off", drive=1.0, output=1.0, fir="default", rec=False):
     """Stage::process on vin through `test_core_6as6 cli`: (out, internal (Vg1k, Vg2k) or None, info dict)."""
     vin = np.ascontiguousarray(vin, dtype=np.float64)
     args = [exe(), "cli", repr(float(fs)), str(int(os_)), mode, repr(float(bias)), repr(float(hardness)), lpf,
@@ -129,12 +130,12 @@ def run(quality="standard", model="dual", bias=BIAS_MA, mode=circuit.MODE):
 
 
 # Tolerances on |C++ - Python| for every reproduced number, >= 10x the worst deviation measured over all 44 settings
-# (both models, every mode and reference current, standard and hq; cpp/results_6as6.json, Apple M1, Apple clang 17 -O2,
-# numpy 2.5.4 on Accelerate; measured worst in the comment, its setting in brackets), each >= 300x below the criterion
-# it belongs to (dk/validate.CRIT: op 1e-3 relative, AC 0.1 dB, harmonics 0.1 dB, burst 0.5 / 1 / 0.5 %). The largest
-# are at hq in the experimental P2, where the slow coupling-cap modes integrate the ~1e-12 matrix rounding of either
-# build (cpp/matrix_rounding_6as6.py: Python's own floor against exact matrices is 3.0e-7 V there, the C++ core's
-# 3.8e-7 V).
+# (both models, every mode and reference current, standard and hq, k140 on both sides since #134;
+# cpp/results_6as6.json, Apple M1, Apple clang 17 -O2, numpy 2.5.4 on Accelerate; measured worst in the comment, its
+# setting in brackets), each >= 300x below the criterion it belongs to (dk/validate.CRIT: op 1e-3 relative, AC 0.1 dB,
+# harmonics 0.1 dB, burst 0.5 / 1 / 0.5 %). The largest are at hq in the experimental P2, where the slow coupling-cap
+# modes integrate the ~1e-12 matrix rounding of either build (cpp/matrix_rounding_6as6.py: Python's own floor against
+# exact matrices is 3.0e-7 V there, the C++ core's 3.8e-7 V).
 LIMITS = dict(op_rel=1e-9,          # operating point, relative             8.6e-12
               ac_db=1e-6,           # every AC number (dB)                  3.8e-8
               harm_db=3e-4,         # H2..H5 above harm_floor_dbc (dB)      9.6e-6  [P2 0.45 mA hq; supported 1.0e-6]
@@ -183,7 +184,7 @@ def compare(c, p):
     hist = []
     for k, pi in p["iterations"].items():
         ci = c["iterations"][k]
-        if FIR == "shipped":                # parity run; with k140 the latency (so the length) differs
+        if FIR == PARITY_FIR:               # parity run; with the other design the latency (so the length) differs
             assert ci["samples"] == pi["samples"] and ci["nonconverged"] == pi["nonconverged"], k
         ch = {int(k): v for k, v in ci["histogram"].items()}
         ph = {int(k): v for k, v in pi["histogram"].items()}
@@ -215,9 +216,9 @@ def jobs():
             for q in QUALITY]
 
 
-def check_k140(d):
-    """The k140 run has no Python counterpart (the Python stage runs the shipped FIR until #129 / #134): every supported
-    setting must pass every CRIT criterion on its own; the deviations from the shipped Python results are reported."""
+def check_crit_alone(d):
+    """The shipped-FIR run has no Python counterpart (the committed Python results use k140 since #134): every
+    supported setting must pass every CRIT criterion on its own; the deviations from the Python results are reported."""
     if not d["supported"] or d["status"] == "passed":
         return []
     return [("supported setting passes", d["status"], "passed")]
@@ -229,7 +230,7 @@ def one(job):
     r = run(q, model, b, mode)
     d = compare(r, ref)
     return dict(model=model, mode=mode, bias_ma=b, quality=q, fir=FIR, deviation=d,
-                failed=check(d) if FIR == "shipped" else check_k140(d))
+                failed=check(d) if FIR == PARITY_FIR else check_crit_alone(d))
 
 
 def _init(path, fir):
@@ -237,7 +238,7 @@ def _init(path, fir):
     EXE, FIR = path, fir
 
 
-def main(workers=1, write=True, fir="shipped"):
+def main(workers=1, write=True, fir=PARITY_FIR):
     with ProcessPoolExecutor(workers, initializer=_init, initargs=(exe(), fir)) as ex:
         rows = list(ex.map(one, jobs()))
     worst = {k: max(r["deviation"][k] for r in rows) for k in list(LIMITS) + ["harm_db_all"]}
@@ -246,11 +247,11 @@ def main(workers=1, write=True, fir="shipped"):
                       "test_core_6as6 cli, -O2) in place of dk6as6.stage.Stage; deviations = |C++ - Python| against "
                       "the committed dk6as6/results*.json of the same setting",
                compiler=comp.splitlines()[0] if comp else None, limits=LIMITS, worst=worst, rows=rows)
-    if fir != "shipped":
-        out["method"] += (f"; resampler {fir} (the core's DEFAULT_FIR): judged on dk/validate.CRIT alone, the "
-                          "deviations from the shipped-FIR Python results are for information")
+    if fir != PARITY_FIR:
+        out["method"] += (f"; resampler {fir} (not the core's DEFAULT_FIR): judged on dk/validate.CRIT alone, the "
+                          "deviations from the k140 Python results are for information")
     if write:
-        name = "results_6as6.json" if fir == "shipped" else f"results_6as6_{fir}.json"
+        name = "results_6as6.json" if fir == PARITY_FIR else f"results_6as6_{fir}.json"
         json.dump(out, open(os.path.join(HERE, name), "w"), indent=1, default=float)
     for r in rows:
         print(r["model"], r["mode"], r["bias_ma"], r["quality"], r["deviation"]["status"],
@@ -264,8 +265,8 @@ def main(workers=1, write=True, fir="shipped"):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--workers", type=int, default=os.cpu_count())
-    ap.add_argument("--fir", choices=("shipped", "k140"), default="shipped",
-                    help="shipped: parity with the committed Python results; k140: the core's default, CRIT alone")
+    ap.add_argument("--fir", choices=("k140", "shipped"), default=PARITY_FIR,
+                    help="k140: parity with the committed Python results; shipped: the #102-#113 resampler, CRIT alone")
     a = ap.parse_args()
     _, bad = main(a.workers, fir=a.fir)
     failed = [(r["model"], r["mode"], r["bias_ma"], r["quality"], r["failed"]) for r in bad]

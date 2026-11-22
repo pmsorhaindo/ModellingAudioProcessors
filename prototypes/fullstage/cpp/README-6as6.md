@@ -105,10 +105,12 @@ geometry and `prepare()` returns `bad_argument` (`test_fir_design_rejected`).
 
 **The 6AS6 stage runs `DEFAULT_FIR = K140_FIR`** (one line in `dk6as6_core.h`; Michael's decision on PR #133, #134):
 with the shipped FIR, P1 0.6 mA at 2 V and 44.1 kHz, a supported setting, is over the aliasing gate from ~19957 Hz up
-("Antialiasing" below). `Settings::fir` selects either at run time. The port is checked against the Python stage with
-`SHIPPED_FIR` selected explicitly (the vectors, the validation reproduced); the k140 stage is checked against the
-ngspice references on its own (`validate_cpp_6as6.py --fir k140`, below) and by the aliasing guard, which runs the
-stage's own default. The Python stage moves to k140 with #129 (its 6AS6 aliasing guard and baselines are there): #134.
+("Antialiasing" below). `Settings::fir` selects either at run time. **The Python stage's default is k140 too**
+(`dk6as6.stage.FIR = "k140"`, `K140`, `Stage(fir=)`; #134, after #129): the validation reproduced compares k140 with
+k140, and the Python 6AS6 aliasing guard (`dk6as6/aliasing_guard.py`) measures k140. The #102–#113 sweeps and the helpers
+that reproduce them (`dk6as6.aliasing.measure`, `lpf_aliasing.measure`, `validate_4x`) name the shipped FIR
+explicitly, so those committed records keep their meaning. `test_k140_design_is_one_design` checks that the Python
+table, #113's derived candidate and `dk_core.h` agree.
 The stage's resampler instance holds either design (`ResamplerT<double, 219, 47>`).
 
 ## Tests and tolerances
@@ -157,7 +159,8 @@ supported envelope and the refusals (P2, T above its envelope, a bias Rk cannot 
 
 **The ngspice validation reproduced** (`validate_cpp_6as6.py` → `results_6as6.json`). `dk6as6.validate.run` with the
 C++ core in place of the Python stage, for all 44 committed results (models dual and dualg, every mode and reference
-current, standard and hq). Every time-domain number (harmonics, THD, burst, Newton iterations) comes from the C++
+current, standard and hq), k140 on both sides: the committed `dk6as6/results*.json` were re-run with the Python
+stage's k140 default (#134), and every supported setting passes there too. Every time-domain number (harmonics, THD, burst, Newton iterations) comes from the C++
 `process()`, the small-signal numbers from the C++ matrices and operating point. **Every criterion (dk/validate.CRIT,
 unchanged) reads as it does for Python, and every supported setting passes at standard and hq.** Worst |C++ − Python|:
 
@@ -173,10 +176,10 @@ unchanged) reads as it does for Python, and every supported setting passes at st
 
 The largest are in the experimental P2 at hq, where both builds' matrix rounding is integrated most (above).
 
-**With the default k140 resampler** (`validate_cpp_6as6.py --fir k140` → `results_6as6_k140.json`; the committed
-Python results use the shipped FIR, so this run is judged on `dk/validate.CRIT` alone): **every supported setting
-passes every criterion at standard and hq, and all 44 statuses read as the Python results'.** For information, the
-largest differences from the shipped-FIR Python results: AC 0.0011 dB (the FIR passband), H2–H5 4.7e-4 dB, H1 2.8e-6
+**With the shipped FIR** (`validate_cpp_6as6.py --fir shipped` → `results_6as6_shipped.json`, the #102–#113
+resampler, which the committed Python results no longer use, so this run is judged on `dk/validate.CRIT` alone): every
+supported setting passes every criterion at standard and hq, and all 44 statuses read as the k140 Python results'. For
+information, the largest differences from them: AC 0.0011 dB (the FIR passband), H2–H5 4.7e-4 dB, H1 2.7e-6
 relative, burst criteria 3.8e-5 (supported settings: 0.0011 dB, 4.0e-4 dB, 1.5e-6, 2.5e-5), against CRIT's 0.1 dB,
 0.1 dB and 0.5–1 %.
 
@@ -268,6 +271,17 @@ points per rate). Two checks per tone, as `dk.aliasing_guard`: the gate above, a
 (`aliasing_6as6_baseline[_44100].json`, #98 per-tone format, `format_version` 2, 1.5 dB). Smallest margins: 14.8 dB
 at 48 kHz and 13.1 dB at 44.1 kHz (T 0.5 mA, 8 V, standard). To update a baseline intentionally:
 `python -m cpp.aliasing_6as6 guard --fs N --update-baseline --reason "..."`.
+
+**The Python guard** (`dk6as6/aliasing_guard.py`, CI jobs `aliasing (6as6, <rate> Hz)`, from #113) measures the Python
+stage with k140 too since #134, at #113's keys (7 per rate, including P1 0.6 mA at 2 V, standard and hq, at 44.1 kHz,
+where the shipped FIR failed the gate), in the 0.1 s CI window. Its limits keep #113's rule (the worst over the full
+grid + 3 dB, the highest ≤ 3 tones within 3 dB of it). The k140 grid at those keys (#113's grid and scan plus 19957 /
+19977 / 19997 Hz, 29 tones, 1 s windows) is measured on this core (`python -m cpp.aliasing_6as6 guardgrid` →
+`dk6as6/aliasing_guard_k140.json`), because a Python 1 s full grid costs hours per rate. The Python baselines equal this
+core's CI-window readings at the same points to ≤ 0.01 dB (`test_committed_baseline_equals_the_cpp_core_in_the_ci_window`).
+One change to the rule: with k140 at 2 V the 0.1 s window's analysis floor (−149.6 dBc) lies above the 1 s worst
+(−162.9 dBc), so each limit also counts its tones' CI-window readings. The P1 0.6 mA 2 V keys' limit is therefore
+−146.5 dBc, 28 dB inside the −118.3 dBc gate. The real −162.9 dBc is resolved by this core's guard, with 1 s windows.
 
 ## CPU
 
