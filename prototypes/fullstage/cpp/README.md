@@ -4,6 +4,11 @@
 (`stage.py`, `solver.py`, `circuit.py`, `triode.py`, and the default `"fir"` path of `resample.py`). The Python stage
 stays the reference. Everything here is checked against it.
 
+**The 6AS6 pentode stage** (Gyre's v1 distortion stage, #104) is `dk6as6_core.h`, a port of `../dk6as6/` that reuses
+this core's resampler and realtime plumbing: [README-6as6.md](README-6as6.md). The resampler's FIR design is a
+parameter since #104 (`FirDesign`: `SHIPPED_FIR`, the default and the only design the 12AX7 stage uses, and #113's
+`K140_FIR`); the 12AX7 stage's results are unchanged.
+
 | file | what |
 |---|---|
 | `dk_core.h` | the core: `dkcore::Stage`, `StereoStage` (#21), `build_coeffs`, `solve` / `solve2`, `Triode` / `Triode2`, `PerLane` / `VecFastMath` (#67), `Resampler`, `simd`, `ScopedFlushDenormals`, `TripleBuffer` |
@@ -17,6 +22,8 @@ stays the reference. Everything here is checked against it.
 | `results.json` | committed run of `validate_cpp` (6–7 Nov 2026, this lab VM) |
 | `bench.cpp`, `bench.py`, `BENCHMARK.md` | the #20 per-instance CPU benchmark: harness, runner, method and results |
 | `build.py` | the compile helper shared by `validate_cpp.py`, `bench.py` and the tests |
+| `alloc_hooks.h`, `bench_common.h` | the tests' allocation counting and the benchmark method, shared with the 6AS6 core's harnesses (#104) |
+| `dk6as6_core.h` and the `*_6as6*` files | the 6AS6 core (#104): [README-6as6.md](README-6as6.md) |
 | `bias_options.cpp`, [`RESULTS-smoothing.md`](RESULTS-smoothing.md) | #73: the bias-update options measured against a continuous reference, and the results (bias smoothing, Drive / Output ramps, drive vs aliasing) |
 
 ## What the core is

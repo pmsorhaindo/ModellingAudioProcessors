@@ -39,6 +39,7 @@ SCAN = {"P1": (0.1, 0.6), "T": (0.1, 0.25, 0.3, 0.35)}   # mA: P1's range ends; 
 SCAN_GRID = {"P1": (0.1, 0.6), "T": (0.1, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6)}   # with grid current (#112)
 JSON = os.path.join(HERE, "envelope.json")
 JSON_GRID = os.path.join(HERE, "envelope_grid.json")
+FIR = "shipped"   # the resampler envelope*.json were made with (#134: the stage default is k140)
 
 
 def stimulus(f, phase, latency, fs=FS):
@@ -58,7 +59,7 @@ def excursion(mode, bias, quality, f, phase, grid_hardness=0.0, grid_shape=GRID_
         warnings.simplefilter("ignore", OutOfLawWarning)
         warnings.simplefilter("ignore", NonConvergenceWarning)
         st = Stage(FS, bias=bias, mode=mode, quality=quality, experimental=True, grid_hardness=grid_hardness,
-                   grid_shape=grid_shape)
+                   grid_shape=grid_shape, fir=FIR)
         r = st.process(stimulus(f, phase, st.latency_samples), record=("vgk", "a", "k", "ipk"))["_internal"]
     return dict(mode=mode, bias_ma=bias, quality=quality, f_hz=f, phase=phase, vg1k_max=float(r["vgk"].max()),
                 vak_min=float((r["a"] - r["k"]).min()), out_of_law=st.out_of_law,

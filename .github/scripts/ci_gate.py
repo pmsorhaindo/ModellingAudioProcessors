@@ -27,6 +27,7 @@ EXPECTED = [
     "test (fullstage 6as6 envelope)",
     "test (fullstage 6as6 validation)",
     "test (fullstage 6as6 rest)",
+    "test (fullstage cpp 6as6)",
     "test (fit6as6)",
     "test (wdf)",
     "test (fullstage, macos arm64)",
@@ -34,10 +35,13 @@ EXPECTED = [
     "test (fullstage 6as6 envelope, macos arm64)",
     "test (fullstage 6as6 validation, macos arm64)",
     "test (fullstage 6as6 rest, macos arm64)",
+    "test (fullstage cpp 6as6, macos arm64)",
     "plugin (AU + VST3, macos arm64)",
     "aliasing",
     "aliasing (6as6, 48000 Hz)",
     "aliasing (6as6, 44100 Hz)",
+    "aliasing (6as6 C++ core, 48000 Hz)",
+    "aliasing (6as6 C++ core, 44100 Hz)",
     "ruff",
 ]
 

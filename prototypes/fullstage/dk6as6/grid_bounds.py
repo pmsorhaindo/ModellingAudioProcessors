@@ -14,10 +14,10 @@ functions reproduce bit for bit, dk6as6/tests/test_dk6as6_grid_bounds.py):
   "envelope" #112's envelope checks at T_BIASES: the 1 kHz tones (grid._tone, grid.ENV_DRIVES), the 8 V tone onsets
              (grid._onset, grid.ONSET_TONES, standard and hq), the steady-state band scan (grid._hf, grid.HF_*) and
              #121's stimulus class (envelope.excursion, envelope.FREQS x PHASES, standard and hq).
-  "aliasing" dk6as6/aliasing.measure (1 s windows after 1.25 s, 8x FIR, 48 kHz) at T_ALIAS_BIASES x 2 / 8 V: the
-             top five tones (where every full sweep of this stage has had its worst) and, at T 0.5 mA (T's top), the
-             full 19-tone sweep; and the CI guard's T keys (aliasing_guard.CI, both rates, its CI window) for the
-             guard's limits.
+  "aliasing" dk6as6/aliasing.measure (1 s windows after 1.25 s, 8x, the shipped FIR, 48 kHz) at T_ALIAS_BIASES x
+             2 / 8 V: the top five tones (where every full sweep of this stage has had its worst) and, at T 0.5 mA
+             (T's top), the full 19-tone sweep; and #113's CI guard T keys (GUARD_T_KEYS: aliasing_guard.CI before
+             #134 moved it to k140, both rates, its CI window) for the guard's limits.
 The burst / blocking / recovery and THD checks are dk6as6/validate.py --bounds (DK against the bound shapes' own
 same-model ngspice references, spice6as6/run_refs.py dualg_rsd2/T dualg_ehx1/T) -> results_grid_{rsd2,ehx1}_T.json;
 "tables" prints every RESULTS.md table from those files and grid_bounds.json.
@@ -50,7 +50,26 @@ T_BIASES = (0.35, 0.4, 0.45, 0.5, 0.55, 0.6)        # mA: where the nominal grid
 T_ALIAS_BIASES = (0.45, 0.5, 0.55, 0.6)             # around T's top (0.5 mA), which the 2 V aliasing gate sets
 TOP_TONES = SWEEP_HZ[-5:]                           # 15037 ... 19037 Hz
 FULL_SWEEP_BIAS = 0.5
-GUARD_T_KEYS = {fs: {k: v for k, v in AG.CI[fs].items() if k[0] == "T"} for fs in AG.RATES}
+# The study was measured with the shipped FIR (#113's guard at 92d1b3d). It keeps that guard's T keys, CI tones,
+# limits and nominal (RSD-1) baseline values, so grid_bounds.json stays reproducible and compares like with like; the
+# live guard (aliasing_guard.CI, k140 since #134) is not this study's configuration.
+FIR = GR.FIR                                        # "shipped": the resampler of grid.json and grid_bounds.json
+GUARD_T_KEYS = {                                    # #113's aliasing_guard.CI T keys at 92d1b3d: (limit dBc, tones)
+    48000: {("T", 0.5, "4x", 2.0): (-101.8, (19637, 19437, 19237)),
+            ("T", 0.5, "4x", 8.0): (-40.8, (19987, 19937, 19837)),
+            ("T", 0.5, "standard", 8.0): (-60.3, (19987, 19937, 19837)),
+            ("T", 0.5, "hq", 8.0): (-80.7, (19637, 19437, 19237))},
+    44100: {("T", 0.5, "4x", 2.0): (-97.3, (19987, 19937, 19637)),
+            ("T", 0.5, "4x", 8.0): (-39.4, (19637, 19437, 19237)),
+            ("T", 0.5, "standard", 8.0): (-56.4, (19437, 19237, 19037)),
+            ("T", 0.5, "hq", 8.0): (-77.3, (19987, 19937, 19837))},
+}
+NOMINAL_GUARD_JSON = os.path.join(HERE, "grid_bounds_nominal_guard.json")   # those keys' RSD-1 baseline values
+
+
+def guard_key(mode, bias, setting, drive):
+    """The study's guard key: #113's format, naming the shipped design "fir" (aliasing_guard.key names k140)."""
+    return f"{mode}/{bias:g}mA/{setting}/fir/{drive:g}V"
 
 
 # --- law ----------------------------------------------------------------------------------------------------------
@@ -123,12 +142,12 @@ def alias_jobs(shape):
     jobs = []
     for b in T_ALIAS_BIASES:
         tones = SWEEP_HZ if b == FULL_SWEEP_BIAS else TOP_TONES
-        jobs += [dict(drive=d, tone=f, bias=b, mode="T", grid_shape=shape) for d in DRIVES for f in tones]
+        jobs += [dict(drive=d, tone=f, bias=b, mode="T", grid_shape=shape, fir=FIR) for d in DRIVES for f in tones]
     guard = []
     for fs, keys in GUARD_T_KEYS.items():
         for (m, b, s, d), (_, tones) in keys.items():
-            guard += [dict(drive=d, tone=f, bias=b, mode=m, grid_shape=shape, quality=AG.QUALITY[s], fs=fs,
-                           window=CI_WINDOW_S, settle=A6.SETTLE_S, setting_key=AG.key(m, b, s, d)) for f in tones]
+            guard += [dict(drive=d, tone=f, bias=b, mode=m, grid_shape=shape, quality=AG.QUALITY[s], fs=fs, fir=FIR,
+                           window=CI_WINDOW_S, settle=A6.SETTLE_S, setting_key=guard_key(m, b, s, d)) for f in tones]
     return jobs, guard
 
 
@@ -154,11 +173,11 @@ def _worst(rows, **kw):
 
 def nominal():
     """The nominal (RSD-1) records the bounds are compared with: #112's grid.json, envelope_grid.json,
-    aliasing_grid_T.json, and #113's guard baselines (CI window)."""
+    aliasing_grid_T.json, and #113's shipped-FIR guard baselines (CI window; grid_bounds_nominal_guard.json)."""
     g = json.load(open(GR.JSON))
     e = json.load(open(EN.JSON_GRID))
     a = json.load(open(A6.json_file("T", grid=True)))
-    base = {fs: json.load(open(AG.baseline_path(fs)))["values"] for fs in AG.RATES}
+    base = {int(fs): v for fs, v in json.load(open(NOMINAL_GUARD_JSON))["values"].items()}
     return dict(tones=[r for r in g["envelope"]["tones"] if r["mode"] == "T"],
                 onsets=[r for r in g["envelope"]["onsets"] if r["mode"] == "T"], hf=g["hf"]["rows"],
                 stimulus_class=[r for r in e["rows"] if r["mode"] == "T"], sweep=a, guard=base)
@@ -258,7 +277,7 @@ def tables():
     lines.append("|---" * (len(shapes) + 2) + "|")
     for fs, keys in GUARD_T_KEYS.items():
         for k, (lim, tones) in keys.items():
-            kk = AG.key(*k)
+            kk = guard_key(*k)
             cells = []
             for s in shapes:
                 if s == "RSD-1":

@@ -77,9 +77,14 @@ def results_file(mode=MODE, model="dual"):
     return os.path.join(HERE, f"results{g}.json" if mode == "P1" else f"results{g}_{mode}.json")
 
 
+FIR = None     # the stage's FIR design: None = dk6as6.stage's default (k140 since #134); "shipped" for the #113 records
+
+
 def stage(model="dual", **kw):
     """The DK stage of `model`: its valve parameters, grid hardness (run_refs.HARDNESS) and grid shape (run_refs.shape),
-    experimental allowed."""
+    experimental allowed. FIR (module level), if set, picks the stage's FIR design."""
+    if FIR is not None:
+        kw.setdefault("fir", FIR)
     return Stage(FS, pentode=PARAMS[model], grid_hardness=HARDNESS[model], grid_shape=shape(model), experimental=True,
                  **kw)
 
@@ -242,7 +247,7 @@ def harm_dev(sine, r):
 def run(T=0.5, quality="standard", filt="fir", model="dual", bias=BIAS_MA, mode=MODE):
     st = stage(model, bias=bias, quality=quality, filt=filt, mode=mode)
     out = dict(criteria=CRIT, fs_base=FS, quality=quality, oversampling=st.os, prewarp_hz=st.prewarp_hz, filter=filt,
-               model=model, params=PARAMS[model], bias_ma=bias, rk=st.rk)
+               model=model, params=PARAMS[model], bias_ma=bias, rk=st.rk, fir=getattr(st, "fir", None))
     if st.grid is not None:
         out["grid"] = st.grid
     if mode != "P1":
