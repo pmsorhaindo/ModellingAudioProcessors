@@ -17,7 +17,8 @@ import json
 import warnings
 from dk6as6.stage import (Stage, QUALITY, BIAS_MA, cathode_resistor, operating_point, OperatingPointError, knob_bias,
                            bias_knob, bias_point, SUPPORTED_MA, SUPPORTED_MA_NO_GRID, envelope, supported,
-                           UnsupportedSettingError, ExperimentalWarning)
+                           UnsupportedSettingError, ExperimentalWarning, QUALITY_RECORDS, SUPPORTED_MA_RECORDS,
+                           supported_records)
 from dk6as6.pentode import HARDNESS
 from dk.validate import aligned
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -53,7 +54,32 @@ def test_criteria_are_the_12ax7_stages():
     from dk.validate import CRIT
     assert C is CRIT and C == dict(op_rel=0.001, ac_db=0.1, ac_band=(20.0, 20000.0), harm_db=0.1,
                                    harm_floor_dbc=-90.0, burst_min_rel=0.005, burst_tau_rel=0.01, burst_traj_rel=0.005)
-    assert QUALITY["standard"] == (8, None)
+    assert QUALITY == {"standard": (16, None), "hq": (32, None)}          # the #113 rework (proposed)
+    assert QUALITY_RECORDS == {"standard": (8, None), "hq": (16, None)}  # every record made before it
+
+
+def test_default_fir_is_113s_k140_and_records_keep_their_stage():
+    """#113 rework: the default resampler is k140, the table resampler_study derives (Kaiser beta 14.47, 123 / 219
+    first-stage taps at 48 / 44.1 kHz, 47 later); record_stage() is the stage of every earlier record (shipped FIR,
+    standard 8x / hq 16x by name), and supported_records() its envelope (T to 0.5 mA)."""
+    from dk6as6.resampler_study import CANDIDATES
+    from dk6as6.stage import K140, FIR, FIR_RECORDS, record_stage, fir_design
+    from dk.resample import FIR_FIRST, first_fir_taps
+    assert FIR == "k140" and FIR_RECORDS == "shipped"
+    for fs in (48000, 44100):
+        assert K140[float(fs)] == CANDIDATES["k140"][fs] == fir_design("k140", fs)
+        assert fir_design("shipped", fs) is None
+        st = Stage(fs, bias=0.25)
+        assert st.fir == "k140" and st.os == 16 and st.rs.stages[0].h.size == K140[float(fs)][0][0]
+        assert st.rs.stages[1].h.size == 47
+        for q, f in (("standard", 8), ("hq", 16)):
+            r = record_stage(fs, quality=q, bias=0.25)
+            assert r.fir == "shipped" and r.os == f and r.rs.stages[0].h.size == first_fir_taps(fs)
+    assert FIR_FIRST[1] == 9.0 and Stage(48000, bias=0.25, quality="hq").os == 32
+    with pytest.raises(ValueError):
+        Stage(48000, fir="k150")
+    assert supported_records("T", 0.5) and not supported("T", 0.5) and supported("T", 0.35)
+    assert not supported_records("T", 0.55) and supported_records("T", 0.3, 0.0) == supported("T", 0.3, 0.0)
 
 
 def test_values_are_the_102_table():
@@ -116,7 +142,7 @@ def test_unknown_mode_raises():
 
 @pytest.mark.parametrize("mode, bias, hardness", [
     ("P2", 0.25, HARDNESS), ("P2", BIAS_MA, HARDNESS), ("P1", 0.05, HARDNESS), ("P1", 0.7, HARDNESS),
-    ("T", 0.55, HARDNESS), ("T", 0.6, HARDNESS),
+    ("T", 0.375, HARDNESS), ("T", 0.5, HARDNESS), ("T", 0.55, HARDNESS), ("T", 0.6, HARDNESS),
     ("T", 0.35, 0.0), ("T", BIAS_MA, 0.0), ("T", 0.6, 0.0), ("P2", 0.25, 0.0),
     ("P1", BIAS_MA, 0.5), ("T", 0.25, 2.0)])
 def test_unsupported_settings_need_an_explicit_opt_in(mode, bias, hardness):
@@ -131,10 +157,12 @@ def test_unsupported_settings_need_an_explicit_opt_in(mode, bias, hardness):
 
 
 def test_supported_envelope():
-    """With the default grid current (#112) P1 is supported over the documented 0.1-0.6 mA and T to 0.5 mA (above, its
-    2 V aliasing fails the gate); without it (hardness 0, the #111 stage) T only to 0.3 mA; P2 and other hardnesses
+    """With the default grid current (#112) P1 is supported over the documented 0.1-0.6 mA and T to 0.35 mA since the
+    #113 rework (above, an 8 V drive's aliasing fails the inaudibility criterion at standard; 0.5 mA before, under the
+    dBc gate: SUPPORTED_MA_RECORDS); without it (hardness 0, the #111 stage) T only to 0.3 mA; P2 and other hardnesses
     nowhere."""
-    assert SUPPORTED_MA == {"P1": (0.1, 0.6), "T": (0.1, 0.5)} and "P2" not in SUPPORTED_MA
+    assert SUPPORTED_MA == {"P1": (0.1, 0.6), "T": (0.1, 0.35)} and "P2" not in SUPPORTED_MA
+    assert SUPPORTED_MA_RECORDS == {"P1": (0.1, 0.6), "T": (0.1, 0.5)}
     assert SUPPORTED_MA_NO_GRID == {"P1": (0.1, 0.6), "T": (0.1, 0.3)}
     assert envelope() is envelope(HARDNESS) is SUPPORTED_MA and envelope(0.0) is SUPPORTED_MA_NO_GRID
     assert envelope(0.5) == {} and not supported("P1", BIAS_MA, 0.5)
@@ -165,8 +193,9 @@ def test_committed_validation_every_supported_setting_passes(model, mode):
     for b, rb in res.items():
         for q in QUALITY:
             r = rb[q]
-            assert r.get("supported", True) == supported(mode, float(b), gh), (model, mode, b, q)
-            if supported(mode, float(b), gh):
+            # the records' flags are the envelope they were made under (stage.supported_records)
+            assert r.get("supported", True) == supported_records(mode, float(b), gh), (model, mode, b, q)
+            if supported_records(mode, float(b), gh):
                 assert V.status(r) == "passed", (model, mode, b, q, r["passed"])
     if mode == "T" and model == "dual":
         assert {V.status(res[b]["standard"]) for b in ("0.45", "0.6")} == {"inconclusive"}

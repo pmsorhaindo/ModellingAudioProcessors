@@ -47,8 +47,14 @@ jobs:
             shard: 6as6 validation
             pytest_args: dk6as6/tests/test_dk6as6_validation.py
           - prototype: fullstage
-            shard: 6as6 envelope
-            pytest_args: dk6as6/tests/test_dk6as6_envelope.py
+            shard: 6as6 envelope standard
+            pytest_args: dk6as6/tests/test_dk6as6_envelope.py -k standard
+          - prototype: fullstage
+            shard: 6as6 envelope hq grid
+            pytest_args: dk6as6/tests/test_dk6as6_envelope.py -k "hq and withgrid"
+          - prototype: fullstage
+            shard: 6as6 envelope rest
+            pytest_args: dk6as6/tests/test_dk6as6_envelope.py -k "not standard and not (hq and withgrid)"
           - prototype: fullstage
             shard: 6as6 rest
             pytest_args: dk6as6 spice6as6 --ignore=dk6as6/tests/test_dk6as6_stage.py --ignore=dk6as6/tests/test_dk6as6_validation.py --ignore=dk6as6/tests/test_dk6as6_envelope.py
@@ -97,8 +103,12 @@ jobs:
             pytest_args: dk6as6/tests/test_dk6as6_stage.py
           - shard: 6as6 validation
             pytest_args: dk6as6/tests/test_dk6as6_validation.py
-          - shard: 6as6 envelope
-            pytest_args: dk6as6/tests/test_dk6as6_envelope.py
+          - shard: 6as6 envelope standard
+            pytest_args: dk6as6/tests/test_dk6as6_envelope.py -k standard
+          - shard: 6as6 envelope hq grid
+            pytest_args: dk6as6/tests/test_dk6as6_envelope.py -k "hq and withgrid"
+          - shard: 6as6 envelope rest
+            pytest_args: dk6as6/tests/test_dk6as6_envelope.py -k "not standard and not (hq and withgrid)"
           - shard: 6as6 rest
             pytest_args: dk6as6 spice6as6 --ignore=dk6as6/tests/test_dk6as6_stage.py --ignore=dk6as6/tests/test_dk6as6_validation.py --ignore=dk6as6/tests/test_dk6as6_envelope.py
     defaults:
@@ -172,21 +182,21 @@ jobs:
             prototypes/fullstage/aliasing_guard_44100_results.json
           if-no-files-found: warn
 
-  # Blocking 6AS6 aliasing guard (#113): the same method as `aliasing` on dk6as6.stage.Stage, a lean subset of the
-  # full sweeps (dk6as6/aliasing_quality.json) against each key's limit (worst + 3 dB) and each tone's own committed
-  # baseline (dk6as6/aliasing_baseline[_44100].json, format version 2, 1.5 dB tolerance). Its own job: the 6AS6 stage
-  # is pure Python and slow, and the `test (fullstage 6as6)` shard has no room for it. To update intentionally:
-  # python -m dk6as6.aliasing_guard [--fs 44100] --update-baseline --reason "..."
+  # Blocking 6AS6 aliasing guard (#113 rework): the inaudibility criterion (dk6as6/inaudible.py: every alias product
+  # below -100 dBFS and 10 dB under the threshold of hearing) on a lean subset of the full assessment
+  # (dk6as6/inaudible.json), for every offered quality at both host rates, plus a 1.5 dB ratchet on each point's margin
+  # against its committed baseline (dk6as6/aliasing_baseline_inaudible_<fs>.json). One job per rate and quality: the
+  # 6AS6 stage is pure Python and costs ~13 CPU-s per point per unit of oversampling factor here (#127's 60 % target).
+  # To update intentionally: python -m dk6as6.aliasing_guard --fs <fs> --quality <q> --update-baseline --reason "..."
   aliasing-6as6:
-    name: aliasing (6as6, ${{ matrix.fs }} Hz)
+    name: aliasing (6as6, ${{ matrix.quality }}, ${{ matrix.fs }} Hz)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # One job per host rate (#113 review): the subset grew with the band-edge tones; split, each rate stays well under
-    # 60 % of its limit (#127's target).
     strategy:
       fail-fast: false
       matrix:
         fs: [48000, 44100]
+        quality: [standard, hq]
     defaults:
       run:
         working-directory: prototypes/fullstage
@@ -199,14 +209,15 @@ jobs:
           cache-dependency-path: prototypes/fullstage/requirements.txt
       - name: Install requirements
         run: python -m pip install -r requirements.txt
-      - name: 6AS6 aliasing guard (limits + baseline ratchet)
-        run: python -m dk6as6.aliasing_guard --fs ${{ matrix.fs }} --workers "$(nproc)" --json aliasing6as6_guard_${{ matrix.fs }}_results.json
+      - name: 6AS6 aliasing guard (inaudibility criterion + margin ratchet)
+        run: python -m dk6as6.aliasing_guard --fs ${{ matrix.fs }} --quality ${{ matrix.quality }} --workers "$(nproc)" --json aliasing6as6_guard_${{ matrix.quality }}_${{ matrix.fs }}_results.json
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: aliasing-6as6-guard-results-${{ matrix.fs }}
-          path: prototypes/fullstage/aliasing6as6_guard_${{ matrix.fs }}_results.json
+          name: aliasing-6as6-guard-results-${{ matrix.quality }}-${{ matrix.fs }}
+          path: prototypes/fullstage/aliasing6as6_guard_${{ matrix.quality }}_${{ matrix.fs }}_results.json
+          if-no-files-found: warn
 
   # The C++ 6AS6 core's aliasing guard (#104, #98 per-tone convention): every supported setting (P1 0.1-0.6 mA, T
   # 0.1-0.5 mA, grid current on) x standard / hq x 2 / 8 V at its full sweep's worst tone and 19037 Hz, full 1 s windows

@@ -34,9 +34,9 @@ from concurrent.futures import ProcessPoolExecutor
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from dk.aliasing import SWEEP_HZ, DRIVES, CI_WINDOW_S  # noqa: E402 -- after the sys.path setup
-from dk6as6 import pentode, grid as GR, envelope as EN, aliasing as A6, aliasing_guard as AG  # noqa: E402
+from dk6as6 import pentode, grid as GR, envelope as EN, aliasing as A6  # noqa: E402
 from dk6as6 import validate as V  # noqa: E402 -- after the sys.path setup
-from dk6as6.stage import cathode_resistor, operating_point, QUALITY  # noqa: E402 -- after the sys.path setup
+from dk6as6.stage import cathode_resistor, operating_point, QUALITY_RECORDS as QUALITY  # noqa: E402 -- the records
 from spice6as6 import run_refs as R  # noqa: E402 -- after the sys.path setup
 
 JSON = os.path.join(HERE, "grid_bounds.json")
@@ -52,7 +52,8 @@ TOP_TONES = SWEEP_HZ[-5:]                           # 15037 ... 19037 Hz
 FULL_SWEEP_BIAS = 0.5
 # The study was measured with the shipped FIR (#113's guard at 92d1b3d). It keeps that guard's T keys, CI tones,
 # limits and nominal (RSD-1) baseline values, so grid_bounds.json stays reproducible and compares like with like; the
-# live guard (aliasing_guard.CI, k140 since #134) is not this study's configuration.
+# live guard (aliasing_guard.CI: k140 since #134, the inaudibility criterion since #113's rework) is not this
+# study's configuration.
 FIR = GR.FIR                                        # "shipped": the resampler of grid.json and grid_bounds.json
 GUARD_T_KEYS = {                                    # #113's aliasing_guard.CI T keys at 92d1b3d: (limit dBc, tones)
     48000: {("T", 0.5, "4x", 2.0): (-101.8, (19637, 19437, 19237)),
@@ -65,6 +66,11 @@ GUARD_T_KEYS = {                                    # #113's aliasing_guard.CI T
             ("T", 0.5, "hq", 8.0): (-77.3, (19987, 19937, 19837))},
 }
 NOMINAL_GUARD_JSON = os.path.join(HERE, "grid_bounds_nominal_guard.json")   # those keys' RSD-1 baseline values
+
+
+# #113's settings at 92d1b3d, as its guard named them (the study's factors; stage.QUALITY moved on in #113's rework)
+GUARD_QUALITY = {"4x": (4, None), "standard": (8, None), "hq": (16, None)}
+GUARD_OS = {s: q[0] for s, q in GUARD_QUALITY.items()}
 
 
 def guard_key(mode, bias, setting, drive):
@@ -146,14 +152,14 @@ def alias_jobs(shape):
     guard = []
     for fs, keys in GUARD_T_KEYS.items():
         for (m, b, s, d), (_, tones) in keys.items():
-            guard += [dict(drive=d, tone=f, bias=b, mode=m, grid_shape=shape, quality=AG.QUALITY[s], fs=fs, fir=FIR,
+            guard += [dict(drive=d, tone=f, bias=b, mode=m, grid_shape=shape, quality=GUARD_QUALITY[s], fs=fs, fir=FIR,
                            window=CI_WINDOW_S, settle=A6.SETTLE_S, setting_key=guard_key(m, b, s, d)) for f in tones]
     return jobs, guard
 
 
 def aliasing(shape, workers=None):
     jobs, guard = alias_jobs(shape)
-    allj = sorted(guard, key=lambda j: -AG.OS[j["setting_key"].split("/")[2]]) + jobs     # the slow (hq) points first
+    allj = sorted(guard, key=lambda j: -GUARD_OS[j["setting_key"].split("/")[2]]) + jobs    # the slow (hq) first
     with ProcessPoolExecutor(workers) as ex:
         out = list(ex.map(_alias, [{k: v for k, v in j.items() if k != "setting_key"} for j in allj]))
     for j, r in zip(allj, out):

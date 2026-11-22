@@ -1,0 +1,193 @@
+{
+ "format": "inaudible-v1",
+ "tolerance_db": 1.5,
+ "method": {
+  "standard": {
+   "fs_base": 48000,
+   "quality": "standard",
+   "os": 16,
+   "stage": "dk6as6.stage.Stage",
+   "grid_hardness": 1.0,
+   "fir": "k140",
+   "lpf": "off",
+   "settle_s": 1.25,
+   "window_s": 0.1,
+   "band_hz": [
+    20.0,
+    20000.0
+   ],
+   "mask_bins": 3,
+   "floor_dbfs": -100.0,
+   "under_threshold_db": 10.0,
+   "spl_fs_db": 105.0,
+   "tones": {
+    "P1/0.6mA/standard/k140/2V": [
+     19997,
+     19977
+    ],
+    "P1/0.6mA/standard/k140/8V": [
+     18037
+    ],
+    "T/0.35mA/standard/k140/2V": [
+     19997,
+     19977
+    ],
+    "T/0.35mA/standard/k140/8V": [
+     19637,
+     19831
+    ]
+   }
+  },
+  "hq": {
+   "fs_base": 48000,
+   "quality": "hq",
+   "os": 32,
+   "stage": "dk6as6.stage.Stage",
+   "grid_hardness": 1.0,
+   "fir": "k140",
+   "lpf": "off",
+   "settle_s": 1.25,
+   "window_s": 0.1,
+   "band_hz": [
+    20.0,
+    20000.0
+   ],
+   "mask_bins": 3,
+   "floor_dbfs": -100.0,
+   "under_threshold_db": 10.0,
+   "spl_fs_db": 105.0,
+   "tones": {
+    "P1/0.6mA/hq/k140/2V": [
+     19997
+    ],
+    "P1/0.6mA/hq/k140/8V": [
+     18037
+    ],
+    "T/0.3mA/hq/k140/8V": [
+     19997
+    ],
+    "T/0.35mA/hq/k140/2V": [
+     19997
+    ],
+    "T/0.35mA/hq/k140/8V": [
+     19997
+    ]
+   }
+  }
+ },
+ "history": [
+  {
+   "updated": "2026-11-22",
+   "quality": "standard",
+   "reason": "#113 rework: the inaudibility criterion, standard 16x, k140, T to 0.35 mA",
+   "git_rev": "256f64f",
+   "python": "3.15.2"
+  },
+  {
+   "updated": "2026-11-22",
+   "quality": "standard",
+   "reason": "#113 rework: the inaudibility criterion, standard 16x, k140, T to 0.35 mA",
+   "git_rev": "bbf96ab",
+   "python": "3.15.2"
+  },
+  {
+   "updated": "2026-11-22",
+   "quality": "hq",
+   "reason": "#113 rework: the inaudibility criterion, hq 32x, k140, T to 0.35 mA",
+   "git_rev": "bbf96ab",
+   "python": "3.15.2"
+  }
+ ],
+ "values": {
+  "P1/0.6mA/hq/k140/2V": {
+   "19997": {
+    "margin_db": 48.324248472869016,
+    "worst_hz": 20.0,
+    "worst_dbfs": -148.32424847286902,
+    "f_hz": 19990.0
+   }
+  },
+  "P1/0.6mA/hq/k140/8V": {
+   "18037": {
+    "margin_db": 40.194861997714895,
+    "worst_hz": 6120.0,
+    "worst_dbfs": -152.99259632860208,
+    "f_hz": 18040.0
+   }
+  },
+  "P1/0.6mA/standard/k140/2V": {
+   "19997": {
+    "margin_db": 48.324171723584016,
+    "worst_hz": 20.0,
+    "worst_dbfs": -148.32417172358402,
+    "f_hz": 19990.0
+   },
+   "19977": {
+    "margin_db": 48.324159124005746,
+    "worst_hz": 20.0,
+    "worst_dbfs": -148.32415912400575,
+    "f_hz": 19980.0
+   }
+  },
+  "P1/0.6mA/standard/k140/8V": {
+   "18037": {
+    "margin_db": 40.19466378021224,
+    "worst_hz": 6120.0,
+    "worst_dbfs": -152.99239811109942,
+    "f_hz": 18040.0
+   }
+  },
+  "T/0.35mA/hq/k140/2V": {
+   "19997": {
+    "margin_db": 62.70016741652293,
+    "worst_hz": 8020.0,
+    "worst_dbfs": -172.87478890692068,
+    "f_hz": 19990.0
+   }
+  },
+  "T/0.35mA/hq/k140/8V": {
+   "19997": {
+    "margin_db": 49.82676025614916,
+    "worst_hz": 8020.0,
+    "worst_dbfs": -160.0013817465469,
+    "f_hz": 19990.0
+   }
+  },
+  "T/0.35mA/standard/k140/2V": {
+   "19997": {
+    "margin_db": 62.69953960514894,
+    "worst_hz": 8020.0,
+    "worst_dbfs": -172.8741610955467,
+    "f_hz": 19990.0
+   },
+   "19977": {
+    "margin_db": 63.2638853289845,
+    "worst_hz": 8040.0,
+    "worst_dbfs": -173.39845317491472,
+    "f_hz": 19980.0
+   }
+  },
+  "T/0.35mA/standard/k140/8V": {
+   "19637": {
+    "margin_db": 34.87047915596361,
+    "worst_hz": 2040.0,
+    "worst_dbfs": -150.3027777714597,
+    "f_hz": 19640.0
+   },
+   "19831": {
+    "margin_db": 36.28517293801775,
+    "worst_hz": 5370.0,
+    "worst_dbfs": -150.00193494124267,
+    "f_hz": 19830.0
+   }
+  },
+  "T/0.3mA/hq/k140/8V": {
+   "19997": {
+    "margin_db": 49.336735746439984,
+    "worst_hz": 8020.0,
+    "worst_dbfs": -159.51135723683774,
+    "f_hz": 19990.0
+   }
+  }
+ }
+}

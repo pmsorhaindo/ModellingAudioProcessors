@@ -39,7 +39,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 from dk.aliasing import SWEEP_HZ, DRIVES, WINDOW_S  # noqa: E402 -- after the sys.path setup
 from dk6as6 import lpf, lpf_aliasing  # noqa: E402 -- after the sys.path setup
 from dk6as6.aliasing import SETTLE_S  # noqa: E402 -- after the sys.path setup
-from dk6as6.stage import supported, ExperimentalWarning  # noqa: E402 -- after the sys.path setup
+from dk6as6.stage import supported, supported_records, ExperimentalWarning  # noqa: E402 -- after the sys.path setup
 from dk6as6.pentode import HARDNESS  # noqa: E402 -- after the sys.path setup
 from spice6as6.run_refs import MODE_BIASES, GRID_BIASES  # noqa: E402 -- after the sys.path setup
 
@@ -66,7 +66,7 @@ CASES_NO_GRID = tuple((m, b, 0.0) for m in ("P1", "T")
                       for b in sorted(set(MODE_BIASES[m]) | ({0.3} if m == "T" else set()))
                       if supported(m, b, grid_hardness=0.0))
 CASES_GRID = tuple(("T", b, HARDNESS) for b in sorted(GRID_BIASES["T"])
-                   if supported("T", b) and not supported("T", b, grid_hardness=0.0))
+                   if supported_records("T", b) and not supported("T", b, grid_hardness=0.0))
 CASES = CASES_NO_GRID + CASES_GRID
 REUSED = ("P1", "standard")            # (mode, setting) read from lpf_aliasing.json
 OUT_JSON = os.path.join(HERE, "aliasing_quality.json")

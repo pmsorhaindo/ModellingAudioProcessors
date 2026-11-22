@@ -1,0 +1,204 @@
+{
+ "format": "inaudible-v1",
+ "tolerance_db": 1.5,
+ "method": {
+  "standard": {
+   "fs_base": 44100,
+   "quality": "standard",
+   "os": 16,
+   "stage": "dk6as6.stage.Stage",
+   "grid_hardness": 1.0,
+   "fir": "k140",
+   "lpf": "off",
+   "settle_s": 1.25,
+   "window_s": 0.1,
+   "band_hz": [
+    20.0,
+    20000.0
+   ],
+   "mask_bins": 3,
+   "floor_dbfs": -100.0,
+   "under_threshold_db": 10.0,
+   "spl_fs_db": 105.0,
+   "tones": {
+    "P1/0.6mA/standard/k140/2V": [
+     19997,
+     19987
+    ],
+    "P1/0.6mA/standard/k140/8V": [
+     19997,
+     19987
+    ],
+    "T/0.35mA/standard/k140/2V": [
+     19997,
+     19987
+    ],
+    "T/0.35mA/standard/k140/8V": [
+     19997,
+     19987
+    ]
+   }
+  },
+  "hq": {
+   "fs_base": 44100,
+   "quality": "hq",
+   "os": 32,
+   "stage": "dk6as6.stage.Stage",
+   "grid_hardness": 1.0,
+   "fir": "k140",
+   "lpf": "off",
+   "settle_s": 1.25,
+   "window_s": 0.1,
+   "band_hz": [
+    20.0,
+    20000.0
+   ],
+   "mask_bins": 3,
+   "floor_dbfs": -100.0,
+   "under_threshold_db": 10.0,
+   "spl_fs_db": 105.0,
+   "tones": {
+    "P1/0.1mA/hq/k140/8V": [
+     19997
+    ],
+    "P1/0.6mA/hq/k140/2V": [
+     19997
+    ],
+    "P1/0.6mA/hq/k140/8V": [
+     16037
+    ],
+    "T/0.3mA/hq/k140/8V": [
+     19997
+    ],
+    "T/0.35mA/hq/k140/2V": [
+     19997
+    ],
+    "T/0.35mA/hq/k140/8V": [
+     19997
+    ]
+   }
+  }
+ },
+ "history": [
+  {
+   "updated": "2026-11-22",
+   "quality": "standard",
+   "reason": "#113 rework: the inaudibility criterion, standard 16x, k140, T to 0.35 mA",
+   "git_rev": "256f64f",
+   "python": "3.15.2"
+  },
+  {
+   "updated": "2026-11-22",
+   "quality": "hq",
+   "reason": "#113 rework: the inaudibility criterion, hq 32x, k140, T to 0.35 mA",
+   "git_rev": "bbf96ab",
+   "python": "3.15.2"
+  }
+ ],
+ "values": {
+  "P1/0.1mA/hq/k140/8V": {
+   "19997": {
+    "margin_db": 36.8683170532115,
+    "worst_hz": 4100.0,
+    "worst_dbfs": -154.83583005203928,
+    "f_hz": 20000.0
+   }
+  },
+  "P1/0.6mA/hq/k140/2V": {
+   "19997": {
+    "margin_db": 44.906299258980155,
+    "worst_hz": 4100.0,
+    "worst_dbfs": -162.87381225780794,
+    "f_hz": 20000.0
+   }
+  },
+  "P1/0.6mA/hq/k140/8V": {
+   "16037": {
+    "margin_db": 43.183321432983746,
+    "worst_hz": 4020.0,
+    "worst_dbfs": -161.48864189301543,
+    "f_hz": 16040.0
+   }
+  },
+  "P1/0.6mA/standard/k140/2V": {
+   "19997": {
+    "margin_db": 44.90642732768033,
+    "worst_hz": 4100.0,
+    "worst_dbfs": -162.87394032650812,
+    "f_hz": 20000.0
+   },
+   "19987": {
+    "margin_db": 45.63585630986775,
+    "worst_hz": 4120.0,
+    "worst_dbfs": -163.5171526974028,
+    "f_hz": 19990.0
+   }
+  },
+  "P1/0.6mA/standard/k140/8V": {
+   "19997": {
+    "margin_db": 36.88509272664906,
+    "worst_hz": 5600.0,
+    "worst_dbfs": -150.25619302181462,
+    "f_hz": 20000.0
+   },
+   "19987": {
+    "margin_db": 37.304370977094365,
+    "worst_hz": 5950.0,
+    "worst_dbfs": -150.2732457366978,
+    "f_hz": 19990.0
+   }
+  },
+  "T/0.35mA/hq/k140/2V": {
+   "19997": {
+    "margin_db": 54.59800455463527,
+    "worst_hz": 4100.0,
+    "worst_dbfs": -172.56551755346305,
+    "f_hz": 20000.0
+   }
+  },
+  "T/0.35mA/hq/k140/8V": {
+   "19997": {
+    "margin_db": 41.790520653156946,
+    "worst_hz": 4100.0,
+    "worst_dbfs": -159.75803365198473,
+    "f_hz": 20000.0
+   }
+  },
+  "T/0.35mA/standard/k140/2V": {
+   "19997": {
+    "margin_db": 54.59749547724546,
+    "worst_hz": 4100.0,
+    "worst_dbfs": -172.56500847607325,
+    "f_hz": 20000.0
+   },
+   "19987": {
+    "margin_db": 55.322627553471975,
+    "worst_hz": 4120.0,
+    "worst_dbfs": -173.20392394100702,
+    "f_hz": 19990.0
+   }
+  },
+  "T/0.35mA/standard/k140/8V": {
+   "19997": {
+    "margin_db": 25.531517750211535,
+    "worst_hz": 5600.0,
+    "worst_dbfs": -138.9026180453771,
+    "f_hz": 20000.0
+   },
+   "19987": {
+    "margin_db": 25.921061787998312,
+    "worst_hz": 5950.0,
+    "worst_dbfs": -138.88993654760174,
+    "f_hz": 19990.0
+   }
+  },
+  "T/0.3mA/hq/k140/8V": {
+   "19997": {
+    "margin_db": 41.20987928319097,
+    "worst_hz": 4100.0,
+    "worst_dbfs": -159.17739228201876,
+    "f_hz": 20000.0
+   }
+  }
+ }
+}

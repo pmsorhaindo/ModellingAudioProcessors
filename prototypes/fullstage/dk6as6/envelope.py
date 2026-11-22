@@ -28,7 +28,7 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from dk6as6.stage import Stage, QUALITY, ExperimentalWarning, OutOfLawWarning, NonConvergenceWarning  # noqa: E402
+from dk6as6.stage import Stage, record_stage, QUALITY_RECORDS as QUALITY, ExperimentalWarning, OutOfLawWarning, NonConvergenceWarning  # noqa: E402,E501
 from dk6as6.pentode import HARDNESS, GRID_SHAPE  # noqa: E402 -- after the sys.path setup
 
 FS = 48000.0
@@ -50,16 +50,20 @@ def stimulus(f, phase, latency, fs=FS):
     return np.r_[np.zeros(int(0.005 * fs)), x, np.zeros(int(0.02 * fs) + latency)]
 
 
-def excursion(mode, bias, quality, f, phase, grid_hardness=0.0, grid_shape=GRID_SHAPE):
+def excursion(mode, bias, quality, f, phase, grid_hardness=0.0, grid_shape=GRID_SHAPE, offered=False):
     """(max Vg1k, min Vak, min Ip + Ig2) over the whole run at the internal rate, the guard's count and Newton's
     unconverged samples, at grid_hardness (0: the #111 law, the default here so envelope.json stays reproducible) and
-    grid_shape (the nominal, or a #131 bound, which the row then names)."""
+    grid_shape (the nominal, or a #131 bound, which the row then names). offered=False (the records, envelope*.json,
+    grid_bounds.json): the stage that made them, stage.record_stage (a quality name at QUALITY_RECORDS' 8x / 16x, the
+    shipped FIR); offered=True: the production stage at the offered QUALITY and its k140 FIR (the live re-checks)."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", ExperimentalWarning)
         warnings.simplefilter("ignore", OutOfLawWarning)
         warnings.simplefilter("ignore", NonConvergenceWarning)
-        st = Stage(FS, bias=bias, mode=mode, quality=quality, experimental=True, grid_hardness=grid_hardness,
-                   grid_shape=grid_shape, fir=FIR)
+        st = (Stage(FS, bias=bias, mode=mode, quality=quality, experimental=True, grid_hardness=grid_hardness,
+                    grid_shape=grid_shape) if offered else
+              record_stage(FS, bias=bias, mode=mode, quality=quality, experimental=True, grid_hardness=grid_hardness,
+                           grid_shape=grid_shape, fir=FIR))
         r = st.process(stimulus(f, phase, st.latency_samples), record=("vgk", "a", "k", "ipk"))["_internal"]
     return dict(mode=mode, bias_ma=bias, quality=quality, f_hz=f, phase=phase, vg1k_max=float(r["vgk"].max()),
                 vak_min=float((r["a"] - r["k"]).min()), out_of_law=st.out_of_law,

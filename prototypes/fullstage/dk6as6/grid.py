@@ -40,7 +40,7 @@ from analysis import harmonics, thd  # noqa: E402 -- after the sys.path setup
 from dk.validate import aligned  # noqa: E402 -- after the sys.path setup
 from spice.run_refs import AMPS  # noqa: E402 -- after the sys.path setup
 from dk6as6 import pentode  # noqa: E402 -- after the sys.path setup
-from dk6as6.stage import Stage, supported, SUPPORTED_MA  # noqa: E402 -- after the sys.path setup
+from dk6as6.stage import record_stage, supported_records as supported, SUPPORTED_MA_RECORDS as SUPPORTED_MA  # noqa: E402,E501 -- grid.json: the pre-#113-rework records
 from dk6as6 import modes, validate as V  # noqa: E402 -- after the sys.path setup
 from spice6as6 import run_refs as R  # noqa: E402 -- after the sys.path setup
 
@@ -142,7 +142,7 @@ def _shape(a, n):
 def _tone(a):
     (mode, bias, drive), shape = _shape(a, 3)
     warnings.simplefilter("ignore")
-    st = Stage(FS, bias=bias, mode=mode, experimental=True, grid_shape=shape, fir=FIR)
+    st = record_stage(FS, bias=bias, mode=mode, experimental=True, grid_shape=shape, fir=FIR)
     t = np.arange(int(modes.T * FS) + st.latency_samples) / FS
     r = aligned(st, drive * np.sin(2 * np.pi * 1000 * t), record=("out", "vgk", "vak", "ig1", "ipk"))
     i = r["_internal"]
@@ -159,7 +159,7 @@ def _tone(a):
 def _onset(a):
     (mode, bias, f0, quality), shape = _shape(a, 4)
     warnings.simplefilter("ignore")
-    st = Stage(FS, bias=bias, mode=mode, quality=quality, experimental=True, grid_shape=shape, fir=FIR)
+    st = record_stage(FS, bias=bias, mode=mode, quality=quality, experimental=True, grid_shape=shape, fir=FIR)
     t = np.arange(int(ONSET_S * FS) + st.latency_samples) / FS
     r = st.process(8.0 * np.sin(2 * np.pi * f0 * t), record=("out", "vgk", "vak", "ig1", "ipk"))["_internal"]
     s = st.iteration_stats()
@@ -171,7 +171,7 @@ def _onset(a):
 def _hf(a):
     (mode, bias, drive, f0), shape = _shape(a, 4)
     warnings.simplefilter("ignore")
-    st = Stage(FS, bias=bias, mode=mode, experimental=True, grid_shape=shape, fir=FIR)
+    st = record_stage(FS, bias=bias, mode=mode, experimental=True, grid_shape=shape, fir=FIR)
     t = np.arange(int(HF_S * FS) + st.latency_samples) / FS
     r = st.process(drive * np.sin(2 * np.pi * f0 * t), record=("out", "vgk", "vak", "ig1", "ipk"))["_internal"]
     s = st.iteration_stats()
