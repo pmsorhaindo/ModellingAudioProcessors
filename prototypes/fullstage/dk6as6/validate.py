@@ -84,6 +84,14 @@ def stage(model="dual", **kw):
                  **kw)
 
 
+def op_record(st):
+    """The DK operating point in the reference's op keys (OP_KEYS), plus vg, vg2k, vg3k, vak; ig1 with grid current."""
+    dc = st.dc
+    return dict(va=dc["nodes"]["a"], vk=dc["nodes"]["k"], ia=dc["ip"], ig2=dc["ig2"], ik=dc["ik"], vgk=dc["vgk"],
+                vg=dc["nodes"]["g"], vg2k=dc["vg2k"], vg3k=dc["vg3k"], vak=dc["vak"],
+                **({} if st.grid is None else dict(ig1=dc["ig1"])))
+
+
 def small_signal(stage, f):
     """(stage alone, whole chain) small-signal response in dB, as dk/validate.small_signal."""
     f = np.asarray(f, float)
@@ -241,9 +249,7 @@ def run(T=0.5, quality="standard", filt="fir", model="dual", bias=BIAS_MA, mode=
         out["mode"] = mode
     out["resampler"] = dict(latency_samples=st.latency_samples, latency_ms=st.rs.latency_ms,
                             macs_up_down=st.resampler_macs)
-    dc = st.dc
-    out["op"] = dict(va=dc["nodes"]["a"], vk=dc["nodes"]["k"], ia=dc["ip"], ig2=dc["ig2"], ik=dc["ik"], vgk=dc["vgk"],
-                     vg=dc["nodes"]["g"], vg2k=dc["vg2k"], vg3k=dc["vg3k"], vak=dc["vak"])
+    out["op"] = op_record(st)
     r = ref(model, bias, mode)
     o = dict(op_rel={k: abs(out["op"][k] / r["op"][k] - 1) for k in OP_KEYS})
     o.update(ac_dev(st, r))
@@ -325,6 +331,8 @@ def _run(a):
 
 
 def main(mode=MODE, model="dual", workers=1):
+    if model in GRID_SHAPE and mode not in BOUND_BIASES:      # PR #139 review: nothing to run, so nothing written
+        raise ValueError(f"{model} is a #131 grid-current bound, validated only in {sorted(BOUND_BIASES)}, not {mode}")
     jobs = [(q, b, mode, model) for b in biases_of(model, mode) for q in QUALITY]
     if mode == "P1" and model == "dual":
         jobs.append(((4, None), BIAS_MA, mode, model))
@@ -358,6 +366,8 @@ if __name__ == "__main__":
     ap.add_argument("--workers", type=int, default=1, help="processes (CPU time per run is then not one-core time)")
     a = ap.parse_args()
     if a.bounds:
+        if set(a.modes) - set(BOUND_BIASES):
+            ap.error(f"--bounds runs only {sorted(BOUND_BIASES)}, not {sorted(set(a.modes) - set(BOUND_BIASES))}")
         st = {f"{m}/{md}": main(md, m, a.workers) for m in GRID_SHAPE for md in (a.modes or list(BOUND_BIASES))}
     else:
         st = {m: main(m, "dualg" if a.grid else "dual", a.workers)

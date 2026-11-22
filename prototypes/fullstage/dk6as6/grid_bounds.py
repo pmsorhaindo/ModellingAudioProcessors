@@ -25,6 +25,7 @@ Run: python -m dk6as6.grid_bounds [law] [envelope] [aliasing] [tables] [--shapes
      (from prototypes/fullstage) -> dk6as6/grid_bounds.json (each part replaces its own key per shape).
 """
 import argparse
+import fcntl
 import json
 import os
 import sys
@@ -43,7 +44,8 @@ SHAPES = pentode.GRID_BOUNDS
 LABEL = "estimated, unvalidated"          # every grid-current number here (#131)
 SOURCE = ("Dempwolf & Zoelzer, DAFx-11, Table 1 (individually fitted parameters for 12AX7 triodes), column {}: G, Gg, "
           "xi, Cg; Gg scaled by the 6AS6 fit's cathode coefficient (2 / KG1) over that column's G (dk6as6/pentode.py)")
-LAW_VG1K = (-1.5, -1.0, -0.5, -0.16, 0.0, 0.5, 1.0, 2.0)
+LAW_VG1K = (-1.5, -1.0, -0.5, -0.16, -0.05, 0.0, 0.5, 1.0, 2.0)
+ONSET_A = (1e-6, 1e-5, 2e-5)        # A: onset thresholds, Vg1k at which Ig1 reaches each (PR #139 review)
 T_BIASES = (0.35, 0.4, 0.45, 0.5, 0.55, 0.6)        # mA: where the nominal grid current moves T's results (#112)
 T_ALIAS_BIASES = (0.45, 0.5, 0.55, 0.6)             # around T's top (0.5 mA), which the 2 V aliasing gate sets
 TOP_TONES = SWEEP_HZ[-5:]                           # 15037 ... 19037 Hz
@@ -60,10 +62,26 @@ def operating(bias, shape):
     return dict(bias_ma=bias, rk=float(rk), vg1k=float(dc["vg1k"]), vak=float(dc["vak"]), ig1=float(dc["ig1"]))
 
 
+def onset_v(g, ig):
+    """The Vg1k (V) at which Ig1 = GG (softplus(CG Vg1k) / CG)^XI reaches `ig` A (monotonic; bisection to 1e-12 V)."""
+    from scipy.optimize import brentq
+    return float(brentq(lambda v: pentode.grid_current(v, g)[0] - ig, -5.0, 5.0, xtol=1e-12))
+
+
+def crossings(g, g0, lo=-1.5, hi=2.0, step=1e-3):
+    """The Vg1k (V) in [lo, hi] where Ig1 of g equals that of g0 (sign changes on a 1 mV grid, refined by bisection)."""
+    from scipy.optimize import brentq
+    f = lambda v: pentode.grid_current(v, g)[0] - pentode.grid_current(v, g0)[0]          # noqa: E731
+    xs = [lo + k * step for k in range(int(round((hi - lo) / step)) + 1)]
+    return [float(brentq(f, a, b, xtol=1e-12)) for a, b in zip(xs, xs[1:]) if f(a) * f(b) < 0]
+
+
 def law(shape):
     g = pentode.grid(shape=shape)
     return dict(shape=shape, label=LABEL, source=SOURCE.format(shape), table1=pentode.GRID_SHAPES[shape], grid=g,
                 ig1_a={f"{v:g}": pentode.grid_current(v, g)[0] for v in LAW_VG1K},
+                onset_v={f"{i:g}": onset_v(g, i) for i in ONSET_A},
+                crossings_with_nominal_v=crossings(g, pentode.GRID),
                 t_operating_points=[operating(b, shape) for b in T_BIASES])
 
 
@@ -157,6 +175,16 @@ def tables():
     for v in LAW_VG1K:
         lines.append(f"| {v:+g} V | " + " | ".join(
             f"{pentode.grid_current(v, pentode.grid(shape=s))[0]:.3g} A" for s in shapes) + " |")
+    lines.append("")
+    lines.append("| onset threshold | " + " | ".join(shapes) + " |")
+    lines.append("|---" * (len(shapes) + 1) + "|")
+    for i in ONSET_A:
+        lines.append(f"| {1e6 * i:g} µA | " + " | ".join(
+            f"{1e3 * onset_v(pentode.grid(shape=s), i):+.1f} mV" for s in shapes) + " |")
+    lines.append("")
+    for s in SHAPES:
+        lines.append(f"{s} crosses RSD-1 at " + ", ".join(
+            f"{1e3 * v:+.1f} mV" for v in crossings(pentode.grid(shape=s), pentode.GRID)))
     lines.append("")
     # 1 kHz tones
     env = {s: out["envelope"][s] for s in SHAPES if s in out.get("envelope", {})}
@@ -269,6 +297,15 @@ def burst_thd_tables():
             lines.append(f"| {b:g} mA | {s} | {row['rest_vgk']:.4f} | {row['shift_v']:.3f} | {traj} | "
                          f"{1e3 * row['tail_tau_s']:.1f} ms | {st} |")
     lines.append("")
+    lines.append("| T, bias | residual blocking (Vgk - rest), mV, at 35 ms: " + " / ".join(s for s, _ in models)
+                 + " | at 118.5 ms |")
+    lines.append("|---|---|---|")
+    for b in R.BOUND_BIASES["T"]:
+        rows = [GR._burst_row(res[s][f"{b:g}"]["standard"]["burst"]) if f"{b:g}" in res[s] else None for s, _ in models]
+        cell = lambda ms: " / ".join("—" if r is None else f"{1e3 * (r[f'vgk_{ms:g}ms'] - r['rest_vgk']):.2f}"  # noqa: E731
+                                     for r in rows)
+        lines.append(f"| {b:g} mA | {cell(35.0)} | {cell(118.5)} |")
+    lines.append("")
     lines.append("| T, bias | shape | " + " | ".join(f"{a} V" for a in R.AMPS) + " |")
     lines.append("|---|---|" + "---|" * len(R.AMPS))
     for b in R.BOUND_BIASES["T"]:
@@ -281,6 +318,23 @@ def burst_thd_tables():
                 f"{sn[a]['thd_pct']:.4g} % (H2 {sn[a]['H_dBc'][1]:.1f}, H3 {sn[a]['H_dBc'][2]:.1f}, "
                 f"H4 {sn[a]['H_dBc'][3]:.1f})" for a in R.AMPS) + " |")
     return lines
+
+
+def publish(part, shape, record, fn=JSON):
+    """Merge one part's record for one shape into `fn` (PR #139 review): the read / merge / write holds an exclusive
+    lock (<fn>.lock), so concurrent runs of different parts or shapes never drop each other's updates, and the new
+    file is written to a temporary name and renamed over `fn` (atomic, one filesystem), so a reader sees the old or
+    the new file whole, never a partial one."""
+    with open(fn + ".lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)                 # released when the file closes
+        out = json.load(open(fn)) if os.path.exists(fn) else {}
+        out.setdefault("label", LABEL)
+        out.setdefault(part, {})[shape] = record
+        tmp = f"{fn}.{os.getpid()}.tmp"
+        with open(tmp, "w") as f:
+            json.dump(out, f, indent=1, default=float)
+        os.replace(tmp, fn)
+    return out
 
 
 if __name__ == "__main__":
@@ -297,8 +351,5 @@ if __name__ == "__main__":
             if s not in SHAPES:
                 sys.exit(f"{s} is not a #131 bound shape {SHAPES}")
             r = law(s) if p == "law" else {"envelope": envelope, "aliasing": aliasing}[p](s, a.workers)
-            out = json.load(open(JSON)) if os.path.exists(JSON) else {}     # re-read: parts may run concurrently
-            out.setdefault("label", LABEL)
-            out.setdefault(p, {})[s] = r
-            json.dump(out, open(JSON, "w"), indent=1, default=float)
+            publish(p, s, r)
             print(p, s, "done")

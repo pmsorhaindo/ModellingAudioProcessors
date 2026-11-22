@@ -88,6 +88,13 @@ def shape(model):
     return GRID_SHAPE.get(model, pentode.GRID_SHAPE)
 
 
+def check_mode(model, mode):
+    """Raise ValueError if `model` has no subckt / references wired as `mode`: a #131 bound runs only in
+    BOUND_BIASES' modes (T). Called before any netlist is written or ngspice started (PR #139 review)."""
+    if model in GRID_SHAPE and mode not in BOUND_BIASES:
+        raise ValueError(f"{model} is a #131 grid-current bound, wired only as {sorted(BOUND_BIASES)}, not {mode}")
+
+
 def grid_of(model):
     """pentode.grid() of `model` (its hardness, params and shape)."""
     return pentode.grid(HARDNESS[model], PARAMS[model], shape(model))
@@ -257,6 +264,7 @@ def netlist(model, analysis, bias, out="out", values=VALUES, solver=SOLVER, rk=N
     """The complete ngspice netlist (text) of `analysis` ('main', 'burst', or a piece of 'main': 'opac', 'sine:<A>',
     split_analyses()) for `model` wired as `mode` at `bias` mA (Rk solved for it unless rk is given); wrdata goes to
     `out`/<case>_*."""
+    check_mode(model, mode)
     inc, sub = models(model, mode)
     values = dict(values, Rk=rk_of(model, bias, mode) if rk is None else rk)
     name = case(model, bias, mode)
@@ -390,7 +398,7 @@ def run(model, bias, solver=SOLVER, out="out", write=True, mode=MODE, split=Fals
     write=True (re)writes the committed reference_<tag>_<bias>mA.json, write=False is for convergence studies. Fails if
     models/ is stale. split=True (#112) runs 'main' as split_analyses(), the same analyses as shorter ngspice calls,
     `jobs` at a time (each still under NGSPICE_TIMEOUT_S); every call is waited for before a failure is raised, so
-    nothing is left running.
+    nothing is left running. A model / mode with no subckt (check_mode) raises before anything is written.
     Raw output, one immutable directory per run (PR #128 review): ngspice writes into a fresh staging directory, the
     run's generator record is saved beside the traces, and the staged run is ANALYSED IN PLACE, so a missing or
     unreadable trace fails the run (whatever ngspice's exit code) before anything is published. Only then is the
@@ -398,6 +406,7 @@ def run(model, bias, solver=SOLVER, out="out", write=True, mode=MODE, split=Fals
     name it. A published run directory is never written again; the previous one is kept until the next publish, so a
     reader that resolved the pointer (--analyse-only) reads one run's record and traces, never a mixture. A failed run
     deletes its staging directory and leaves the pointer and every published run untouched."""
+    check_mode(model, mode)
     if open(model_file(model, mode)).read() != subckt(model, mode=mode):
         raise RuntimeError(f"{model_file(model, mode)} is stale; run python spice6as6/run_refs.py --write-netlist")
     o = os.path.join(HERE, out)
@@ -564,12 +573,16 @@ def biases_of(model, mode=MODE):
 
 def cases(args):
     """[(model, mode, bias)] from command-line args model[/mode][:bias], e.g. 'dual', 'dual:0.25', 'dual/T',
-    'dual/P2:0.45'; a bare model or model/mode means every bias of BIASES (P1) or MODE_BIASES."""
+    'dual/P2:0.45'; a bare model or model/mode means every bias of BIASES (P1) or MODE_BIASES. An explicit mode or
+    bias a #131 bound has no subckt for raises (check_mode, PR #139 review); a bare bound model (no mode) is its P1
+    case list, empty, so the default "every model" run still skips it."""
     out = []
     for arg in args:
         mm, _, b = arg.partition(":")
-        m, _, mode = mm.partition("/")
+        m, sep, mode = mm.partition("/")
         mode = mode or "P1"
+        if sep or b:
+            check_mode(m, mode)
         biases = biases_of(m, mode)
         out += [(m, mode, float(b))] if b else [(m, mode, x) for x in biases]
     return out

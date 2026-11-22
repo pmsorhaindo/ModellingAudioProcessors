@@ -229,3 +229,94 @@ def test_bound_validation_against_its_own_references(model):
             assert V.status(r) == "passed", (b, q, r["passed"])
             ref = V.ref(model, float(b), "T")
             assert ref["generator"]["grid"] == R.grid_of(model)
+
+
+@pytest.mark.parametrize("model", list(R.GRID_SHAPE))
+def test_live_validator_runs_each_bound_against_its_own_reference(model):
+    """PR #139 review: the live validator, not the stored flags. validate.stage(model) builds the bound's shape, and
+    its operating point (validate.op_record, what validate.run compares) at T 0.6 mA, where g1 rests at -0.95 V and the
+    shapes' Ig1 differ by up to 23x, matches that bound's own ngspice reference (Ig1 to 1e-6, every OP_KEYS entry to
+    1e-7) and no other shape's (Ig1 off by > 50 %); its small signal passes CRIT against it too."""
+    st = V.stage(model, bias=0.6, mode="T")
+    assert st.grid_shape == R.shape(model) and st.grid == R.grid_of(model)
+    op = V.op_record(st)
+    ref = V.ref(model, 0.6, "T")
+    assert op["ig1"] == pytest.approx(ref["op"]["ig1"], rel=1e-6)
+    assert max(abs(op[k] / ref["op"][k] - 1) for k in V.OP_KEYS) < 1e-7
+    for other in ("dualg", *R.GRID_SHAPE):
+        if other != model:
+            assert abs(op["ig1"] / V.ref(other, 0.6, "T")["op"]["ig1"] - 1) > 0.5, other
+    ac = V.ac_dev(st, ref)
+    assert ac["ac_maxdev_db_stage"] < V.CRIT["ac_db"] and ac["ac_maxdev_db_chain"] < V.CRIT["ac_db"]
+
+
+# --- the T-only entry points (PR #139 review) ------------------------------------------------------------------
+
+@pytest.mark.parametrize("model", list(R.GRID_SHAPE))
+def test_bound_models_refuse_every_mode_but_t(model, tmp_path, monkeypatch):
+    """A bound has subckts and references only in T: run_refs.cases rejects an explicit other mode (with or without a
+    bias), run() and netlist() raise before writing a netlist or starting ngspice, and validate.main raises before
+    writing a results file. A bare bound model (the default "every model" run) is its empty P1 list."""
+    for arg in (f"{model}/P1:0.5", f"{model}/P2:0.5", f"{model}/P2", f"{model}/P1"):
+        with pytest.raises(ValueError, match="#131 grid-current bound"):
+            R.cases([arg])
+    assert R.cases([model]) == [] and R.cases([f"{model}/T"]) == [(model, "T", b) for b in R.BOUND_BIASES["T"]]
+    assert R.cases([f"{model}/T:0.55"]) == [(model, "T", 0.55)]
+    monkeypatch.setattr(R, "ngspice", lambda *a, **k: pytest.fail("ngspice started"))
+    for mode in ("P1", "P2"):
+        with pytest.raises(ValueError, match="#131 grid-current bound"):
+            R.run(model, 0.5, mode=mode, out=str(tmp_path / "out"), write=False)
+        with pytest.raises(ValueError, match="#131 grid-current bound"):
+            R.netlist(model, "main", 0.5, mode=mode)
+    assert not (tmp_path / "out").exists()
+    fn = tmp_path / "results.json"
+    monkeypatch.setattr(V, "results_file", lambda mode, model: str(fn))
+    for mode in ("P1", "P2"):
+        with pytest.raises(ValueError, match="#131 grid-current bound"):
+            V.main(mode, model)
+    assert not fn.exists()
+
+
+def test_validate_cli_refuses_a_bound_mode_but_t():
+    """`python -m dk6as6.validate --bounds P1` is a usage error (exit 2), before any stage is built."""
+    import subprocess
+    p = subprocess.run([sys.executable, "-m", "dk6as6.validate", "--bounds", "P1"], cwd=os.path.dirname(HERE),
+                       capture_output=True, text=True, timeout=120)
+    assert p.returncode == 2 and "--bounds runs only ['T']" in p.stderr
+
+
+# --- the study's output file (PR #139 review) ------------------------------------------------------------------
+
+def _publish(a):
+    fn, part, shape = a
+    GB.publish(part, shape, dict(shape=shape, part=part, pad=list(range(20000))), fn)
+
+
+def test_concurrent_publishers_keep_every_update(tmp_path):
+    """Sixteen processes publishing different parts / shapes into one file at once: every update survives (the read /
+    merge / write is locked) and the file is whole JSON afterwards (it is replaced atomically, never truncated)."""
+    from concurrent.futures import ProcessPoolExecutor
+    fn = str(tmp_path / "bounds.json")
+    jobs = [(fn, f"part{k}", s) for k in range(8) for s in GB.SHAPES]
+    with ProcessPoolExecutor(8) as ex:
+        list(ex.map(_publish, jobs))
+    d = json.load(open(fn))
+    assert d["label"] == GB.LABEL
+    assert {(p, s) for p, v in d.items() if p != "label" for s in v} == {(p, s) for _, p, s in jobs}
+    assert not [f for f in os.listdir(tmp_path) if f.endswith(".tmp")]
+
+
+def test_shapes_cross_and_onsets_depend_on_the_threshold():
+    """PR #139 review: the shapes are not ordered. EHX-1 crosses above RSD-1 at -66.5 mV and back below at +383 mV;
+    RSD-2 stays below it to +1.34 V. Onset (Vg1k at a stated Ig1): EHX-1 is earlier than RSD-1 at 20 uA (-22.9 vs
+    -19.2 mV) but later at 1 and 10 uA. The committed "law" records carry the same figures."""
+    nom = P.GRID
+    assert [round(1e3 * v, 1) for v in GB.crossings(P.grid(shape="EHX-1"), nom)] == [-66.5, 383.3]
+    assert [round(1e3 * v, 1) for v in GB.crossings(P.grid(shape="RSD-2"), nom)] == [1336.4]
+    on = {s: {i: round(1e3 * GB.onset_v(P.grid(shape=s), i), 1) for i in GB.ONSET_A} for s in P.GRID_SHAPES}
+    assert on == {"RSD-1": {1e-6: -278.3, 1e-5: -85.9, 2e-5: -19.2}, "RSD-2": {1e-6: -203.8, 1e-5: -42.3, 2e-5: 15.9},
+                  "EHX-1": {1e-6: -262.0, 1e-5: -84.3, 2e-5: -22.9}}
+    law = _bounds()["law"]
+    for s in P.GRID_BOUNDS:
+        assert law[s]["crossings_with_nominal_v"] == GB.crossings(P.grid(shape=s), nom)
+        assert law[s]["onset_v"] == {f"{i:g}": GB.onset_v(P.grid(shape=s), i) for i in GB.ONSET_A}
