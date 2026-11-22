@@ -309,7 +309,8 @@ def test_concurrent_publishers_keep_every_update(tmp_path):
 def test_shapes_cross_and_onsets_depend_on_the_threshold():
     """PR #139 review: the shapes are not ordered. EHX-1 crosses above RSD-1 at -66.5 mV and back below at +383 mV;
     RSD-2 stays below it to +1.34 V. Onset (Vg1k at a stated Ig1): EHX-1 is earlier than RSD-1 at 20 uA (-22.9 vs
-    -19.2 mV) but later at 1 and 10 uA. The committed "law" records carry the same figures."""
+    -19.2 mV) but later at 1 and 10 uA. The committed "law" records carry the same figures (to 1e-11 V: they are
+    bisected to xtol 1e-12 V, and other platforms' libm moves the root in the last ulps)."""
     nom = P.GRID
     assert [round(1e3 * v, 1) for v in GB.crossings(P.grid(shape="EHX-1"), nom)] == [-66.5, 383.3]
     assert [round(1e3 * v, 1) for v in GB.crossings(P.grid(shape="RSD-2"), nom)] == [1336.4]
@@ -318,5 +319,6 @@ def test_shapes_cross_and_onsets_depend_on_the_threshold():
                   "EHX-1": {1e-6: -262.0, 1e-5: -84.3, 2e-5: -22.9}}
     law = _bounds()["law"]
     for s in P.GRID_BOUNDS:
-        assert law[s]["crossings_with_nominal_v"] == GB.crossings(P.grid(shape=s), nom)
-        assert law[s]["onset_v"] == {f"{i:g}": GB.onset_v(P.grid(shape=s), i) for i in GB.ONSET_A}
+        assert law[s]["crossings_with_nominal_v"] == pytest.approx(GB.crossings(P.grid(shape=s), nom), rel=0, abs=1e-11)
+        assert law[s]["onset_v"] == pytest.approx({f"{i:g}": GB.onset_v(P.grid(shape=s), i) for i in GB.ONSET_A},
+                                                  rel=0, abs=1e-11)
