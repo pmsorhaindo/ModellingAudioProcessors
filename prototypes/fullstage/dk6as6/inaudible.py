@@ -33,17 +33,19 @@ loudest non-clipping case at 8 V, and at 2 V it is louder than that mapping.
 
 Products: a coherent tone on DFT bin m of an n-sample window (dk.aliasing.tone_bin), 20 Hz-20 kHz. In steady state
 every harmonic and every alias is a line exactly on a bin, so every bin except the harmonics' own (k m, k m < n / 2) is
-read as a product:
-  - bins two or more away from every harmonic bin: periodic Hann window, |X| = a n / 4 at a line's centre bin, so
-    level = 20 log10(4 |X| / n / peak). A coherent harmonic contributes exactly nothing there; a neighbouring alias line
-    leaks -6 dB into the bin next to it, which over-reads that bin (conservative), never the line's own.
-  - bins next to a harmonic bin (k m +- 1): the Hann main lobe of the harmonic covers them, so they are read without a
-    window, |R| = a n / 2, level = 20 log10(2 |R| / n / peak): exact for coherent lines, which the unwindowed DFT does
-    not spread. On the stage's own outputs (16x, P1 0.6 / T 0.35 mA, 8 V, 0.1 and 1 s windows, both rates) that reading
-    is -154 dBFS (P1) and -184 dBFS (T) where no alias line is, the start-up residue around the harmonics: at least
-    34 dB under the lowest limit (PR #146 review round 2; until then +-3 bins around every harmonic were masked, which
-    could hide a folded line next to a harmonic).
-  - a harmonic's own bin cannot be read: an alias folded exactly onto it is unmeasurable. That happens first at order
+read as a product, from the unwindowed DFT: a coherent line of amplitude a gives |R| = a n / 2 on its own bin and
+nothing on any other, so level = 20 log10(2 |R| / n / peak) is exact for each line whatever its neighbours (metric 3,
+PR #146 review round 3).
+  - Why not a window: metric 1 masked +-3 bins around every harmonic (it could hide a folded line next to one; review
+    round 2) and metric 2 read the other bins through a periodic Hann window, whose estimate combines a bin with its
+    neighbours (X[b] = (R[b] - (R[b-1] + R[b+1]) / 2) / 2), so in-phase neighbouring lines cancel part of a line
+    (review round 3: a cluster of seven folded lines read 12 dB low and passed both CI checks over its limit).
+  - What the unwindowed DFT costs: energy that is not a line (the start-up residue of the 1.25 s settle, mostly near
+    20 Hz) leaks further. On the stage's own outputs at every guard key it reads about 10 dB higher than through the
+    window, -109 to -131 dBFS re the peak in the 0.1 s CI window and -130 to -146 dBFS in 1 s; where alias lines are
+    the worst products both readings agree to 0.4 dB. assess also returns margin_hann_db (metric 2's reading) for
+    comparison.
+  - A harmonic's own bin cannot be read: an alias folded exactly onto it is unmeasurable. That happens first at order
     collision_order(m, n, 0) - n // (2 m) (assess returns it as first_hidden_order); for the tones here it is in the
     thousands (1 s) and hundreds or more (0.1 s).
 Energy that is not a line (a settling transient) is read per bin as well, at the window's 1 / window Hz resolution. In
@@ -76,10 +78,10 @@ def limit_dbfs(f, spl_fs_db=SPL_FS_DB):
     return np.minimum(FLOOR_DBFS, threshold_db_spl(f) - UNDER_THRESHOLD_DB - spl_fs_db)
 
 
-def products(y, m, fs, band=BAND_HZ):
+def products(y, m, fs, band=BAND_HZ, window="none"):
     """y: one analysis window of output, m: the tone's bin. Returns (f_hz, level_dbfs, fund_dbfs, peak) for every
     non-harmonic bin in `band` (module docstring, Products): level re the window's sample peak (0 dBFS) of the
-    mean-removed output."""
+    mean-removed output. window="hann" gives metric 2's reading, for comparison only."""
     n = len(y)
     y = np.asarray(y, float)
     if not np.all(np.isfinite(y)):
@@ -88,15 +90,19 @@ def products(y, m, fs, band=BAND_HZ):
     peak = float(np.max(np.abs(y)))
     if not peak > 0.0:
         raise ValueError("silent analysis window: no output peak to reference")
-    a = 4.0 * np.abs(np.fft.rfft(y * np.hanning(n + 1)[:-1])) / n
+    if window == "hann":                                # metric 2 (diagnostic only: margin_hann_db)
+        a = 4.0 * np.abs(np.fft.rfft(y * np.hanning(n + 1)[:-1])) / n
+    else:
+        a = 2.0 * np.abs(np.fft.rfft(y)) / n
     fb = np.arange(len(a)) * fs / n
     hb = np.arange(m, n // 2 + 1, m)                    # the harmonics' own bins
     harm = np.zeros(len(a), bool)
     harm[hb] = True
-    near = np.zeros(len(a), bool)
-    near[np.clip(np.r_[hb - 1, hb + 1], 0, len(a) - 1)] = True
-    near &= ~harm
-    a[near] = 2.0 * np.abs(np.fft.rfft(y))[near] / n     # unwindowed next to a harmonic (docstring)
+    if window == "hann":
+        near = np.zeros(len(a), bool)
+        near[np.clip(np.r_[hb - 1, hb + 1], 0, len(a) - 1)] = True
+        near &= ~harm
+        a[near] = 2.0 * np.abs(np.fft.rfft(y))[near] / n
     sel = (fb >= band[0]) & (fb <= band[1]) & ~harm
     lv = 20.0 * np.log10(np.maximum(a[sel], 1e-300) / peak)
     return fb[sel], lv, float(20.0 * np.log10(a[m] / peak)), peak
@@ -113,7 +119,8 @@ def assess(y, m, fs, os_=None, spl_fs_db=SPL_FS_DB):
       n_failing         products with margin < 0
       fund_dbfs, peak   the fundamental re the peak, and the peak itself (output units)
       first_hidden_order the lowest harmonic order whose fold could land exactly on a harmonic's own bin
-                        (unmeasurable)"""
+                        (unmeasurable)
+      margin_hann_db    metric 2's windowed reading of the smallest margin, for comparison (not the criterion)"""
     f, lv, fund, peak = products(y, m, fs)
     lim = limit_dbfs(f, spl_fs_db)
     marg = lim - lv
@@ -124,6 +131,8 @@ def assess(y, m, fs, os_=None, spl_fs_db=SPL_FS_DB):
                floor_margin_db=float(FLOOR_DBFS - lv[jl]), spl_headroom_db=float(np.min(thr)),
                n_failing=int(np.sum(marg < 0.0)), fund_dbfs=fund, peak=peak,
                first_hidden_order=int(collision_order(m, len(y), 0) - len(y) // (2 * m)))
+    fh, lvh, _, _ = products(y, m, fs, window="hann")
+    out["margin_hann_db"] = float(np.min(limit_dbfs(fh, spl_fs_db) - lvh))
     if os_ is not None:
         n = len(y)
         b = int(round(f[j] * n / fs))

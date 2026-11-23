@@ -51,7 +51,8 @@ GRID_HZ = tuple(SWEEP_HZ) + (19237, 19437, 19637, 19831, 19837, 19937, 19957, 19
 ABOVE_20K_HZ = {48000: (20299, 20899, 21499, 22099, 22699, 23299, 23899), 44100: (20299, 20599, 20899, 21199, 21499,
                                                                                  21799)}
 LPFS = LPF.POSITIONS                 # the post-filter positions (#103): "off", "4k", "7k"
-METRIC = 2                           # inaudible.products: 1 = +-3-bin harmonic mask (before review round 2), 2 = now
+METRIC = 3                           # inaudible.products: 1 = +-3-bin harmonic mask, 2 = Hann (review round 2),
+#                                      3 = unwindowed, every non-harmonic bin (review round 3, now)
 # Cases (mode, bias mA): every reference bias of each mode, T's supported top (0.5 mA) and its steps, and #132's
 # unsupported 0.55 / 0.6 mA; P2 (experimental, #123) at its reference biases. All with grid current (the default).
 CASES = (tuple(("P1", b) for b in (0.1, 0.25, 0.45, 0.6))
@@ -166,7 +167,7 @@ def plan(factors=FACTORS, cases=CASES, rates=RATES, drives=DRIVES, tones=GRID_HZ
 KEEP = ("engine", "metric", "fs", "os", "lpf", "mode", "bias_ma", "drive", "tone", "f_hz", "window_s", "in_scope",
         "supported", "passed", "margin_db", "worst_hz", "worst_dbfs", "worst_limit_dbfs", "worst_source",
         "worst_order", "loudest_dbfs", "loudest_hz", "floor_margin_db", "spl_headroom_db", "n_failing",
-        "first_hidden_order", "fund_dbfs", "peak", "nonconverged", "out_of_law")
+        "first_hidden_order", "margin_hann_db", "fund_dbfs", "peak", "nonconverged", "out_of_law")
 
 
 def compact(r):

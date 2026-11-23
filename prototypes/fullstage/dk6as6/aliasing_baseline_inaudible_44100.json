@@ -1,5 +1,5 @@
 {
- "format": "inaudible-v2",
+ "format": "inaudible-v3",
  "tolerance_db": 1.5,
  "method": {
   "standard": {
@@ -9,7 +9,7 @@
    "stage": "dk6as6.stage.Stage",
    "grid_hardness": 1.0,
    "fir": "k140",
-   "metric": 2,
+   "metric": 3,
    "settle_s": 1.25,
    "window_s": 0.1,
    "band_hz": [
@@ -44,7 +44,7 @@
    "stage": "dk6as6.stage.Stage",
    "grid_hardness": 1.0,
    "fir": "k140",
-   "metric": 2,
+   "metric": 3,
    "settle_s": 1.25,
    "window_s": 0.1,
    "band_hz": [
@@ -62,7 +62,7 @@
      19997
     ],
     "P1/0.6mA/hq/k140/lpf-4k/8V": [
-     16037
+     19997
     ],
     "T/0.3mA/hq/k140/lpf-4k/8V": [
      19997
@@ -80,114 +80,114 @@
   {
    "updated": "2026-11-23",
    "quality": "standard",
-   "reason": "#113 rework, review round 2: metric 2 (no harmonic mask), post-filter positions in the keys",
-   "git_rev": "4a30aa1",
+   "reason": "#113 rework, review round 3: metric 3 (unwindowed), post-filter positions in the keys",
+   "git_rev": "78e9848",
    "python": "3.15.2"
   },
   {
    "updated": "2026-11-23",
    "quality": "hq",
-   "reason": "#113 rework, review round 2: metric 2 (no harmonic mask), post-filter positions in the keys",
-   "git_rev": "4a30aa1",
+   "reason": "#113 rework, review round 3: metric 3 (unwindowed), post-filter positions in the keys",
+   "git_rev": "78e9848",
    "python": "3.15.2"
   }
  ],
  "values": {
   "P1/0.1mA/hq/k140/lpf-4k/8V": {
    "19997": {
-    "margin_db": 18.441896628440915,
-    "worst_hz": 4100.0,
-    "worst_dbfs": -136.4094096272687,
+    "margin_db": 9.197696008401238,
+    "worst_hz": 20.0,
+    "worst_dbfs": -109.19769600840124,
     "f_hz": 20000.0
    }
   },
   "P1/0.6mA/hq/k140/lpf-4k/2V": {
    "19997": {
-    "margin_db": 24.704007887979856,
+    "margin_db": 15.078486071288893,
     "worst_hz": 20.0,
-    "worst_dbfs": -124.70400788797986,
+    "worst_dbfs": -115.07848607128889,
     "f_hz": 20000.0
    }
   },
   "P1/0.6mA/hq/k140/lpf-4k/8V": {
-   "16037": {
-    "margin_db": 22.98779817389233,
+   "19997": {
+    "margin_db": 10.032370988190564,
     "worst_hz": 20.0,
-    "worst_dbfs": -122.98779817389233,
-    "f_hz": 16040.0
+    "worst_dbfs": -110.03237098819056,
+    "f_hz": 20000.0
    }
   },
   "P1/0.6mA/standard/k140/lpf-4k/2V": {
    "19997": {
-    "margin_db": 24.69216748042706,
+    "margin_db": 15.066645729362321,
     "worst_hz": 20.0,
-    "worst_dbfs": -124.69216748042706,
+    "worst_dbfs": -115.06664572936232,
     "f_hz": 20000.0
    },
    "19987": {
-    "margin_db": 24.7000463411523,
+    "margin_db": 15.074512432318869,
     "worst_hz": 20.0,
-    "worst_dbfs": -124.7000463411523,
+    "worst_dbfs": -115.07451243231887,
     "f_hz": 19990.0
    }
   },
   "P1/0.6mA/standard/k140/lpf-4k/8V": {
    "19637": {
-    "margin_db": 17.549487443955428,
-    "worst_hz": 1440.0,
-    "worst_dbfs": -130.6416707292269,
+    "margin_db": 10.301517066913107,
+    "worst_hz": 20.0,
+    "worst_dbfs": -110.3015170669131,
     "f_hz": 19640.0
    }
   },
   "T/0.35mA/hq/k140/lpf-4k/2V": {
    "19997": {
-    "margin_db": 36.180417935961984,
-    "worst_hz": 4100.0,
-    "worst_dbfs": -154.14793093478977,
+    "margin_db": 30.65676904647046,
+    "worst_hz": 20.0,
+    "worst_dbfs": -130.65676904647046,
     "f_hz": 20000.0
    }
   },
   "T/0.35mA/hq/k140/lpf-4k/8V": {
    "19997": {
-    "margin_db": 23.376836232103685,
+    "margin_db": 23.532703993847676,
     "worst_hz": 4100.0,
-    "worst_dbfs": -141.34434923093147,
+    "worst_dbfs": -141.50021699267546,
     "f_hz": 20000.0
    }
   },
   "T/0.35mA/standard/k140/lpf-4k/2V": {
    "19997": {
-    "margin_db": 36.160190046982805,
-    "worst_hz": 4100.0,
-    "worst_dbfs": -154.1277030458106,
+    "margin_db": 30.644610500415155,
+    "worst_hz": 20.0,
+    "worst_dbfs": -130.64461050041515,
     "f_hz": 20000.0
    },
    "19987": {
-    "margin_db": 36.94189293067619,
-    "worst_hz": 4120.0,
-    "worst_dbfs": -154.82318931821123,
+    "margin_db": 30.652187308121455,
+    "worst_hz": 20.0,
+    "worst_dbfs": -130.65218730812146,
     "f_hz": 19990.0
    }
   },
   "T/0.35mA/standard/k140/lpf-4k/8V": {
    "19997": {
-    "margin_db": 9.517570736012459,
+    "margin_db": 9.525767955421102,
     "worst_hz": 5600.0,
-    "worst_dbfs": -122.88867103117802,
+    "worst_dbfs": -122.89686825058666,
     "f_hz": 20000.0
    },
    "19987": {
-    "margin_db": 10.463484431720943,
+    "margin_db": 10.456157704445062,
     "worst_hz": 5950.0,
-    "worst_dbfs": -123.43235919132437,
+    "worst_dbfs": -123.42503246404848,
     "f_hz": 19990.0
    }
   },
   "T/0.3mA/hq/k140/lpf-4k/8V": {
    "19997": {
-    "margin_db": 22.789051431262422,
-    "worst_hz": 4100.0,
-    "worst_dbfs": -140.7565644300902,
+    "margin_db": 16.937076626445247,
+    "worst_hz": 20.0,
+    "worst_dbfs": -116.93707662644525,
     "f_hz": 20000.0
    }
   }

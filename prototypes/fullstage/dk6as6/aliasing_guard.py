@@ -10,7 +10,7 @@ dk6as6.aliasing.SETTLE_S (1.25 s; the #102 coupling caps), checked two ways:
    tolerance on this check: a product over its limit fails the job.
 2. Ratchet: the point's margin (the smallest limit - level over its products, dB) may not fall more than TOLERANCE_DB
    (1.5 dB, dk.aliasing_guard's) below its committed baseline (aliasing_baseline_inaudible_<fs>.json, format
-   "inaudible-v2": values[key][tone] = {margin_db, worst_hz, worst_dbfs, f_hz}). A rise of more than 1.5 dB passes,
+   "inaudible-v3": values[key][tone] = {margin_db, worst_hz, worst_dbfs, f_hz}). A rise of more than 1.5 dB passes,
    with a note.
 In the 0.1 s window a tone moves to the 10 Hz grid (19637 -> 19640 Hz) and lines less than 10 Hz apart share a bin and
 read as their sum, so a CI point reads at or above the 1 s grid's level for the same products.
@@ -51,7 +51,7 @@ from dk6as6.stage import QUALITY, FIR, supported  # noqa: E402 -- after the sys.
 # What the baselines mean, named so that a change of default fails until they are updated on purpose
 GRID_HARDNESS = HARDNESS
 DESIGN = FIR                     # "k140"
-FORMAT = "inaudible-v2"          # v2: metric 2 (no harmonic mask) and the post-filter position in every key
+FORMAT = "inaudible-v3"          # v3: metric 3 (unwindowed) and the post-filter position in every key
 RATES = IN.RATES
 MAX_TONES = {"standard": 2, "hq": 1}
 
@@ -59,16 +59,19 @@ MAX_TONES = {"standard": 2, "hq": 1}
 CI = {
     48000: {
         'standard': {
+            ('P1', 0.1, '4k', 8.0): (19997, 19977),
             ('P1', 0.6, '4k', 2.0): (19997, 19977),
-            ('P1', 0.6, '4k', 8.0): (19637, 18037),
+            ('P1', 0.6, '4k', 8.0): (19637, 19997),
             ('T', 0.35, '4k', 2.0): (19997, 19977),
             ('T', 0.35, '4k', 8.0): (19637, 19237),
         },
         'hq': {
+            ('P1', 0.1, '4k', 8.0): (19997,),
             ('P1', 0.6, '4k', 2.0): (19997,),
-            ('P1', 0.6, '4k', 8.0): (18037,),
+            ('P1', 0.6, '4k', 8.0): (19997,),
+            ('T', 0.3, '4k', 8.0): (19997,),
             ('T', 0.35, '4k', 2.0): (19997,),
-            ('T', 0.35, '4k', 8.0): (19831,),
+            ('T', 0.35, '4k', 8.0): (19837,),
         },
     },
     44100: {
@@ -81,7 +84,7 @@ CI = {
         'hq': {
             ('P1', 0.1, '4k', 8.0): (19997,),
             ('P1', 0.6, '4k', 2.0): (19997,),
-            ('P1', 0.6, '4k', 8.0): (16037,),
+            ('P1', 0.6, '4k', 8.0): (19997,),
             ('T', 0.3, '4k', 8.0): (19997,),
             ('T', 0.35, '4k', 2.0): (19997,),
             ('T', 0.35, '4k', 8.0): (19997,),

@@ -768,7 +768,7 @@ the code (`stage.QUALITY`, `stage.SUPPORTED_MA`).
    - 8× fails at 8 V in P1 at every bias (−7.9 to −21.3 dB) and in T 0.35 mA (−22.5 / −20.3 dB at 48 / 44.1 kHz).
    - 16× passes every supported case at both rates and drives, in every post-filter position, for inputs below 20 kHz:
      by at least +9.8 dB (T 0.35 mA, 8 V, 44.1 kHz, filter 4k; +25.7 dB with the filter off).
-   - 32× passes them by at least +18.6 dB (filter 4k; +34.3 dB off).
+   - 32× passes them by at least +18.5 dB (filter 4k; +34.3 dB off).
    - CPU (C++ core) relative to today's 8×: 16× costs 1.65–1.96×, 32× 3.12–3.62×.
 2. **T with grid current supported to 0.35 mA (from 0.5 mA).** This caps a supported range.
    - At 16× and 8 V (48 / 44.1 kHz): T 0.375 mA +3.7 / −6.7 dB, 0.4 mA −12.4 / −15.3, 0.45 mA −23.3 / −25.2,
@@ -784,7 +784,8 @@ the code (`stage.QUALITY`, `stage.SUPPORTED_MA`).
 5. **P2 stays experimental.** At 8 V and 16× it fails at 0.25 mA (−2.5 / −9.7 dB) and at 0.45 mA at 44.1 kHz (−1.9).
    - The failing products are the resampler share at the band edge: a 19997 Hz tone's interpolator image mixes onto
      |2f − fs|. A higher factor does not change that: 32× and 64× read the same as 16× to 0.1 dB (0.25 mA: −2.4 / −9.6 dB).
-6. **Inputs above 20 kHz fail at every factor, and this PR does not guarantee them (#147).** A tone between
+6. **Inputs above 20 kHz fail at every factor (1088 of the 1248 points measured), and this PR does not guarantee them
+   (#147).** A tone between
    20 kHz and Nyquist keeps an interpolator image at fs − f, inside the k140 half-band's transition band, which the
    stage mixes onto |2f − fs|. At 8 V and 16×, filter off: 48 kHz, 23299 Hz → 1402 Hz at −29.7 dBFS (−83.3 dB);
    44.1 kHz, 21799 Hz → 502 Hz at −27.3 dBFS (−81.5 dB). The 4k / 7k positions read worse (down to −104.6 dB), and
@@ -817,17 +818,21 @@ A point passes when every product's margin is ≥ 0.
   full scale, the loudest that does not clip.
   - It does not use the provisional volts mapping (#22, 1/64 FS per V at Output 1). At 8 V the stage peaks at
     75–90 V, which that mapping would put 1.4–3 dB over full scale.
-- **Products:** a coherent tone on a DFT bin, 20 Hz–20 kHz. Every bin except the harmonics' own is read as a product
-  (metric 2, since PR #146 review round 2; the first version masked ±3 bins around every harmonic, which could hide a
-  folded line next to a harmonic).
-  - Bins two or more from a harmonic: periodic Hann, 20 log10(4 |X| / n / peak), exact at a coherent line's centre.
-  - Bins next to a harmonic: the unwindowed DFT, 20 log10(2 |R| / n / peak), exact for coherent lines. Where no alias
-    line is, it reads −154 dBFS (P1) / −184 dBFS (T) on the stage's own outputs, ≥ 34 dB under the lowest limit.
+- **Products:** a coherent tone on a DFT bin, 20 Hz–20 kHz. Every bin except the harmonics' own is read as a product,
+  from the unwindowed DFT, 20 log10(2 |R| / n / peak): exact for each coherent line whatever its neighbours (metric 3).
+  - History: metric 1 masked ±3 bins around every harmonic and could hide a folded line next to one (review round 2).
+    Metric 2 read the other bins through a Hann window, whose estimate subtracts half of each neighbour, so in-phase
+    neighbouring lines cancelled part of a line (review round 3: a cluster of seven folded lines passed both CI checks
+    over its limit). Every record carries `margin_hann_db`, metric 2's reading, for comparison.
+  - Cost: energy that is not a line (the start-up residue of the 1.25 s settle, mostly near 20 Hz) leaks further, about
+    10 dB above the windowed reading. It is −109 to −131 dBFS re the peak in the 0.1 s CI window and −130 to −146 dBFS
+    in 1 s at the guard keys, which still pass; where alias lines are the worst products the two readings agree to
+    0.4 dB.
   - A harmonic's own bin is unmeasurable. Every record carries `first_hidden_order`, the lowest order whose fold could
     land exactly on one: at least order 2090 on the 1 s grid, far above any order that reaches a measurable level.
-  - `test_dk6as6_inaudible.py` checks it on synthetic lines of known level, including the review's case: a −95 dBFS
-    line folded one bin from the fundamental (44.1 kHz, 0.1 s window, 19987 Hz tone, order 288). The old mask passed
-    that case; it now fails by 5.0 dB.
+  - `test_dk6as6_inaudible.py` checks it on synthetic lines of known level, including both review cases: a −95 dBFS
+    line one bin from the fundamental (round 2; it fails by 5.0 dB), and the in-phase cluster (round 3; its centre at
+    1.5 dB over the limit fails the criterion, and 3 dB under its baseline margin fails the ratchet).
   - Energy that is not a line is read per bin at the window's resolution. In the 0.1 s CI window, lines less than
     10 Hz apart share a bin and read as their sum.
 - The dBc totals of the earlier sections stay as supporting evidence. They are no longer the gate for this path.
@@ -854,7 +859,7 @@ A point passes when every product's margin is ≥ 0.
   - Two lines were changed so that it runs 32× and 64×: `MAX_OS` 16 → 64, and `ResamplerT::later_[3]` → `later_[5]`.
   - The patched build is not committed.
   - The Python stage re-measures every guard key's deciding tone and every failing point that a conclusion rests on
-    (`records_python`, `parity`): 30 points: every guard key's deciding tone (18), and the twelve failing points the proposal and the review cite. Those include the review's 20299 Hz / 4k case and a 22999 Hz input. |Python − C++| ≤ 1e-4 dB in margin on all 29 paired points, with the same worst product. The 22999 Hz point is Python only.
+    (`records_python`, `parity`): 33 points: every guard key's deciding tone (21), and the twelve failing points the proposal and the reviews cite. Those include the round-2 20299 Hz / 4k case and a 22999 Hz input. |Python − C++| ≤ 2e-4 dB in margin on all 32 paired points, with the same worst product. The 22999 Hz point is Python only.
 - **CPU:** thread CPU time per base-rate sample of one mono C++ Stage (`dk6as6/inaudible_bench.cpp`).
   - 256-sample blocks, k140, a 1 + 7 + 13 kHz sum at 2 / 8 V peak.
   - Best of 7 rounds of 1 s per factor, the factors interleaved in each round.
@@ -873,47 +878,47 @@ A point passes when every product's margin is ≥ 0.
 
 | case | 48 kHz 4x | 48 kHz 8x | 48 kHz 16x | 48 kHz 32x | 48 kHz 64x | 44.1 kHz 4x | 44.1 kHz 8x | 44.1 kHz 16x | 44.1 kHz 32x | 44.1 kHz 64x |
 |---|---|---|---|---|---|---|---|---|---|---|
-| P1 0.1 mA | +69.6 | +69.6 | +69.6 | +69.6 | — | +55.7 | +62.0 | +62.0 | +62.0 | — |
-| P1 0.25 mA | +65.9 | +76.6 | +76.6 | +76.6 | — | +53.1 | +79.6 | +79.6 | +79.6 | — |
-| P1 0.45 mA | +59.6 | +59.6 | +59.6 | +59.6 | — | +50.4 | +52.0 | +52.0 | +52.0 | — |
+| P1 0.1 mA | +62.7 | +62.7 | +62.7 | +62.7 | — | +55.7 | +62.0 | +62.0 | +62.0 | — |
+| P1 0.25 mA | +65.9 | +70.7 | +70.7 | +70.7 | — | +53.1 | +70.7 | +70.7 | +70.7 | — |
+| P1 0.45 mA | +59.1 | +59.1 | +59.1 | +59.1 | — | +50.3 | +52.0 | +52.0 | +52.0 | — |
 | P1 0.6 mA | +50.4 | +50.4 | +50.4 | +50.4 | — | +45.1 | +45.1 | +45.1 | +45.1 | — |
-| T 0.1 mA | +69.8 | +69.8 | +69.8 | +69.8 | — | +62.2 | +62.3 | +62.3 | +62.3 | — |
-| T 0.25 mA | +65.6 | +65.6 | +65.6 | +65.6 | — | +58.0 | +58.0 | +58.0 | +58.0 | — |
-| T 0.3 mA | +64.0 | +64.0 | +64.0 | +64.0 | — | +56.5 | +56.5 | +56.5 | +56.5 | — |
-| T 0.35 mA | +62.3 | +62.4 | +62.4 | +62.4 | — | +54.8 | +54.8 | +54.8 | +54.8 | — |
-| T 0.375 mA (unsupported) | — | +61.4 | +61.4 | +61.5 | +61.5 | — | +53.9 | +53.9 | +53.9 | +53.9 |
+| T 0.1 mA | +64.6 | +64.6 | +64.6 | +64.6 | — | +62.2 | +62.2 | +62.2 | +62.2 | — |
+| T 0.25 mA | +65.4 | +65.4 | +65.4 | +65.4 | — | +58.0 | +58.0 | +58.0 | +58.0 | — |
+| T 0.3 mA | +64.0 | +64.0 | +64.0 | +64.0 | — | +56.4 | +56.4 | +56.4 | +56.4 | — |
+| T 0.35 mA | +62.3 | +62.3 | +62.3 | +62.3 | — | +54.8 | +54.8 | +54.8 | +54.8 | — |
+| T 0.375 mA (unsupported) | — | +61.4 | +61.4 | +61.4 | +61.4 | — | +53.9 | +53.9 | +53.9 | +53.9 |
 | T 0.4 mA (unsupported) | — | +60.5 | +60.5 | +60.5 | — | — | +52.9 | +52.9 | +52.9 | — |
 | T 0.45 mA (unsupported) | +58.3 | +58.3 | +58.3 | +58.3 | — | +50.7 | +50.7 | +50.7 | +50.7 | — |
 | T 0.5 mA (unsupported) | — | +55.3 | +55.9 | +55.9 | — | — | +45.2 | +48.3 | +48.3 | — |
-| T 0.55 mA (unsupported) | — | -17.4 | +50.1 | +51.0 | — | — | -24.5 | +40.9 | +53.8 | — |
-| T 0.6 mA (unsupported) | -56.1 | -29.2 | +18.2 | +47.3 | — | -64.8 | -36.2 | +12.8 | +43.4 | — |
-| P2 0.1 mA (unsupported) | — | +26.2 | +26.2 | +26.2 | — | — | +18.7 | +18.7 | +18.7 | — |
-| P2 0.25 mA (unsupported) | — | +20.2 | +20.2 | +20.2 | — | — | +12.6 | +12.6 | +12.6 | — |
+| T 0.55 mA (unsupported) | — | -17.4 | +50.2 | +51.0 | — | — | -24.5 | +40.9 | +53.9 | — |
+| T 0.6 mA (unsupported) | -56.1 | -29.2 | +18.2 | +47.3 | — | -64.8 | -36.2 | +12.8 | +43.3 | — |
+| P2 0.1 mA (unsupported) | — | +24.1 | +24.1 | +24.1 | — | — | +18.6 | +18.6 | +18.6 | — |
+| P2 0.25 mA (unsupported) | — | +19.6 | +19.6 | +19.6 | — | — | +12.6 | +12.6 | +12.6 | — |
 | P2 0.45 mA (unsupported) | — | +18.0 | +18.0 | +18.0 | — | — | +10.4 | +10.4 | +10.4 | — |
-| P2 0.6 mA (unsupported) | — | +18.6 | +18.6 | +18.6 | — | — | +11.0 | +11.0 | +11.0 | — |
+| P2 0.6 mA (unsupported) | — | +18.5 | +18.5 | +18.5 | — | — | +10.9 | +10.9 | +10.9 | — |
 
 **8 V**: the smallest margin over the 29 grid tones, dB (negative = fails)
 
 | case | 48 kHz 4x | 48 kHz 8x | 48 kHz 16x | 48 kHz 32x | 48 kHz 64x | 44.1 kHz 4x | 44.1 kHz 8x | 44.1 kHz 16x | 44.1 kHz 32x | 44.1 kHz 64x |
 |---|---|---|---|---|---|---|---|---|---|---|
-| P1 0.1 mA | -45.7 | -7.9 | +44.7 | +44.7 | — | -52.9 | -11.8 | +37.1 | +37.1 | — |
-| P1 0.25 mA | -43.6 | -14.8 | +44.7 | +44.7 | — | -56.4 | -15.7 | +37.5 | +37.5 | — |
+| P1 0.1 mA | -45.7 | -7.9 | +44.7 | +44.7 | — | -52.9 | -11.8 | +37.0 | +37.0 | — |
+| P1 0.25 mA | -43.6 | -14.8 | +44.8 | +44.8 | — | -56.4 | -15.7 | +37.5 | +37.5 | — |
 | P1 0.45 mA | -47.1 | -18.7 | +41.7 | +41.7 | — | -58.1 | -12.7 | +40.8 | +42.9 | — |
 | P1 0.6 mA | -49.4 | -21.1 | +34.3 | +34.3 | — | -60.3 | -21.3 | +34.3 | +34.3 | — |
-| T 0.1 mA | -2.2 | +54.8 | +54.8 | +54.8 | — | -14.9 | +47.3 | +47.3 | +47.3 | — |
+| T 0.1 mA | -2.2 | +54.8 | +54.8 | +54.8 | — | -14.9 | +47.2 | +47.2 | +47.2 | — |
 | T 0.25 mA | -12.0 | +50.5 | +50.5 | +50.5 | — | -16.0 | +42.9 | +42.9 | +42.9 | — |
 | T 0.3 mA | -14.3 | +49.0 | +49.0 | +49.0 | — | -17.0 | +41.4 | +41.4 | +41.4 | — |
 | T 0.35 mA | -51.9 | -22.5 | +34.3 | +49.5 | — | -57.3 | -20.3 | +25.7 | +42.0 | — |
-| T 0.375 mA (unsupported) | — | -40.9 | +3.7 | +45.5 | +45.5 | — | -35.2 | -6.7 | +47.3 | +47.3 |
-| T 0.4 mA (unsupported) | — | -45.1 | -12.4 | +35.7 | +44.2 | — | -50.2 | -15.3 | +27.6 | +47.2 |
+| T 0.375 mA (unsupported) | — | -40.9 | +3.7 | +45.5 | +45.5 | — | -35.2 | -6.7 | +47.4 | +47.4 |
+| T 0.4 mA (unsupported) | — | -45.1 | -12.4 | +35.7 | +44.2 | — | -50.2 | -15.3 | +27.6 | +47.1 |
 | T 0.45 mA (unsupported) | -66.9 | -51.9 | -23.3 | +13.0 | +36.6 | -71.2 | -44.5 | -25.2 | +7.1 | +36.6 |
 | T 0.5 mA (unsupported) | — | -53.7 | -28.6 | +3.2 | +29.9 | — | -57.4 | -29.5 | -3.6 | +29.9 |
 | T 0.55 mA (unsupported) | — | -55.5 | -32.7 | -5.3 | +25.5 | — | -59.0 | -32.5 | -11.4 | +25.5 |
 | T 0.6 mA (unsupported) | -69.2 | -60.8 | -30.5 | -12.1 | +22.3 | -76.6 | -57.3 | -36.6 | -13.4 | +22.3 |
-| P2 0.1 mA (unsupported) | — | -44.5 | +13.1 | +13.1 | +13.1 | — | -45.6 | +5.9 | +5.9 | +5.9 |
-| P2 0.25 mA (unsupported) | — | -62.6 | -2.5 | -2.4 | -2.4 | — | -64.4 | -9.7 | -9.6 | -9.6 |
-| P2 0.45 mA (unsupported) | — | -55.2 | +5.3 | +5.3 | +5.3 | — | -50.8 | -1.9 | -1.9 | -1.9 |
-| P2 0.6 mA (unsupported) | — | -52.7 | +9.1 | +9.1 | +9.1 | — | -53.2 | +1.9 | +1.9 | +1.9 |
+| P2 0.1 mA (unsupported) | — | -44.5 | +1.6 | +1.6 | +1.6 | — | -45.6 | +1.5 | +1.5 | +1.5 |
+| P2 0.25 mA (unsupported) | — | -62.6 | -14.7 | -14.7 | -14.7 | — | -64.4 | -15.2 | -15.2 | -15.2 |
+| P2 0.45 mA (unsupported) | — | -55.2 | -4.2 | -4.2 | -4.2 | — | -50.8 | -4.3 | -4.3 | -4.3 |
+| P2 0.6 mA (unsupported) | — | -52.7 | +0.6 | +0.6 | +0.6 | — | -53.2 | +0.6 | +0.6 | +0.6 |
 
 The lowest measured factor at which every grid tone passes (— : none measured passes):
 
@@ -935,7 +940,7 @@ The lowest measured factor at which every grid tone passes (— : none measured 
 | T 0.6 mA | 16× | 64× | 16× | 64× |
 | P2 0.1 mA | 8× | 16× | 8× | 16× |
 | P2 0.25 mA | 8× | — | 8× | — |
-| P2 0.45 mA | 8× | 16× | 8× | — |
+| P2 0.45 mA | 8× | — | 8× | — |
 | P2 0.6 mA | 8× | 16× | 8× | 16× |
 
 ### The worst supported point per quality
@@ -943,28 +948,28 @@ The lowest measured factor at which every grid tone passes (— : none measured 
 |---|---|---|---|---|---|---|---|---|---|
 | 48 kHz | 8x | 2 V | P1 0.6 mA, 3037 Hz, filter off | +50.4 | 3038 | -170.0 | -119.7 | resampler | +50.4 |
 | 48 kHz | 8x | 8 V | T 0.35 mA, 19037 Hz, filter off | -22.5 | 3260 | -97.5 | -120.0 | internal | -22.5 |
-| 48 kHz | 16x | 2 V | P1 0.6 mA, 19997 Hz, filter 4k | +40.7 | 8006 | -150.9 | -110.2 | resampler | +40.7 |
-| 48 kHz | 16x | 8 V | T 0.35 mA, 19637 Hz, filter 4k | +12.9 | 2157 | -128.9 | -116.0 | internal | +12.9 |
-| 48 kHz | 32x | 2 V | P1 0.6 mA, 19997 Hz, filter 4k | +40.7 | 8006 | -150.9 | -110.2 | resampler | +40.7 |
-| 48 kHz | 32x | 8 V | P1 0.6 mA, 18037 Hz, filter 4k | +26.7 | 6111 | -139.5 | -112.8 | resampler | +26.7 |
+| 48 kHz | 16x | 2 V | P1 0.6 mA, 19997 Hz, filter 4k | +30.1 | 20 | -130.1 | -100.0 | other | +40.5 |
+| 48 kHz | 16x | 8 V | T 0.35 mA, 19637 Hz, filter 4k | +13.0 | 2157 | -128.9 | -116.0 | internal | +13.0 |
+| 48 kHz | 32x | 2 V | P1 0.6 mA, 19997 Hz, filter 4k | +30.1 | 20 | -130.1 | -100.0 | other | +40.5 |
+| 48 kHz | 32x | 8 V | P1 0.1 mA, 19997 Hz, filter 4k | +24.0 | 20 | -124.0 | -100.0 | other | +32.5 |
 | 44.1 kHz | 8x | 2 V | P1 0.6 mA, 19997 Hz, filter off | +45.1 | 4106 | -163.0 | -117.9 | resampler | +45.1 |
 | 44.1 kHz | 8x | 8 V | P1 0.6 mA, 19437 Hz, filter off | -21.3 | 2934 | -98.1 | -119.4 | internal | -21.3 |
-| 44.1 kHz | 16x | 2 V | P1 0.6 mA, 19997 Hz, filter 4k | +26.7 | 4106 | -144.6 | -117.9 | resampler | +26.7 |
+| 44.1 kHz | 16x | 2 V | P1 0.6 mA, 19997 Hz, filter 4k | +26.4 | 4106 | -144.4 | -117.9 | resampler | +26.4 |
 | 44.1 kHz | 16x | 8 V | T 0.35 mA, 19997 Hz, filter 4k | +9.8 | 5705 | -123.1 | -113.2 | internal | +9.8 |
-| 44.1 kHz | 32x | 2 V | P1 0.6 mA, 19997 Hz, filter 4k | +26.7 | 4106 | -144.6 | -117.9 | resampler | +26.7 |
-| 44.1 kHz | 32x | 8 V | P1 0.1 mA, 19997 Hz, filter 4k | +18.6 | 4106 | -136.6 | -117.9 | resampler | +18.6 |
+| 44.1 kHz | 32x | 2 V | P1 0.6 mA, 19997 Hz, filter 4k | +26.5 | 4106 | -144.4 | -117.9 | resampler | +26.5 |
+| 44.1 kHz | 32x | 8 V | P1 0.1 mA, 19997 Hz, filter 4k | +18.5 | 4106 | -136.4 | -117.9 | resampler | +18.5 |
 
 ### Post-filter positions (in scope; the worst supported case per rate, factor, drive and position, dB)
 | rate | factor | drive | filter off | filter 4k | filter 7k |
 |---|---|---|---|---|---|
-| 48 kHz | 16x | 2 V | +50.4 (P1 0.6 mA, 3037 Hz) | +40.7 (P1 0.6 mA, 19997 Hz) | +43.5 (P1 0.6 mA, 19997 Hz) |
-| 48 kHz | 16x | 8 V | +34.3 (P1 0.6 mA, 3037 Hz) | +12.9 (T 0.35 mA, 19637 Hz) | +19.8 (T 0.35 mA, 19637 Hz) |
-| 48 kHz | 32x | 2 V | +50.4 (P1 0.6 mA, 3037 Hz) | +40.7 (P1 0.6 mA, 19997 Hz) | +43.6 (P1 0.6 mA, 19997 Hz) |
-| 48 kHz | 32x | 8 V | +34.3 (P1 0.6 mA, 3037 Hz) | +26.7 (P1 0.6 mA, 18037 Hz) | +30.2 (P1 0.6 mA, 18037 Hz) |
-| 44.1 kHz | 16x | 2 V | +45.1 (P1 0.6 mA, 19997 Hz) | +26.7 (P1 0.6 mA, 19997 Hz) | +31.8 (P1 0.6 mA, 19997 Hz) |
+| 48 kHz | 16x | 2 V | +50.4 (P1 0.6 mA, 3037 Hz) | +30.1 (P1 0.6 mA, 19997 Hz) | +38.2 (P1 0.6 mA, 19997 Hz) |
+| 48 kHz | 16x | 8 V | +34.3 (P1 0.6 mA, 3037 Hz) | +13.0 (T 0.35 mA, 19637 Hz) | +19.8 (T 0.35 mA, 19637 Hz) |
+| 48 kHz | 32x | 2 V | +50.4 (P1 0.6 mA, 3037 Hz) | +30.1 (P1 0.6 mA, 19997 Hz) | +38.2 (P1 0.6 mA, 19997 Hz) |
+| 48 kHz | 32x | 8 V | +34.3 (P1 0.6 mA, 3037 Hz) | +24.0 (P1 0.1 mA, 19997 Hz) | +30.1 (P1 0.6 mA, 18037 Hz) |
+| 44.1 kHz | 16x | 2 V | +45.1 (P1 0.6 mA, 19997 Hz) | +26.4 (P1 0.6 mA, 19997 Hz) | +31.7 (P1 0.6 mA, 19997 Hz) |
 | 44.1 kHz | 16x | 8 V | +25.7 (T 0.35 mA, 19997 Hz) | +9.8 (T 0.35 mA, 19997 Hz) | +13.9 (T 0.35 mA, 19997 Hz) |
-| 44.1 kHz | 32x | 2 V | +45.1 (P1 0.6 mA, 19997 Hz) | +26.7 (P1 0.6 mA, 19997 Hz) | +31.9 (P1 0.6 mA, 19997 Hz) |
-| 44.1 kHz | 32x | 8 V | +34.3 (P1 0.6 mA, 3037 Hz) | +18.6 (P1 0.1 mA, 19997 Hz) | +23.8 (P1 0.1 mA, 19997 Hz) |
+| 44.1 kHz | 32x | 2 V | +45.1 (P1 0.6 mA, 19997 Hz) | +26.5 (P1 0.6 mA, 19997 Hz) | +31.7 (P1 0.6 mA, 19997 Hz) |
+| 44.1 kHz | 32x | 8 V | +34.3 (P1 0.6 mA, 3037 Hz) | +18.5 (P1 0.1 mA, 19997 Hz) | +23.7 (P1 0.1 mA, 19997 Hz) |
 
 The filter lowers the output peak (0 dBFS here) more than the low-frequency alias products at high input tones, so
 4k costs up to about 16 dB of margin against off; every supported in-scope point still passes at 16× and 32×.
@@ -994,8 +999,9 @@ SPL headroom equals the margin there, so these points pass for any calibration u
     0.5 mA 32× at 48 kHz and 64× at 44.1 kHz; 0.55–0.6 mA 64× (8 V margins +25.5 / +25.5 and +22.3 / +22.3 dB at 48 / 44.1 kHz). T 0.55–0.6 mA also fails at 2 V and 8× (−17.4 to −36.2 dB).
   - At 2 V every T bias passes at 16× (≥ +12.8 dB, T 0.6 mA, 44.1 kHz).
 - **P2:** at 8 V the worst products are the resampler share at the band edge (a 19997 Hz tone, onto |2f − fs| = 8006 / 4106 Hz). They read the same at 16×, 32× and 64× (0.25 mA: −2.5 / −2.4 / −2.4 dB at 48 kHz, −9.7 / −9.6 / −9.6 dB at 44.1 kHz), so only a resampler with more stopband would move them. At 2 V, P2 passes at 8× and above.
-- **Inputs above 20 kHz:** every rate, factor, supported case and position fails (item 6 above and the table "Inputs
-  above 20 kHz"). It is the interpolator's image, not folding.
+- **Inputs above 20 kHz:** 1088 of the 1248 points fail. Every point fails from 21.5 kHz up (48 kHz) and from
+  20.9 kHz up (44.1 kHz); only near 20.3 kHz do some pass. It is the interpolator's image, not folding, so 32× reads
+  the same as 16× (item 6 above and the table "Inputs above 20 kHz").
 
 ### CPU (C++ core, one mono channel; µs per base-rate sample, ratio to 8×, % of real time at that rate)
 | rate | case | 4× | 8× | 16× | 32× | 64× |
@@ -1052,39 +1058,44 @@ The T rows of the tables above are #132's acceptance measurement under this crit
   - It must pass the criterion, with no tolerance.
   - Its margin must not fall more than 1.5 dB below its committed baseline.
 - Every key sits at the 4k position, which is the worst for every supported case in scope.
-- In the 0.1 s window, the 4k filter's lower output peak lifts the start-up residue near 20 Hz (−120 to −125 dBFS re
-  that peak). At the 2 V keys and at P1 0.6 mA's 8 V keys this residue is the worst product, so they read 2–17 dB under
-  their 1 s margin. That is conservative, but there the ratchet watches the residue, not the alias products.
-- The tightest keys (T 0.35 mA at 8 V, +9.5 to +14.5 dB) read the same alias products as the 1 s grid, to within
-  0.4 dB, and so do the 44.1 kHz T keys (table).
+- In the 0.1 s window, the 4k filter's lower output peak and the unwindowed reading lift the start-up residue near
+  20 Hz (to −109 dBFS re that peak). At the 2 V keys and the P1 8 V keys this residue is the worst product: they read
+  up to about 15 dB under their 1 s margin, the lowest CI margin being +9.2 dB (P1 0.1 mA, 8 V). That is conservative,
+  but at those keys the ratchet watches the residue, not the alias products.
+- The tightest alias keys (T 0.35 mA at 8 V, +9.5 to +14.5 dB) read the same alias products as the 1 s grid, to within
+  0.4 dB (table).
 
 | rate | quality | key | tone Hz | CI-window margin dB | worst product Hz | 1 s grid margin dB |
 |---|---|---|---|---|---|---|
-| 48 kHz | standard | P1 0.6 mA, 2 V, filter 4k | 19997 | +24.71 | 20 | +40.65 |
-| 48 kHz | standard | P1 0.6 mA, 2 V, filter 4k | 19977 | +24.72 | 20 | +41.74 |
-| 48 kHz | standard | P1 0.6 mA, 8 V, filter 4k | 19637 | +19.93 | 20 | +24.83 |
-| 48 kHz | standard | P1 0.6 mA, 8 V, filter 4k | 18037 | +21.23 | 20 | +26.64 |
-| 48 kHz | standard | T 0.35 mA, 2 V, filter 4k | 19997 | +40.26 | 20 | +50.33 |
-| 48 kHz | standard | T 0.35 mA, 2 V, filter 4k | 19977 | +40.26 | 20 | +51.41 |
-| 48 kHz | standard | T 0.35 mA, 8 V, filter 4k | 19637 | +13.31 | 2040 | +12.95 |
-| 48 kHz | standard | T 0.35 mA, 8 V, filter 4k | 19237 | +14.50 | 1600 | +14.77 |
-| 48 kHz | hq | P1 0.6 mA, 2 V, filter 4k | 19997 | +24.72 | 20 | +40.67 |
-| 48 kHz | hq | P1 0.6 mA, 8 V, filter 4k | 18037 | +21.24 | 20 | +26.66 |
-| 48 kHz | hq | T 0.35 mA, 2 V, filter 4k | 19997 | +40.27 | 20 | +50.35 |
-| 48 kHz | hq | T 0.35 mA, 8 V, filter 4k | 19831 | +32.54 | 3150 | +32.55 |
-| 44.1 kHz | standard | P1 0.6 mA, 2 V, filter 4k | 19997 | +24.69 | 20 | +26.67 |
-| 44.1 kHz | standard | P1 0.6 mA, 2 V, filter 4k | 19987 | +24.70 | 20 | +27.55 |
-| 44.1 kHz | standard | P1 0.6 mA, 8 V, filter 4k | 19637 | +17.55 | 1440 | +17.78 |
-| 44.1 kHz | standard | T 0.35 mA, 2 V, filter 4k | 19997 | +36.16 | 4100 | +36.36 |
-| 44.1 kHz | standard | T 0.35 mA, 2 V, filter 4k | 19987 | +36.94 | 4120 | +37.24 |
-| 44.1 kHz | standard | T 0.35 mA, 8 V, filter 4k | 19997 | +9.52 | 5600 | +9.81 |
+| 48 kHz | standard | P1 0.1 mA, 8 V, filter 4k | 19997 | +9.19 | 20 | +23.94 |
+| 48 kHz | standard | P1 0.1 mA, 8 V, filter 4k | 19977 | +9.20 | 20 | +23.96 |
+| 48 kHz | standard | P1 0.6 mA, 2 V, filter 4k | 19997 | +15.09 | 20 | +30.06 |
+| 48 kHz | standard | P1 0.6 mA, 2 V, filter 4k | 19977 | +15.09 | 20 | +30.08 |
+| 48 kHz | standard | P1 0.6 mA, 8 V, filter 4k | 19637 | +10.31 | 20 | +24.76 |
+| 48 kHz | standard | P1 0.6 mA, 8 V, filter 4k | 19997 | +10.03 | 20 | +25.11 |
+| 48 kHz | standard | T 0.35 mA, 2 V, filter 4k | 19997 | +30.62 | 20 | +45.95 |
+| 48 kHz | standard | T 0.35 mA, 2 V, filter 4k | 19977 | +30.63 | 20 | +45.96 |
+| 48 kHz | standard | T 0.35 mA, 8 V, filter 4k | 19637 | +13.25 | 2040 | +12.95 |
+| 48 kHz | standard | T 0.35 mA, 8 V, filter 4k | 19237 | +14.43 | 1600 | +14.76 |
+| 48 kHz | hq | P1 0.1 mA, 8 V, filter 4k | 19997 | +9.20 | 20 | +23.95 |
+| 48 kHz | hq | P1 0.6 mA, 2 V, filter 4k | 19997 | +15.10 | 20 | +30.07 |
+| 48 kHz | hq | P1 0.6 mA, 8 V, filter 4k | 19997 | +10.04 | 20 | +25.12 |
+| 48 kHz | hq | T 0.3 mA, 8 V, filter 4k | 19997 | +16.94 | 20 | +32.15 |
+| 48 kHz | hq | T 0.35 mA, 2 V, filter 4k | 19997 | +30.63 | 20 | +45.96 |
+| 48 kHz | hq | T 0.35 mA, 8 V, filter 4k | 19837 | +30.40 | 20 | +32.47 |
+| 44.1 kHz | standard | P1 0.6 mA, 2 V, filter 4k | 19997 | +15.07 | 20 | +26.45 |
+| 44.1 kHz | standard | P1 0.6 mA, 2 V, filter 4k | 19987 | +15.07 | 20 | +27.31 |
+| 44.1 kHz | standard | P1 0.6 mA, 8 V, filter 4k | 19637 | +10.30 | 20 | +17.95 |
+| 44.1 kHz | standard | T 0.35 mA, 2 V, filter 4k | 19997 | +30.64 | 20 | +36.25 |
+| 44.1 kHz | standard | T 0.35 mA, 2 V, filter 4k | 19987 | +30.65 | 20 | +37.12 |
+| 44.1 kHz | standard | T 0.35 mA, 8 V, filter 4k | 19997 | +9.53 | 5600 | +9.82 |
 | 44.1 kHz | standard | T 0.35 mA, 8 V, filter 4k | 19987 | +10.46 | 5950 | +10.73 |
-| 44.1 kHz | hq | P1 0.1 mA, 8 V, filter 4k | 19997 | +18.44 | 4100 | +18.64 |
-| 44.1 kHz | hq | P1 0.6 mA, 2 V, filter 4k | 19997 | +24.70 | 20 | +26.69 |
-| 44.1 kHz | hq | P1 0.6 mA, 8 V, filter 4k | 16037 | +22.99 | 20 | +27.92 |
-| 44.1 kHz | hq | T 0.3 mA, 8 V, filter 4k | 19997 | +22.79 | 4100 | +22.99 |
-| 44.1 kHz | hq | T 0.35 mA, 2 V, filter 4k | 19997 | +36.18 | 4100 | +36.38 |
-| 44.1 kHz | hq | T 0.35 mA, 8 V, filter 4k | 19997 | +23.38 | 4100 | +23.58 |
+| 44.1 kHz | hq | P1 0.1 mA, 8 V, filter 4k | 19997 | +9.20 | 20 | +18.46 |
+| 44.1 kHz | hq | P1 0.6 mA, 2 V, filter 4k | 19997 | +15.08 | 20 | +26.47 |
+| 44.1 kHz | hq | P1 0.6 mA, 8 V, filter 4k | 19997 | +10.03 | 20 | +25.12 |
+| 44.1 kHz | hq | T 0.3 mA, 8 V, filter 4k | 19997 | +16.94 | 20 | +22.87 |
+| 44.1 kHz | hq | T 0.35 mA, 2 V, filter 4k | 19997 | +30.66 | 20 | +36.27 |
+| 44.1 kHz | hq | T 0.35 mA, 8 V, filter 4k | 19997 | +23.53 | 4100 | +23.55 |
 
 - **Tests:** `test_dk6as6_aliasing_guard.py` runs no stage. It checks:
   - every offered quality passes on the whole supported envelope (every case, drive, rate and tone of the screen, and

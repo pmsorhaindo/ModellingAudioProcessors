@@ -124,3 +124,51 @@ def test_the_hidden_order_is_reported():
     y = np.sin(2 * np.pi * m * np.arange(4410) / 4410)
     a = IN.assess(y, m, 44100)
     assert a["first_hidden_order"] == 4410 // np.gcd(m, 4410) - 4410 // (2 * m) >= 288
+
+
+def cluster(level_dbfs, fs=44100, n=4410, tone=19987, bins=range(793, 800), weights=(1, 2, 3, 4, 3, 2, 1)):
+    """PR #146 review round 3's case, synthetic: the 0.1 s CI window at 44.1 kHz, a 19987 Hz tone (on 19990 Hz) at
+    full scale, and seven in-phase folded lines at 7930-7990 Hz with relative amplitudes [1, 2, 3, 4, 3, 2, 1] / 4, the
+    centre one at level_dbfs re the output peak."""
+    m = tone_bin(tone, n, fs)
+    t = np.arange(n)
+    y = np.sin(2 * np.pi * m * t / n)
+    a = 10 ** (level_dbfs / 20) / max(weights)
+    for b, w in zip(bins, weights):
+        y = y + a * w * np.cos(2 * np.pi * b * t / n)
+    return m, y
+
+
+def test_neighbouring_in_phase_lines_cannot_cancel_a_product():
+    """Metric 2 read these bins through a Hann window, whose estimate subtracts half of each neighbour, so the centre of
+    an in-phase cluster read low and passed over its limit. The unwindowed reading is exact for each line."""
+    lim = float(IN.limit_dbfs(7960.0))
+    m, y = cluster(lim + 1.5)
+    peak = np.max(np.abs(y - y.mean()))
+    a = IN.assess(y, m, 44100)
+    assert not a["passed"] and a["worst_hz"] == 7960.0
+    assert a["worst_dbfs"] == pytest.approx(lim + 1.5 - 20 * np.log10(peak), abs=1e-6)
+    assert a["margin_hann_db"] > 5.0                     # the windowed reading's false pass, kept as a diagnostic
+    f, lv, _, _ = IN.products(y, m, 44100)
+    for b, w in zip(range(793, 800), (1, 2, 3, 4, 3, 2, 1)):     # every line at its own level
+        assert lv[np.argmin(np.abs(f - b * 10.0))] == pytest.approx(lim + 1.5 + 20 * np.log10(w / 4) -
+                                                                    20 * np.log10(peak), abs=1e-6)
+
+
+def test_the_guard_fails_that_cluster_on_the_limit_and_on_the_ratchet():
+    """Both CI checks on the guard's own comparison, against the committed baseline of the key the review used (T 0.35
+    mA, standard, filter 4k, 8 V, 44.1 kHz, 19987 Hz): over the limit -> FAIL criterion; under it but more than 1.5 dB
+    below the baseline margin -> FAIL ratchet."""
+    from dk6as6 import aliasing_guard as AG
+    k = AG.key("T", 0.35, "standard", 8.0, "4k")
+    base = AG.load_baseline(AG.baseline_path(44100))
+    b = base["values"][k]["19987"]["margin_db"]
+    lim = float(IN.limit_dbfs(7960.0))
+    def row(level):
+        m, y = cluster(level)
+        a = IN.assess(y, m, 44100)
+        r = dict(a, key=k, tone=19987, f_hz=19990.0, nonconverged=0, worst_source=None)
+        return AG.compare([r], dict(values={k: {"19987": base["values"][k]["19987"]}}))[0]
+    assert row(lim + 1.5)["status"] == "FAIL criterion"
+    under = row(lim - (b - 3.0))                          # margin b - 3 dB: passes the limit, 3 dB under the baseline
+    assert under["status"] == "FAIL ratchet" and 0 < under["margin_db"] < b - 1.5

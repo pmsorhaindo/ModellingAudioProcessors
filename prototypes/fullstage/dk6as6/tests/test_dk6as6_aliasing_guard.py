@@ -37,7 +37,7 @@ def test_the_method_is_the_criterion_as_decided():
     assert (m["floor_dbfs"], m["under_threshold_db"], m["spl_fs_db"]) == (-100.0, 10.0, IN.SPL_FS_DB)
     assert m["fir"] == AG.DESIGN == "k140" and m["grid_hardness"] == AG.GRID_HARDNESS
     assert m["window_s"] == 1.0 and m["grid_hz"] == list(SW.GRID_HZ) and max(SW.GRID_HZ) < 20000
-    assert m["metric"] == SW.METRIC == 2 and m["lpfs"] == list(SW.LPFS)
+    assert m["metric"] == SW.METRIC == 3 and m["lpfs"] == list(SW.LPFS)
     assert all(r["metric"] == SW.METRIC for r in CPP + PY)
 
 
