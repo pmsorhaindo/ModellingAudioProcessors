@@ -31,18 +31,29 @@ volts mapping (#22, plugin/src/map_params.h: 1/64 of full scale per volt at Outp
 peaks at 75-90 V, which that mapping would put 1.4-3 dB OVER full scale at Output 1. So normalising to the peak is the
 loudest non-clipping case at 8 V, and at 2 V it is louder than that mapping.
 
-Products: the analysis is dk/aliasing.py's (a coherent tone on a DFT bin, periodic Hann window, every harmonic bin
-+-MASK_BINS masked, 20 Hz-20 kHz). In steady state every alias is a line on its own bin, and a line of amplitude a reads
-|X| = a n / 4 at its centre bin with this window. So level_dbfs(bin) = 20 log10(4 |X| / n / peak) is the amplitude of a
-line centred on that bin, and every non-harmonic in-band bin is read as a product. Energy that is not a line (a settling
-transient) is read per bin as well, which is the 1 / window Hz resolution of the spectrum. In a 0.1 s CI window, lines
-less than 10 Hz apart share a bin and read as their sum (conservative).
+Products: a coherent tone on DFT bin m of an n-sample window (dk.aliasing.tone_bin), 20 Hz-20 kHz. In steady state
+every harmonic and every alias is a line exactly on a bin, so every bin except the harmonics' own (k m, k m < n / 2) is
+read as a product:
+  - bins two or more away from every harmonic bin: periodic Hann window, |X| = a n / 4 at a line's centre bin, so
+    level = 20 log10(4 |X| / n / peak). A coherent harmonic contributes exactly nothing there; a neighbouring alias line
+    leaks -6 dB into the bin next to it, which over-reads that bin (conservative), never the line's own.
+  - bins next to a harmonic bin (k m +- 1): the Hann main lobe of the harmonic covers them, so they are read without a
+    window, |R| = a n / 2, level = 20 log10(2 |R| / n / peak): exact for coherent lines, which the unwindowed DFT does
+    not spread. On the stage's own outputs (16x, P1 0.6 / T 0.35 mA, 8 V, 0.1 and 1 s windows, both rates) that reading
+    is -154 dBFS (P1) and -184 dBFS (T) where no alias line is, the start-up residue around the harmonics: at least
+    34 dB under the lowest limit (PR #146 review round 2; until then +-3 bins around every harmonic were masked, which
+    could hide a folded line next to a harmonic).
+  - a harmonic's own bin cannot be read: an alias folded exactly onto it is unmeasurable. That happens first at order
+    collision_order(m, n, 0) - n // (2 m) (assess returns it as first_hidden_order); for the tones here it is in the
+    thousands (1 s) and hundreds or more (0.1 s).
+Energy that is not a line (a settling transient) is read per bin as well, at the window's 1 / window Hz resolution. In
+a 0.1 s CI window, lines less than 10 Hz apart share a bin and read as their sum (conservative).
 Source of the worst product: dk.aliasing.fold_order credits each bin to the lowest harmonic order that folds onto it;
 "internal" = folded inside the stage (above os fs / 2), "resampler" = reached the band through the half-band FIRs, as in
 dk.aliasing.alias_dbc.
 """
 import numpy as np
-from dk.aliasing import MASK_BINS, BAND_HZ, fold_order, collision_order
+from dk.aliasing import BAND_HZ, fold_order, collision_order
 
 FLOOR_DBFS = -100.0                 # every product below this (Michael, 21 Nov 2026)
 UNDER_THRESHOLD_DB = 10.0           # ... and at least this far under the threshold of hearing at its frequency
@@ -65,9 +76,10 @@ def limit_dbfs(f, spl_fs_db=SPL_FS_DB):
     return np.minimum(FLOOR_DBFS, threshold_db_spl(f) - UNDER_THRESHOLD_DB - spl_fs_db)
 
 
-def products(y, m, fs, band=BAND_HZ, mask=MASK_BINS):
+def products(y, m, fs, band=BAND_HZ):
     """y: one analysis window of output, m: the tone's bin. Returns (f_hz, level_dbfs, fund_dbfs, peak) for every
-    non-harmonic bin in `band`: level re the window's sample peak (0 dBFS) of the mean-removed output."""
+    non-harmonic bin in `band` (module docstring, Products): level re the window's sample peak (0 dBFS) of the
+    mean-removed output."""
     n = len(y)
     y = np.asarray(y, float)
     if not np.all(np.isfinite(y)):
@@ -78,9 +90,13 @@ def products(y, m, fs, band=BAND_HZ, mask=MASK_BINS):
         raise ValueError("silent analysis window: no output peak to reference")
     a = 4.0 * np.abs(np.fft.rfft(y * np.hanning(n + 1)[:-1])) / n
     fb = np.arange(len(a)) * fs / n
+    hb = np.arange(m, n // 2 + 1, m)                    # the harmonics' own bins
     harm = np.zeros(len(a), bool)
-    for k in range(1, n // (2 * m) + 1):
-        harm[max(k * m - mask, 0):k * m + mask + 1] = True
+    harm[hb] = True
+    near = np.zeros(len(a), bool)
+    near[np.clip(np.r_[hb - 1, hb + 1], 0, len(a) - 1)] = True
+    near &= ~harm
+    a[near] = 2.0 * np.abs(np.fft.rfft(y))[near] / n     # unwindowed next to a harmonic (docstring)
     sel = (fb >= band[0]) & (fb <= band[1]) & ~harm
     lv = 20.0 * np.log10(np.maximum(a[sel], 1e-300) / peak)
     return fb[sel], lv, float(20.0 * np.log10(a[m] / peak)), peak
@@ -95,7 +111,9 @@ def assess(y, m, fs, os_=None, spl_fs_db=SPL_FS_DB):
       floor_margin_db   FLOOR_DBFS - loudest_dbfs (the -100 dBFS term alone)
       spl_headroom_db   min over products of (T_q - 10 - SPL_FS_DB - level): how far the calibration could rise
       n_failing         products with margin < 0
-      fund_dbfs, peak   the fundamental re the peak, and the peak itself (output units)"""
+      fund_dbfs, peak   the fundamental re the peak, and the peak itself (output units)
+      first_hidden_order the lowest harmonic order whose fold could land exactly on a harmonic's own bin
+                        (unmeasurable)"""
     f, lv, fund, peak = products(y, m, fs)
     lim = limit_dbfs(f, spl_fs_db)
     marg = lim - lv
@@ -104,7 +122,8 @@ def assess(y, m, fs, os_=None, spl_fs_db=SPL_FS_DB):
     out = dict(passed=bool(marg[j] >= 0.0), margin_db=float(marg[j]), worst_hz=float(f[j]), worst_dbfs=float(lv[j]),
                worst_limit_dbfs=float(lim[j]), loudest_dbfs=float(lv[jl]), loudest_hz=float(f[jl]),
                floor_margin_db=float(FLOOR_DBFS - lv[jl]), spl_headroom_db=float(np.min(thr)),
-               n_failing=int(np.sum(marg < 0.0)), fund_dbfs=fund, peak=peak)
+               n_failing=int(np.sum(marg < 0.0)), fund_dbfs=fund, peak=peak,
+               first_hidden_order=int(collision_order(m, len(y), 0) - len(y) // (2 * m)))
     if os_ is not None:
         n = len(y)
         b = int(round(f[j] * n / fs))

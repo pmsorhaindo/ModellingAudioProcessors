@@ -1,5 +1,5 @@
 {
- "format": "inaudible-v1",
+ "format": "inaudible-v2",
  "tolerance_db": 1.5,
  "method": {
   "standard": {
@@ -9,32 +9,32 @@
    "stage": "dk6as6.stage.Stage",
    "grid_hardness": 1.0,
    "fir": "k140",
-   "lpf": "off",
+   "metric": 2,
    "settle_s": 1.25,
    "window_s": 0.1,
    "band_hz": [
     20.0,
     20000.0
    ],
-   "mask_bins": 3,
    "floor_dbfs": -100.0,
    "under_threshold_db": 10.0,
    "spl_fs_db": 105.0,
    "tones": {
-    "P1/0.6mA/standard/k140/2V": [
+    "P1/0.6mA/standard/k140/lpf-4k/2V": [
      19997,
      19977
     ],
-    "P1/0.6mA/standard/k140/8V": [
+    "P1/0.6mA/standard/k140/lpf-4k/8V": [
+     19637,
      18037
     ],
-    "T/0.35mA/standard/k140/2V": [
+    "T/0.35mA/standard/k140/lpf-4k/2V": [
      19997,
      19977
     ],
-    "T/0.35mA/standard/k140/8V": [
+    "T/0.35mA/standard/k140/lpf-4k/8V": [
      19637,
-     19831
+     19237
     ]
    }
   },
@@ -45,148 +45,135 @@
    "stage": "dk6as6.stage.Stage",
    "grid_hardness": 1.0,
    "fir": "k140",
-   "lpf": "off",
+   "metric": 2,
    "settle_s": 1.25,
    "window_s": 0.1,
    "band_hz": [
     20.0,
     20000.0
    ],
-   "mask_bins": 3,
    "floor_dbfs": -100.0,
    "under_threshold_db": 10.0,
    "spl_fs_db": 105.0,
    "tones": {
-    "P1/0.6mA/hq/k140/2V": [
+    "P1/0.6mA/hq/k140/lpf-4k/2V": [
      19997
     ],
-    "P1/0.6mA/hq/k140/8V": [
+    "P1/0.6mA/hq/k140/lpf-4k/8V": [
      18037
     ],
-    "T/0.3mA/hq/k140/8V": [
+    "T/0.35mA/hq/k140/lpf-4k/2V": [
      19997
     ],
-    "T/0.35mA/hq/k140/2V": [
-     19997
-    ],
-    "T/0.35mA/hq/k140/8V": [
-     19997
+    "T/0.35mA/hq/k140/lpf-4k/8V": [
+     19831
     ]
    }
   }
  },
  "history": [
   {
-   "updated": "2026-11-22",
+   "updated": "2026-11-23",
    "quality": "standard",
-   "reason": "#113 rework: the inaudibility criterion, standard 16x, k140, T to 0.35 mA",
-   "git_rev": "256f64f",
+   "reason": "#113 rework, review round 2: metric 2 (no harmonic mask), post-filter positions in the keys",
+   "git_rev": "4a30aa1",
    "python": "3.15.2"
   },
   {
-   "updated": "2026-11-22",
-   "quality": "standard",
-   "reason": "#113 rework: the inaudibility criterion, standard 16x, k140, T to 0.35 mA",
-   "git_rev": "bbf96ab",
-   "python": "3.15.2"
-  },
-  {
-   "updated": "2026-11-22",
+   "updated": "2026-11-23",
    "quality": "hq",
-   "reason": "#113 rework: the inaudibility criterion, hq 32x, k140, T to 0.35 mA",
-   "git_rev": "bbf96ab",
+   "reason": "#113 rework, review round 2: metric 2 (no harmonic mask), post-filter positions in the keys",
+   "git_rev": "4a30aa1",
    "python": "3.15.2"
   }
  ],
  "values": {
-  "P1/0.6mA/hq/k140/2V": {
+  "P1/0.6mA/hq/k140/lpf-4k/2V": {
    "19997": {
-    "margin_db": 48.324248472869016,
+    "margin_db": 24.720643296600286,
     "worst_hz": 20.0,
-    "worst_dbfs": -148.32424847286902,
+    "worst_dbfs": -124.72064329660029,
     "f_hz": 19990.0
    }
   },
-  "P1/0.6mA/hq/k140/8V": {
+  "P1/0.6mA/hq/k140/lpf-4k/8V": {
    "18037": {
-    "margin_db": 40.194861997714895,
-    "worst_hz": 6120.0,
-    "worst_dbfs": -152.99259632860208,
+    "margin_db": 21.23826842363823,
+    "worst_hz": 20.0,
+    "worst_dbfs": -121.23826842363823,
     "f_hz": 18040.0
    }
   },
-  "P1/0.6mA/standard/k140/2V": {
+  "P1/0.6mA/standard/k140/lpf-4k/2V": {
    "19997": {
-    "margin_db": 48.324171723584016,
+    "margin_db": 24.71059623775008,
     "worst_hz": 20.0,
-    "worst_dbfs": -148.32417172358402,
+    "worst_dbfs": -124.71059623775008,
     "f_hz": 19990.0
    },
    "19977": {
-    "margin_db": 48.324159124005746,
+    "margin_db": 24.718374318598052,
     "worst_hz": 20.0,
-    "worst_dbfs": -148.32415912400575,
+    "worst_dbfs": -124.71837431859805,
     "f_hz": 19980.0
    }
   },
-  "P1/0.6mA/standard/k140/8V": {
-   "18037": {
-    "margin_db": 40.19466378021224,
-    "worst_hz": 6120.0,
-    "worst_dbfs": -152.99239811109942,
-    "f_hz": 18040.0
-   }
-  },
-  "T/0.35mA/hq/k140/2V": {
-   "19997": {
-    "margin_db": 62.70016741652293,
-    "worst_hz": 8020.0,
-    "worst_dbfs": -172.87478890692068,
-    "f_hz": 19990.0
-   }
-  },
-  "T/0.35mA/hq/k140/8V": {
-   "19997": {
-    "margin_db": 49.82676025614916,
-    "worst_hz": 8020.0,
-    "worst_dbfs": -160.0013817465469,
-    "f_hz": 19990.0
-   }
-  },
-  "T/0.35mA/standard/k140/2V": {
-   "19997": {
-    "margin_db": 62.69953960514894,
-    "worst_hz": 8020.0,
-    "worst_dbfs": -172.8741610955467,
-    "f_hz": 19990.0
-   },
-   "19977": {
-    "margin_db": 63.2638853289845,
-    "worst_hz": 8040.0,
-    "worst_dbfs": -173.39845317491472,
-    "f_hz": 19980.0
-   }
-  },
-  "T/0.35mA/standard/k140/8V": {
+  "P1/0.6mA/standard/k140/lpf-4k/8V": {
    "19637": {
-    "margin_db": 34.87047915596361,
-    "worst_hz": 2040.0,
-    "worst_dbfs": -150.3027777714597,
+    "margin_db": 19.93426087917392,
+    "worst_hz": 20.0,
+    "worst_dbfs": -119.93426087917392,
     "f_hz": 19640.0
    },
+   "18037": {
+    "margin_db": 21.23324352117477,
+    "worst_hz": 20.0,
+    "worst_dbfs": -121.23324352117477,
+    "f_hz": 18040.0
+   }
+  },
+  "T/0.35mA/hq/k140/lpf-4k/2V": {
+   "19997": {
+    "margin_db": 40.26670312459561,
+    "worst_hz": 20.0,
+    "worst_dbfs": -140.2667031245956,
+    "f_hz": 19990.0
+   }
+  },
+  "T/0.35mA/hq/k140/lpf-4k/8V": {
    "19831": {
-    "margin_db": 36.28517293801775,
-    "worst_hz": 5370.0,
-    "worst_dbfs": -150.00193494124267,
+    "margin_db": 32.540825844742926,
+    "worst_hz": 3150.0,
+    "worst_dbfs": -152.4015826299231,
     "f_hz": 19830.0
    }
   },
-  "T/0.3mA/hq/k140/8V": {
+  "T/0.35mA/standard/k140/lpf-4k/2V": {
    "19997": {
-    "margin_db": 49.336735746439984,
-    "worst_hz": 8020.0,
-    "worst_dbfs": -159.51135723683774,
+    "margin_db": 40.256339476036516,
+    "worst_hz": 20.0,
+    "worst_dbfs": -140.25633947603652,
     "f_hz": 19990.0
+   },
+   "19977": {
+    "margin_db": 40.26404289920288,
+    "worst_hz": 20.0,
+    "worst_dbfs": -140.26404289920288,
+    "f_hz": 19980.0
+   }
+  },
+  "T/0.35mA/standard/k140/lpf-4k/8V": {
+   "19637": {
+    "margin_db": 13.309779831915904,
+    "worst_hz": 2040.0,
+    "worst_dbfs": -128.74207844741198,
+    "f_hz": 19640.0
+   },
+   "19237": {
+    "margin_db": 14.498978374637687,
+    "worst_hz": 1600.0,
+    "worst_dbfs": -128.14094801527114,
+    "f_hz": 19240.0
    }
   }
  }

@@ -3,21 +3,23 @@ of the full assessment (dk6as6/inaudible.json, dk6as6/inaudible_sweep.py), for e
 It replaces #113's dBc guard (worst total + 3 dB against the 12AX7 stage's budget), which is not an audibility test.
 
 Each CI point is one run of the production default stage (g1 grid current, pentode.HARDNESS; the k140 resampler,
-stage.FIR; post-filter off) at a key's tone, CI_WINDOW_S (0.1 s) after dk6as6.aliasing.SETTLE_S (1.25 s; the #102
-coupling caps), checked two ways:
+stage.FIR; the key's post-filter position, dk6as6.lpf) at a key's tone, CI_WINDOW_S (0.1 s) after
+dk6as6.aliasing.SETTLE_S (1.25 s; the #102 coupling caps), checked two ways:
 1. Criterion: inaudible.assess passes, i.e. every alias product in 20 Hz-20 kHz is below -100 dBFS and at least 10 dB
    under the threshold of hearing at its frequency (Terhardt; 0 dBFS = the output peak = 105 dB SPL). There is no
    tolerance on this check: a product over its limit fails the job.
 2. Ratchet: the point's margin (the smallest limit - level over its products, dB) may not fall more than TOLERANCE_DB
    (1.5 dB, dk.aliasing_guard's) below its committed baseline (aliasing_baseline_inaudible_<fs>.json, format
-   "inaudible-v1": values[key][tone] = {margin_db, worst_hz, worst_dbfs, f_hz}). A rise of more than 1.5 dB passes,
+   "inaudible-v2": values[key][tone] = {margin_db, worst_hz, worst_dbfs, f_hz}). A rise of more than 1.5 dB passes,
    with a note.
 In the 0.1 s window a tone moves to the 10 Hz grid (19637 -> 19640 Hz) and lines less than 10 Hz apart share a bin and
 read as their sum, so a CI point reads at or above the 1 s grid's level for the same products.
 
 Keys (derive(), from inaudible.json's C++ screen, re-measured on this stage where they decide: RESULTS.md): per rate,
-quality and drive, the supported case (stage.SUPPORTED_MA, every measured bias inside it) with the smallest margin in
-each mode, and each mode's top supported bias (where the grid current and the least cathode feedback are). Tones: the
+quality and drive, the supported case and post-filter position (stage.SUPPORTED_MA, every measured bias inside it;
+off / 4k / 7k) with the smallest margin in each mode, and each mode's top supported bias at its worst position (where
+the grid current and the least cathode feedback are). Only inputs below 20 kHz are in scope (inaudible_sweep.py,
+ABOVE_20K_HZ: inputs above it are measured and reported, and fail; RESULTS.md). Tones: the
 key's lowest-margin tone on the 1 s grid, and the next ones within dk.aliasing.MARGIN_DB of it on distinct CI-window
 bins, up to MAX_TONES[quality] (CI time: the Python stage costs ~13 CPU-s per point and unit of oversampling factor on
 a CI runner). Between the measured tones the guard measures nothing.
@@ -39,7 +41,7 @@ import warnings
 from concurrent.futures import ProcessPoolExecutor
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from dk.aliasing import CI_WINDOW_S, BAND_HZ, MASK_BINS, MARGIN_DB, tone_bin  # noqa: E402 -- after the sys.path setup
+from dk.aliasing import CI_WINDOW_S, BAND_HZ, MARGIN_DB, tone_bin  # noqa: E402 -- after the sys.path setup
 from dk.aliasing_guard import TOLERANCE_DB, git_rev, shown_path  # noqa: E402 -- after the sys.path setup
 from dk6as6 import inaudible as IN, inaudible_sweep as SW  # noqa: E402 -- after the sys.path setup
 from dk6as6.aliasing import SETTLE_S  # noqa: E402 -- after the sys.path setup
@@ -49,68 +51,71 @@ from dk6as6.stage import QUALITY, FIR, supported  # noqa: E402 -- after the sys.
 # What the baselines mean, named so that a change of default fails until they are updated on purpose
 GRID_HARDNESS = HARDNESS
 DESIGN = FIR                     # "k140"
-FORMAT = "inaudible-v1"
+FORMAT = "inaudible-v2"          # v2: metric 2 (no harmonic mask) and the post-filter position in every key
 RATES = IN.RATES
 MAX_TONES = {"standard": 2, "hq": 1}
 
 # CI[fs][quality] = {(mode, bias mA, drive V): tones}: derive()'s output, checked by test_dk6as6_aliasing_guard.py
 CI = {
     48000: {
-        "standard": {
-            ("P1", 0.6, 2.0): (19997, 19977),
-            ("P1", 0.6, 8.0): (18037,),
-            ("T", 0.35, 2.0): (19997, 19977),
-            ("T", 0.35, 8.0): (19637, 19831),
+        'standard': {
+            ('P1', 0.6, '4k', 2.0): (19997, 19977),
+            ('P1', 0.6, '4k', 8.0): (19637, 18037),
+            ('T', 0.35, '4k', 2.0): (19997, 19977),
+            ('T', 0.35, '4k', 8.0): (19637, 19237),
         },
-        "hq": {
-            ("P1", 0.6, 2.0): (19997,),
-            ("P1", 0.6, 8.0): (18037,),
-            ("T", 0.3, 8.0): (19997,),
-            ("T", 0.35, 2.0): (19997,),
-            ("T", 0.35, 8.0): (19997,),
+        'hq': {
+            ('P1', 0.6, '4k', 2.0): (19997,),
+            ('P1', 0.6, '4k', 8.0): (18037,),
+            ('T', 0.35, '4k', 2.0): (19997,),
+            ('T', 0.35, '4k', 8.0): (19831,),
         },
     },
     44100: {
-        "standard": {
-            ("P1", 0.6, 2.0): (19997, 19987),
-            ("P1", 0.6, 8.0): (19997, 19987),
-            ("T", 0.35, 2.0): (19997, 19987),
-            ("T", 0.35, 8.0): (19997, 19987),
+        'standard': {
+            ('P1', 0.6, '4k', 2.0): (19997, 19987),
+            ('P1', 0.6, '4k', 8.0): (19637,),
+            ('T', 0.35, '4k', 2.0): (19997, 19987),
+            ('T', 0.35, '4k', 8.0): (19997, 19987),
         },
-        "hq": {
-            ("P1", 0.1, 8.0): (19997,),
-            ("P1", 0.6, 2.0): (19997,),
-            ("P1", 0.6, 8.0): (16037,),
-            ("T", 0.3, 8.0): (19997,),
-            ("T", 0.35, 2.0): (19997,),
-            ("T", 0.35, 8.0): (19997,),
+        'hq': {
+            ('P1', 0.1, '4k', 8.0): (19997,),
+            ('P1', 0.6, '4k', 2.0): (19997,),
+            ('P1', 0.6, '4k', 8.0): (16037,),
+            ('T', 0.3, '4k', 8.0): (19997,),
+            ('T', 0.35, '4k', 2.0): (19997,),
+            ('T', 0.35, '4k', 8.0): (19997,),
         },
     },
 }
 
 
-def key(mode, bias, quality, drive):
-    return f"{mode}/{bias:g}mA/{quality}/{DESIGN}/{drive:g}V"
+def key(mode, bias, quality, drive, lpf="off"):
+    return f"{mode}/{bias:g}mA/{quality}/{DESIGN}/lpf-{lpf}/{drive:g}V"
 
 
 def os_of(quality):
     return QUALITY[quality][0]
 
 
-def derive(summary_records, fs, quality):
-    """{(mode, bias, drive): tones} for one rate and quality from the 1 s grid records (inaudible.json records_cpp at
-    the quality's factor): module docstring."""
+def derive(records, fs, quality):
+    """{(mode, bias, lpf, drive): tones} for one rate and quality from the 1 s grid (inaudible.json records_cpp at the
+    quality's factor, inputs below 20 kHz, every post-filter position): module docstring."""
     f = os_of(quality)
-    recs = [r for r in summary_records if r["fs"] == fs and r["os"] == f and supported(r["mode"], r["bias_ma"])]
+    recs = [r for r in records
+            if r["fs"] == fs and r["os"] == f and r["in_scope"] and supported(r["mode"], r["bias_ma"])]
     by = {}
     for r in recs:
-        by.setdefault((r["mode"], float(r["bias_ma"]), float(r["drive"])), []).append(r)
+        by.setdefault((r["mode"], float(r["bias_ma"]), r["lpf"], float(r["drive"])), []).append(r)
+    def worst(k):
+        return min(r["margin_db"] for r in by[k])
     keys = set()
     for d in IN.DRIVES:
         for mode in sorted({k[0] for k in by}):
-            cand = [k for k in by if k[0] == mode and k[2] == d]
-            keys.add(min(cand, key=lambda k: min(r["margin_db"] for r in by[k])))       # the mode's worst case
-            keys.add(max(cand, key=lambda k: k[1]))                                      # and its top bias
+            cand = [k for k in by if k[0] == mode and k[3] == d]
+            keys.add(min(cand, key=worst))                                      # the mode's worst case and position
+            top = max(k[1] for k in cand)
+            keys.add(min((k for k in cand if k[1] == top), key=worst))          # its top bias, at its worst position
     n = round(CI_WINDOW_S * fs)
     out = {}
     for k in sorted(keys):
@@ -133,22 +138,23 @@ def baseline_path(fs):
 
 def method(fs, quality):
     return dict(fs_base=fs, quality=quality, os=os_of(quality), stage="dk6as6.stage.Stage", grid_hardness=GRID_HARDNESS,
-                fir=DESIGN, lpf="off", settle_s=SETTLE_S, window_s=CI_WINDOW_S, band_hz=list(BAND_HZ),
-                mask_bins=MASK_BINS, floor_dbfs=IN.FLOOR_DBFS, under_threshold_db=IN.UNDER_THRESHOLD_DB,
-                spl_fs_db=IN.SPL_FS_DB, tones={key(m, b, quality, d): list(t) for (m, b, d), t in
+                fir=DESIGN, metric=SW.METRIC, settle_s=SETTLE_S, window_s=CI_WINDOW_S, band_hz=list(BAND_HZ),
+                floor_dbfs=IN.FLOOR_DBFS, under_threshold_db=IN.UNDER_THRESHOLD_DB,
+                spl_fs_db=IN.SPL_FS_DB, tones={key(m, b, quality, d, lp): list(t) for (m, b, lp, d), t in
                                                CI[fs][quality].items()})
 
 
 def _job(a):
-    fs, quality, mode, bias, drive, tone = a
+    fs, quality, mode, bias, lpf, drive, tone = a
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        r = SW.measure("python", fs, os_of(quality), mode, bias, drive, tone, window=CI_WINDOW_S, settle=SETTLE_S)
-    return dict(r, quality=quality, key=key(mode, bias, quality, drive))
+        r = SW.measure("python", fs, os_of(quality), mode, bias, drive, tone, window=CI_WINDOW_S, settle=SETTLE_S,
+                       lpf=lpf)
+    return dict(r, quality=quality, key=key(mode, bias, quality, drive, lpf))
 
 
 def run_subset(fs, quality, workers=None):
-    jobs = [(fs, quality, m, b, d, t) for (m, b, d), tones in CI[fs][quality].items() for t in tones]
+    jobs = [(fs, quality, m, b, lp, d, t) for (m, b, lp, d), tones in CI[fs][quality].items() for t in tones]
     if workers and workers > 1:
         with ProcessPoolExecutor(workers) as ex:
             return list(ex.map(_job, jobs))

@@ -19,8 +19,9 @@ CPP, PY = DATA["records_cpp"], DATA["records_python"]
 QUALITIES = sorted(QUALITY, key=AG.os_of)
 
 
-def grid(recs, fs, os_, mode, bias, drive):
-    return [r for r in recs if (r["fs"], r["os"], r["mode"], r["bias_ma"], r["drive"]) == (fs, os_, mode, bias, drive)]
+def grid(recs, fs, os_, mode, bias, drive, lpf="off"):
+    return [r for r in recs if r["in_scope"] and (r["fs"], r["os"], r["lpf"], r["mode"], r["bias_ma"], r["drive"])
+            == (fs, os_, lpf, mode, bias, drive)]
 
 
 def supported_cases():
@@ -35,23 +36,37 @@ def test_the_method_is_the_criterion_as_decided():
     m = DATA["method"]
     assert (m["floor_dbfs"], m["under_threshold_db"], m["spl_fs_db"]) == (-100.0, 10.0, IN.SPL_FS_DB)
     assert m["fir"] == AG.DESIGN == "k140" and m["grid_hardness"] == AG.GRID_HARDNESS
-    assert m["window_s"] == 1.0 and m["grid_hz"] == list(SW.GRID_HZ)
+    assert m["window_s"] == 1.0 and m["grid_hz"] == list(SW.GRID_HZ) and max(SW.GRID_HZ) < 20000
+    assert m["metric"] == SW.METRIC == 2 and m["lpfs"] == list(SW.LPFS)
+    assert all(r["metric"] == SW.METRIC for r in CPP + PY)
+
+
+def test_committed_support_flags_are_the_stages_envelope():
+    """PR #146 review round 2: every committed record's and summary's `supported` is stage.supported now (the flags are
+    recomputed at collect time, never kept from when a point ran), and `in_scope` is the input below 20 kHz."""
+    for r in CPP + PY:
+        assert r["supported"] == supported(r["mode"], r["bias_ma"]), r
+        assert r["in_scope"] == (r["tone"] < 20000), r
+    for s in DATA["summary_cpp"] + DATA["summary_python"]:
+        assert s["supported"] == supported(s["mode"], s["bias_ma"]) and s["worst"]["supported"] == s["supported"]
+    assert any(not r["passed"] for r in CPP if not r["supported"])         # the cap's evidence is in the records
 
 
 @pytest.mark.parametrize("quality", QUALITIES)
 @pytest.mark.parametrize("fs", AG.RATES)
 def test_every_offered_quality_is_inaudible_on_the_whole_supported_envelope(fs, quality):
-    """The acceptance criterion itself: every supported mode / bias, 2 and 8 V, every grid tone, on the C++ screen,
-    and every python confirmation at this quality and rate."""
+    """The acceptance criterion itself, in scope (inputs below 20 kHz): every supported mode / bias, 2 and 8 V, every
+    grid tone, every post-filter position, on the C++ screen, and every python confirmation at this quality and rate."""
     os_ = AG.os_of(quality)
     for mode, bias in supported_cases():
         for d in IN.DRIVES:
-            rs = grid(CPP, fs, os_, mode, bias, d)
-            assert {r["tone"] for r in rs} == set(SW.GRID_HZ), (fs, quality, mode, bias, d)
-            bad = [(r["tone"], round(r["margin_db"], 2), r["worst_hz"]) for r in rs if not r["passed"]]
-            assert not bad, (fs, quality, mode, bias, d, bad)
-            assert all(r["nonconverged"] == 0 for r in rs)
-    py = [r for r in PY if r["fs"] == fs and r["os"] == os_ and supported(r["mode"], r["bias_ma"])]
+            for lp in SW.LPFS:
+                rs = grid(CPP, fs, os_, mode, bias, d, lp)
+                assert {r["tone"] for r in rs} == set(SW.GRID_HZ), (fs, quality, mode, bias, d, lp)
+                bad = [(r["tone"], round(r["margin_db"], 2), r["worst_hz"]) for r in rs if not r["passed"]]
+                assert not bad, (fs, quality, mode, bias, d, lp, bad)
+                assert all(r["nonconverged"] == 0 for r in rs)
+    py = [r for r in PY if r["fs"] == fs and r["os"] == os_ and r["in_scope"] and supported(r["mode"], r["bias_ma"])]
     assert py and all(r["passed"] for r in py), [(r["mode"], r["bias_ma"], r["drive"], r["tone"]) for r in py
                                                 if not r["passed"]]
 
@@ -69,10 +84,10 @@ def test_python_confirms_the_screen():
 def test_ci_keys_and_tones_are_derived_from_the_assessment(fs, quality):
     assert AG.CI[fs][quality] == AG.derive(CPP, fs, quality)
     keys = AG.CI[fs][quality]
-    assert all(supported(m, b) for m, b, _ in keys)
+    assert all(supported(m, b) and lp in SW.LPFS for m, b, lp, _ in keys)
     for d in IN.DRIVES:                                   # each mode at each drive, and each mode's top
-        assert {m for m, _, dd in keys if dd == d} == set(SUPPORTED_MA)
-        assert all((m, hi, d) in keys for m, (_, hi) in SUPPORTED_MA.items())
+        assert {m for m, _, _, dd in keys if dd == d} == set(SUPPORTED_MA)
+        assert all(any((m, hi, lp, d) in keys for lp in SW.LPFS) for m, (_, hi) in SUPPORTED_MA.items())
 
 
 @pytest.mark.parametrize("fs", AG.RATES)
@@ -80,7 +95,8 @@ def test_committed_baseline_covers_the_subset_and_passes(fs):
     base = AG.load_baseline(AG.baseline_path(fs))
     assert base["format"] == AG.FORMAT and base["tolerance_db"] == 1.5
     n = round(CI_WINDOW_S * fs)
-    want = {AG.key(m, b, q, d): {str(t) for t in ts} for q in QUALITIES for (m, b, d), ts in AG.CI[fs][q].items()}
+    want = {AG.key(m, b, q, d, lp): {str(t) for t in ts} for q in QUALITIES
+            for (m, b, lp, d), ts in AG.CI[fs][q].items()}
     assert {k: set(v) for k, v in base["values"].items()} == want
     for q in QUALITIES:
         assert base["method"][q] == json.loads(json.dumps(AG.method(fs, q)))
@@ -112,3 +128,21 @@ def test_compare_fails_on_the_criterion_the_ratchet_and_a_missing_point():
     assert not AG.failed(rows) and rows[0]["status"].startswith("ok (better")
     rows = AG.compare([dict(rec(k1, 19637, 10.0), nonconverged=3), rec(k2, 18037, 40.0)], base)
     assert [r["status"] for r in AG.failed(rows)] == ["FAIL Newton"]
+
+
+def test_inputs_above_20khz_are_measured_and_kept_out_of_the_guarantee():
+    """Inputs above 20 kHz, below Nyquist (PR #146 review round 2), are in the records for every rate, offered factor,
+    supported case, drive and post-filter position, marked out of scope, never in a guard key, and some fail: the
+    k140 interpolator's image of such a tone (RESULTS.md). They are reported, not guaranteed."""
+    hi = [r for r in CPP if not r["in_scope"]]
+    for fs, tones in SW.ABOVE_20K_HZ.items():
+        for q in QUALITIES:
+            for mode, bias in supported_cases():
+                for d in IN.DRIVES:
+                    for lp in SW.LPFS:
+                        got = {r["tone"] for r in hi if (r["fs"], r["os"], r["mode"], r["bias_ma"], r["drive"],
+                                                          r["lpf"]) == (fs, AG.os_of(q), mode, bias, d, lp)}
+                        assert got == set(tones), (fs, q, mode, bias, d, lp)
+        assert all(max(t) < 20000 for keys in AG.CI[fs].values() for t in keys.values())
+    assert any(not r["passed"] for r in hi if r["supported"])
+

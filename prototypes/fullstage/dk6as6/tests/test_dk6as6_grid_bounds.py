@@ -235,7 +235,7 @@ def test_bound_study_keeps_its_shipped_fir_configuration():
     assert {int(fs): {k: sorted(map(int, v["tones"])) for k, v in vals.items()} for fs, vals in nom["values"].items()} \
         == {fs: {GB.guard_key(*k): sorted(t) for k, (_, t) in keys.items()} for fs, keys in GB.GUARD_T_KEYS.items()}
     assert {GB.guard_key(*k) for k in GB.GUARD_T_KEYS[48000]}.isdisjoint(
-        A6G.key(m, b, q, d) for q, keys in A6G.CI[48000].items() for m, b, d in keys)
+        A6G.key(m, b, q, d, lp) for q, keys in A6G.CI[48000].items() for m, b, lp, d in keys)
     rows = [ln for ln in GB.tables().splitlines() if "kHz, T/" in ln]
     assert len(rows) == sum(map(len, GB.GUARD_T_KEYS.values())) and not any("—" in ln for ln in rows), rows
     j = dict(next(j for j in GB.alias_jobs("RSD-2")[1] if j["fs"] == 44100), window=0.01, settle=0.0)

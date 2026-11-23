@@ -86,3 +86,41 @@ def test_nan_inf_audio_and_silence_are_refused():
     for y in (np.zeros(N), np.full(N, np.nan), np.r_[np.inf, np.zeros(N - 1)]):
         with pytest.raises(ValueError):
             IN.assess(y, m, FS)
+
+
+def test_a_folded_line_next_to_a_harmonic_is_measured():
+    """PR #146 review round 2: at 44.1 kHz in the 0.1 s CI window the 19987 Hz tone sits on 19990 Hz and its 288th
+    harmonic folds to 19980 Hz, one bin from the fundamental. The earlier +-3-bin harmonic mask hid that line; a
+    -95 dBFS line there must now fail the -100 dBFS floor, and lines one, two and three bins from any harmonic read at
+    their own level."""
+    fs, n = 44100, 4410
+    m = tone_bin(19987, n, fs)
+    assert m * fs / n == 19990.0
+    k = 288
+    r = (k * m) % n
+    fold = min(r, n - r)
+    assert fold == m - 1 and fold * fs / n == 19980.0
+    t = np.arange(n)
+    for db, passed in ((-95.0, False), (-125.0, True)):
+        y = np.sin(2 * np.pi * m * t / n) + 10 ** (db / 20) * np.sin(2 * np.pi * fold * t / n + 0.7)
+        a = IN.assess(y, m, fs)
+        assert a["passed"] is passed and a["worst_hz"] == 19980.0, a
+        assert a["worst_dbfs"] == pytest.approx(db - 20 * np.log10(np.max(np.abs(y - y.mean()))), abs=1e-6)
+    m = tone_bin(1037, N, FS)
+    for d in (1, 2, 3):
+        for h in (m, 5 * m):
+            b = h + d
+            y = np.sin(2 * np.pi * m * np.arange(N) / N) + 0.1 * np.sin(2 * np.pi * 5 * m * np.arange(N) / N)
+            y = y + 10 ** (-130 / 20) * np.sin(2 * np.pi * b * np.arange(N) / N + 1.1)
+            f, lv, _, peak = IN.products(y, m, FS)
+            got = lv[np.argmin(np.abs(f - b * FS / N))]
+            assert got == pytest.approx(-130 - 20 * np.log10(peak), abs=1e-6), (d, h)
+
+
+def test_the_hidden_order_is_reported():
+    """Only an alias folded exactly onto a harmonic's own bin is unmeasurable; assess reports the lowest order where
+    that can happen, collision_order(m, n, 0) - n // (2 m)."""
+    m = tone_bin(19987, 4410, 44100)
+    y = np.sin(2 * np.pi * m * np.arange(4410) / 4410)
+    a = IN.assess(y, m, 44100)
+    assert a["first_hidden_order"] == 4410 // np.gcd(m, 4410) - 4410 // (2 * m) >= 288
