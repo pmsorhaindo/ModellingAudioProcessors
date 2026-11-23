@@ -23,6 +23,7 @@ DISPATCH = Path(__file__).resolve().parents[3] / ".dispatch" / "issue148"
 PR146_HEAD = "1c0a7f4b9d666768ffdd159d0543810f4141276a"
 PR146_FILE = "prototypes/fullstage/dk6as6/inaudible.json"
 WARM_S = 0.015
+LONG_WARM_S = 0.750
 
 
 def limit_dbfs(f_hz):
@@ -139,7 +140,8 @@ def write_json(path, data):
 
 def controls(fs, scenario, tone):
     settling = round(1.25 * fs)
-    t = (np.arange(settling + round(0.85 * fs)) - settling) / fs
+    duration = 2.15 if scenario == "roundtrip" else 0.85
+    t = (np.arange(settling + round(duration * fs)) - settling) / fs
     # Keep the control update grid independent of processing block segmentation.
     control_t = np.floor_divide(np.arange(len(t)) - settling, 16) * (16 / fs)
     mode_t = np.ones_like(t)
@@ -162,20 +164,27 @@ def controls(fs, scenario, tone):
     elif scenario.startswith("quality"):
         hq = (t >= 0.25).astype(float) if scenario.endswith("up") else (t < 0.25).astype(float)
         bias = np.full_like(t, 0.349)
+    elif scenario == "roundtrip":
+        # Hold the bias just beyond each crossing so the 750 ms causal delay is exposed
+        # without pushing the still-audible 16× path into the already measured failure range.
+        bias = np.interp(control_t, (0.1, 0.132, 1.12, 1.152), (0.349, 0.351, 0.351, 0.349))
     else:
         raise ValueError(scenario)
     signal = 8 * np.sin(2 * np.pi * tone * t) if tone else np.zeros_like(t)
     return np.column_stack((signal, bias, mode_t, hq)), settling
 
 
-def render(exe, fs, shape, position, timeline, reps=1):
-    raw, stats = run(exe, "transition", fs, FILTERS[position], *grid_args(shape), reps,
+def render(exe, fs, shape, position, timeline, reps=1, *, high=32, long_warm=0.0):
+    methods = ("fixed16", f"fixed{high}", "fade", "handoff")
+    if long_warm:
+        methods += ("long_fade",)
+    raw, stats = run(exe, "transition", fs, FILTERS[position], *grid_args(shape), reps, high, long_warm,
                      input_data=timeline.tobytes())
     if not np.all(np.isfinite(raw)):
         raise ValueError("nonfinite render")
     latencies = set()
-    times = {m: [] for m in METHODS}
-    for method, lines in zip(METHODS, np.asarray(stats).reshape(4, reps), strict=True):
+    times = {m: [] for m in methods}
+    for method, lines in zip(methods, np.asarray(stats).reshape(len(methods), reps), strict=True):
         for line in lines:
             latency, single_ns, dual_ns, dual_n, allocs, nonconv, out_of_law, recoveries = map(float, line.split())
             if allocs or recoveries:
@@ -185,7 +194,7 @@ def render(exe, fs, shape, position, timeline, reps=1):
                                       nonconverged=int(nonconv), out_of_law=int(out_of_law),
                                       allocations=int(allocs), recoveries=int(recoveries)))
     latency, = latencies
-    return dict(zip(METHODS, raw.reshape(4, len(timeline), 3), strict=True)), latency, times
+    return dict(zip(methods, raw.reshape(len(methods), len(timeline), 3), strict=True)), latency, times
 
 
 def fit_tone(y, start, end, tone, fs):
@@ -268,57 +277,62 @@ def envelope_spectrum(y, scale, fs, tone, span):
     return float(db(np.sqrt(np.sum(p[np.abs(f) >= 100])) / scale))
 
 
-def measure_transition(fs, tone, scenario, y, timeline, settling, latency):
+def measure_transition(fs, tone, scenario, y, timeline, settling, latency, *, high=32):
     switch_at = np.flatnonzero(np.diff((timeline[:, 3] == 1) |
                                       ((timeline[:, 2] == 1) & (timeline[:, 1] >= 0.35)))) + 1
     targets = ((timeline[switch_at, 3] == 1) |
                ((timeline[switch_at, 2] == 1) & (timeline[switch_at, 1] >= 0.35)))
     # The controller initiates on the input clock. The rendered audio is still delayed by the common latency.
-    span = slice(settling + round(0.05 * fs), settling + round(0.80 * fs))
-    refs = {name: y[name][:, 0] for name in ("fixed16", "fixed32")}
+    extended = scenario == "roundtrip"
+    span = slice(settling + round(0.05 * fs), settling + round((2.10 if extended else 0.80) * fs))
+    fixed_high = f"fixed{high}"
+    refs = {name: y[name][:, 0] for name in ("fixed16", fixed_high)}
     scale = max(np.max(np.abs(ref[span])) for ref in refs.values())
     if not tone:
         scale = 100.0  # 100 V = 0 dBFS only for diagnostic silence rows
     elif not scale > 0:
         raise ValueError("missing driven reference")
     results = {}
-    for name in ("fade", "handoff"):
-        output, weight32, dual = y[name].T
-        oracle = refs["fixed16"] + weight32 * (refs["fixed32"] - refs["fixed16"])
+    for name in (key for key in y if key not in refs):
+        output, weight_high, dual = y[name].T
+        rate_difference = refs[fixed_high] - refs["fixed16"]
+        oracle = refs["fixed16"] + weight_high * rate_difference
         warm_residual = output - oracle
         versus = {k: output - ref for k, ref in refs.items()}
         versus["always_warm_mix"] = warm_residual
         response = {ref: level_stats(res, scale, span) for ref, res in versus.items()}
-        if tone and scenario.startswith(("automation", "sweep", "full")):
+        if tone and scenario.startswith(("automation", "sweep", "full", "roundtrip")):
             response["zipper_dbfs_above_100hz"] = {
                 ref: envelope_spectrum(res, scale, fs, tone, span) for ref, res in versus.items()
             }
         events = []
         for i, (at, up) in enumerate(zip(switch_at, targets, strict=True)):
             end = switch_at[i + 1] if i + 1 < len(switch_at) else len(output)
-            window = slice(max(span.start, at - round(0.004 * fs)),
-                           min(span.stop, end, at + round(0.050 * fs)))
+            delta_w = np.diff(weight_high[at:end], prepend=weight_high[at - 1])
+            changes = np.flatnonzero(delta_w)
+            anchor = at + int(changes[0]) if extended and len(changes) else at
+            window = slice(max(span.start, anchor - round(0.004 * fs)),
+                           min(span.stop, end, anchor + round(0.050 * fs)))
             if window.stop - window.start < round(0.008 * fs):
                 continue
-            delta_w = np.abs(np.diff(weight32[at:end], prepend=weight32[at - 1]))
-            changes = np.flatnonzero(delta_w)
             event = dict(start_s=(at - settling) / fs, direction="up" if up else "down",
-                         target_reached=bool(weight32[end - 1] == float(up)),
+                         target_reached=bool(weight_high[end - 1] == float(up)),
                          residuals={ref: level_stats(res, scale, window) for ref, res in versus.items()},
                          off_harmonic={ref: short_spectrum(res, scale, fs, tone, window)
                                        for ref, res in versus.items()})
-            event["fixed16_minus_fixed32_spectrum"] = short_spectrum(refs["fixed16"] - refs["fixed32"],
-                                                                     scale, fs, tone, window)
+            event[f"fixed16_minus_{fixed_high}_spectrum"] = short_spectrum(-rate_difference, scale, fs, tone, window)
             event["fixed_spectra"] = {ref: short_spectrum(data, scale, fs, tone, window) for ref, data in refs.items()}
             event["adaptive_spectrum"] = short_spectrum(output, scale, fs, tone, window)
             event["mix_edges"] = []
             for edge in sorted({at + int(i) for i in changes[[0, -1]]}) if len(changes) else ():
                 # The one-sample change due only to changing the ideal mix coefficient.
-                delta = (weight32[edge] - weight32[edge - 1]) * (refs["fixed32"][edge] - refs["fixed16"][edge])
+                delta = delta_w[edge - at] * rate_difference[edge]
                 event["mix_edges"].append(dict(time_s=(edge - settling) / fs,
                     mix_step_dbfs=float(db(abs(delta) / scale)),
                     cold_step_dbfs=float(db(abs(warm_residual[edge] - warm_residual[edge - 1]) / scale)),
                     carrier_step=carrier_steps(output, {**refs, "always_warm_mix": oracle}, tone, fs, edge, span)))
+            if extended and len(changes):
+                event["max_mix_step_dbfs"] = float(db(np.max(np.abs(delta_w * rate_difference[at:end])) / scale))
             events.append(event)
         results[name] = dict(overlap_samples=int(np.sum(dual)), residuals=response, events=events)
     return dict(sample_rate=fs, tone=tone, scenario=scenario, common_latency=latency,
@@ -385,8 +399,68 @@ def bench(exe, out):
                                    overlap_ns_per_sample=float(np.median(overlap)) if overlap else None,
                                    overlap_samples=reps[0]["dual_samples"], reps=reps)
         rows.append(dict(fs=fs, scenario="automation", total_samples=len(timeline), methods=methods))
-        write_json(out / "cpu.json", dict(compiler=cxx, flags="-O2", block_max=64, records=rows))
+        write_json(out / "cpu.json", dict(compiler=cxx, flags="-O3", block_max=64, records=rows))
         print(f"bench: {fs} automation", flush=True)
+
+
+def review_case(exe, samples, case):
+    fs, high, tone, position, scenario = case
+    timeline, settling = controls(fs, scenario, tone)
+    y, latency, timings = render(exe, fs, GRID_SHAPE, position, timeline, high=high, long_warm=LONG_WARM_S)
+    row = measure_transition(fs, tone, scenario, y, timeline, settling, latency, high=high)
+    audio = np.column_stack([trace[settling:, 0] for trace in y.values()])
+    gain = 10 ** (-1 / 20) / np.max(np.abs(audio))
+    stem = f"{fs}-16-{high}-{tone}Hz"
+    if scenario == "automation":
+        stem += "-automation"
+    for method, track in zip(y, audio.T, strict=True):
+        wavfile.write(samples / f"{stem}-{method}.wav", fs, (gain * track).astype(np.float32))
+    row.update(high=high, filter=position, long_warm_s=LONG_WARM_S, timed_samples=len(timeline),
+               wav_gain_per_volt=float(gain), timings={method: times[0] for method, times in timings.items()})
+    return row
+
+
+def review_transients(exe, out, workers):
+    samples = out / "samples"
+    samples.mkdir(exist_ok=True)
+    cases = ((44100, 32, 1037, "off", "roundtrip"), (44100, 64, 19831, "4k", "roundtrip"),
+             (48000, 64, 19987, "4k", "roundtrip"), (48000, 64, 19987, "4k", "automation"))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        rows = []
+        for row in pool.map(lambda case: review_case(exe, samples, case), cases):
+            rows.append(row)
+            write_json(out / "long-warm.json", rows)
+            print(f"review transient: {row['sample_rate']} Hz at 16×/{row['high']}×", flush=True)
+
+
+def review_stationary(exe, out, workers):
+    # Bridge the threshold to the already measured 0.5 mA endpoint with the nominal 32× endpoint stress tone.
+    cases = [(fs, shape, "T", bias, 64, "4k", tone)
+             for fs, tone in ((44100, 19831), (48000, 19987))
+             for shape in (GRID_SHAPE, *GRID_BOUNDS)
+             for bias in (0.35, 0.351, 0.4, 0.45)]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        rows = []
+        for row in pool.map(lambda job: steady_point(exe, job), cases):
+            rows.append(row)
+            write_json(out / "steady-64.json", rows)
+
+
+def review_fixed_bench(out):
+    flags = ("-O3",)
+    # Reproduce the historical hot-T, 8 V, block-64 stock path and the corresponding extended cases.
+    cases = {}
+    configurations = (
+        ("stock", (), ("hq",)),
+        ("extended", ("DK6AS6_BENCH_EXTENDED_RATES",), ("hq", "research32", "research64")),
+    )
+    for label, defines, qualities in configurations:
+        exe = build(flags=flags, defines=defines, name="bench_6as6")
+        only = ",".join(f"{q}_T_0.5mA_8V_b64_x1" for q in qualities)
+        p = subprocess.run([exe, "--reps", "3", "--seconds", "2", "--only", only],
+                           capture_output=True, text=True, check=True)
+        cases[label] = json.loads(p.stdout)
+        write_json(out / "fixed-cpu.json", dict(flags=flags, **cases))
 
 
 def verify(exe):
@@ -418,19 +492,30 @@ def verify(exe):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("steady", "transient", "bench", "verify"))
-    parser.add_argument("--output", type=Path, default=DISPATCH)
+    actions = ("steady", "transient", "bench", "verify", "review-transient", "review-steady", "review-fixed-bench")
+    parser.add_argument("action", choices=actions)
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--workers", type=int, default=3)
     parser.add_argument("--resume", action="store_true", help="reuse completed rows in the output directory")
     args = parser.parse_args()
+    if args.output is None:
+        args.output = DISPATCH / "round2" if args.action.startswith("review-") or args.action == "bench" else DISPATCH
     args.output.mkdir(exist_ok=True, parents=True)
-    exe = build(name="adaptive_os_6as6")
+    if args.action == "review-fixed-bench":
+        review_fixed_bench(args.output)
+        return
+    flags = ("-O3",) if args.action in ("bench", "review-transient") else ("-O2",)
+    exe = build(flags=flags, name="adaptive_os_6as6")
     if args.action == "steady":
         steady(exe, args.output / "steady.json", args.workers, args.resume)
     elif args.action == "transient":
         transient(exe, args.output, args.resume)
     elif args.action == "bench":
         bench(exe, args.output)
+    elif args.action == "review-transient":
+        review_transients(exe, args.output, args.workers)
+    elif args.action == "review-steady":
+        review_stationary(exe, args.output, args.workers)
     else:
         verify(exe)
 

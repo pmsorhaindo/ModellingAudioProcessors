@@ -21,13 +21,20 @@
 
 using namespace dk6as6;
 
+// The #148 research run extends the same benchmark without changing the default configurations.
+#ifdef DK6AS6_BENCH_EXTENDED_RATES
+using BenchStage = StageT<64>;
+#else
+using BenchStage = Stage;
+#endif
+
 struct Config {
     std::string name, quality, variant;
     Quality q;
     Settings set;
     double level;
     int block, inst;
-    dk6as6::Stage* s[2] = {nullptr, nullptr};
+    BenchStage* s[2] = {nullptr, nullptr};
     const std::vector<double>* x[2] = {nullptr, nullptr};
     std::vector<double> y[2];
     std::uint64_t checksum = 0, nonconverged = 0, restarted = 0;
@@ -111,7 +118,12 @@ int main(int argc, char** argv) {
     const std::size_t n = std::size_t(seconds * FS) / 512 * 512;
     if (n == 0 || reps < 1) { std::fprintf(stderr, "need --seconds >= %g and --reps >= 1\n", 512 / FS); return 2; }
 
-    const std::pair<const char*, Quality> qs[] = {{"standard", STANDARD}, {"hq", HQ}};
+    const std::pair<const char*, Quality> qs[] = {
+        {"standard", STANDARD}, {"hq", HQ},
+#ifdef DK6AS6_BENCH_EXTENDED_RATES
+        {"research32", {32, 0.0}}, {"research64", {64, 0.0}},
+#endif
+    };
     const double levels[] = {0.5, 2.0, 8.0};
     // (name, settings): the default, and one change from it per variant
     std::vector<std::pair<std::string, Settings>> variants;
@@ -163,7 +175,7 @@ int main(int argc, char** argv) {
     for (auto& c : cfg) {
         const int l = int(std::find(levels, levels + 3, c.level) - levels);
         for (int k = 0; k < c.inst; ++k) {
-            c.s[k] = new dk6as6::Stage;
+            c.s[k] = new BenchStage;
             const Status st = c.s[k]->prepare(FS, c.q, c.set);
             if (st != Status::ok) { std::fprintf(stderr, "%s: prepare failed (%s)\n", c.name.c_str(), to_string(st)); return 3; }
             c.x[k] = &sig[l][k];
@@ -192,7 +204,7 @@ int main(int argc, char** argv) {
     std::printf("\"counters\": \"%s\", ", have_counters ? COUNTER_SOURCE : "unavailable");
 #endif
     std::printf("\"compiler\": \"%s\", \"sizeof_stage\": %zu, \"fma\": %s}, \"results\": [", __VERSION__,
-                sizeof(dk6as6::Stage), dkcore::simd::FMA ? "true" : "false");
+                sizeof(BenchStage), dkcore::simd::FMA ? "true" : "false");
     for (std::size_t i = 0; i < cfg.size(); ++i) {
         Config& c = cfg[i];
         all_det = all_det && c.deterministic;

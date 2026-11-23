@@ -1,26 +1,30 @@
 # Adaptive oversampling investigation (#148)
 
-**Neither prototype is suitable for the 16×/32× policy.** With the 4k filter at T 0.5 mA, nominal fixed
-32× misses the stationary limit by 23.47 dB at 44.1 kHz and 17.08 dB at 48 kHz. Both published grid
-shapes also fail at that endpoint at both rates. This rules out the policy even with an ideal handoff.
-The transition measurements also show a cold-path transient in both methods. In the 44.1 kHz down
-sweep with a 19,831 Hz stimulus, the peak residual relative to the always-warm mix was −6.7 dBFS
-for the fade and −4.8 dBFS for the warm handoff.
+**The 15 ms warm-up exposed the incoming circuit's settling transient.** With 16× and 32× already running
+on the same input and control history, the largest recorded mix-edge step was −114.5 dBFS for the fade
+and −58.1 dBFS for the hard handoff. Starting the incoming lane from DC rest increased the edge
+residuals to −39.0 and −4.9 dBFS respectively. The 44.1 kHz rising sweep at 1037 Hz has a low-frequency
+tail with a time constant of roughly 110–120 ms. The 15 ms warm-up is much shorter than that.
+
+Fixed 32× independently fails the stationary rule at T 0.5 mA. With the 4k filter, the nominal fit
+misses by 23.47 dB at 44.1 kHz and 17.08 dB at 48 kHz. Both published grid shapes also fail at that
+endpoint. The 16×/32× policy therefore fails the stationary rule even with both lanes fully warm.
 
 The 0.35 mA crossover remains provisional. The experiment lives in a standalone probe and the
 product's T range extends to 0.5 mA.
 
-The standalone C++ probe compares two 16×/32× handoffs for the #146 decision. Both use the k140
-resampler and the current 6AS6 solver. The probe requests 32× at or above 0.35 mA in T and 16× below it.
-P1 requests 16× at either bias, and the probe's HQ control requests 32× in either mode.
+The standalone C++ probe uses the k140 resampler and the current 6AS6 solver. It requests the higher
+factor at or above 0.35 mA in T and 16× below it. P1 requests 16× at either bias, and the probe's HQ
+control requests the higher factor in either mode.
 
 ## How the handoffs work
 
 - **Crossfade.** Start the incoming stage at its current bias and mode's DC operating point. Run both stages for 15 ms while the incumbent remains audible. Then linearly crossfade the two latency-aligned outputs for 15 ms and suspend the old stage. A request reversal during the fade reverses the current blend.
 - **Warm handoff.** Start the incoming stage the same way and keep it muted for 15 ms. Switch to its output in one sample and suspend the old stage. Both methods cancel an unfinished warm-up when the request returns to the incumbent.
+- **Long warm-up crossfade.** Keep the incoming stage muted for 750 ms, then apply the same 15 ms fade. This waits about six of the measured low-frequency time constants and requires the request to persist. Bias and mode apply to both lanes throughout, including the audible incumbent.
 - **References.** Run fixed 16× and fixed 32× continuously from the same initial conditions and with the same control timeline. An offline always-warm mix applies each method's exact weights to those two references. Subtracting it isolates the effect of starting the incoming path from rest. The one-sample weight-change term in that mix quantifies the rate handoff even with both paths warm.
 
-The k140 16× FIR delay is 130 samples at 44.1 kHz and 82 at 48 kHz. The probe delays that path by one sample to match the 32× delays of 131 and 83. The nonlinear circuit models still have their own phase responses. Bias changes use prebuilt packs at 16-sample control intervals and keep the absolute capacitor histories. The probe's discrete P1 ↔ T tests preserve histories for capacitors with the same connections and reset the two reconnected histories. The fixed references make the same topology changes at the same sample. These switches are a repeatable stimulus for this experiment. Issue [#115](https://github.com/pmsorhaindo/ModellingAudioProcessors/issues/115) owns the production control and mode smoothing path.
+The k140 16× FIR delay is 130 samples at 44.1 kHz and 82 at 48 kHz. The probe delays that path by one sample to match the 32× delays of 131 and 83, or by two to match the 64× delays of 132 and 84. The nonlinear circuit models still have their own phase responses. Bias changes use prebuilt packs at 16-sample control intervals and keep the absolute capacitor histories. The probe's discrete P1 ↔ T tests preserve histories for capacitors with the same connections and reset the two reconnected histories. The fixed references make the same topology changes at the same sample. These switches are a repeatable stimulus for this experiment. Issue [#115](https://github.com/pmsorhaindo/ModellingAudioProcessors/issues/115) owns the production control and mode smoothing path.
 
 The resampler's size is a compile-time parameter. The shipped core instantiations still use their original 16× storage limit and the probe uses its own 64× capacity for measurements. During a processing segment the probe uses prebuilt matrices, fixed storage and lock-free stage controls. The offline program handles timing, pack preparation and file I/O between processing calls.
 
@@ -49,6 +53,13 @@ positions. At 0.349 and 0.351 mA, the 4k position ran 29 tones at 44.1 kHz and 1
 and off / 7k ran two probes. The 0.375, 0.4 and 0.5 mA rows combine the full #146 filter-off sweep and fresh
 hot-T tone probes with the filter enabled.
 
+The 4k filter strongly attenuates the approximately 19.8–20 kHz carrier while passing much more of the
+approximately 3 kHz alias. With output peak as full scale, this raises the alias in dBFS relative to the
+filtered signal. The pinned #146 records already show 32× failing at 0.45 mA with the 4k filter on
+both rates and at 0.5 mA with the filter off at 44.1 kHz. At 0.5 mA filter off, the pinned margins
+are −3.63 dB and +3.21 dB at 44.1 and 48 kHz. The fresh 4k endpoint measurements give −23.47 and
+−17.08 dB.
+
 | T bias (mA) | Factor | 44.1 kHz | 48 kHz |
 |---:|---:|---:|---:|
 | 0.1 | 16× | +28.64 | +32.75 |
@@ -66,7 +77,7 @@ hot-T tone probes with the filter enabled.
 Published shape sensitivity at the 4k filter position, dB margin on the measured probes. The shape
 sweep uses 2–5 tones per cell. Positive rows cover those tones. RSD-2 already fails at 0.4 mA
 and 44.1 kHz. At 0.5 mA, 64× passed the selected stationary probes with a minimum margin of
-16.0 dB across the three shapes. The switching measurements use 16× and 32×.
+16.0 dB across the three shapes.
 
 | T bias (mA) | Factor | RSD-2 44.1 | RSD-2 48 | EHX-1 44.1 | EHX-1 48 |
 |---:|---:|---:|---:|---:|---:|
@@ -89,7 +100,23 @@ and 44.1 kHz. At 0.5 mA, 64× passed the selected stationary probes with a minim
 - With RSD-2 at 48 kHz, 19987 Hz at 0.5 mA and the 4k filter produced a 2999 Hz alias at -93.59 dBFS (-25.97 dB margin).
 - With EHX-1 at 48 kHz, 19987 Hz at 0.5 mA and the 4k filter produced a 2999 Hz alias at -98.83 dBFS (-20.74 dB margin).
 
-### Switch measurements
+### Switch measurements with the 15 ms warm-up
+
+The one-sample step from changing the mix weight with both paths already warm is separate from the
+first difference of the cold-start residual. These are maxima over the first and last changing mix
+samples across the 24 short-warm cases. They can occur on different events.
+
+| Method | Already-warm mix edge (dBFS) | Cold-start residual edge (dBFS) |
+|---|---:|---:|
+| Fade | −114.5 | −39.0 |
+| Warm handoff | −58.1 | −4.9 |
+
+The 44.1 kHz HQ switch at T 0.349 mA and 1037 Hz is a control for this attribution. Its two continuous
+reference WAVs differ by about −143 dB relative to their peak, while the handoff residual reaches
+−26.4 dBFS. In the 1037 Hz rising sweep, low-pass filtering the handoff-minus-fixed-32× WAV at 300 Hz
+with a zero-phase fourth-order Butterworth filter and fitting 50 ms RMS windows centered at
+0.40–0.75 s gives a slope of approximately −80 dB/s and a time constant of 109 ms. The reviewer
+estimated about 120 ms from the same settling tail.
 
 Worst measured values across the host rates and driven stimuli. Each pair or triplet follows the
 reference order in the header. Values from different columns can occur on different events. The

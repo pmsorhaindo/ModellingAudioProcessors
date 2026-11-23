@@ -875,6 +875,7 @@ struct Settings {
 /* Build a pack at internal rate fs (stage.Stage.__init__ minus the resampler): Rk for the target current, the matrices
  * at fs, the DC operating point at that Rk, and the deviation form's rest constants. Non-RT, no allocation. */
 namespace detail {
+// Explicit grid fits are used by the offline #148 probe. The shipped prepare path supplies the nominal fit.
 inline Status build_pack_with_grid(Pack& out, double fs, const Settings& s, const GridParams* g) {
     if (!(fs > 0.0) || !std::isfinite(fs) || !(s.bias_ma > 0.0) || !std::isfinite(s.bias_ma) || !(s.grid_hardness >= 0.0)
         || !std::isfinite(s.grid_hardness) || s.newton.max_it < 1 || !(s.newton.tol_v >= 0.0) || !(s.newton.tol_f >= 0.0))
@@ -1092,7 +1093,7 @@ public:
     const PostFilter& post_filter() const { return lpf_; }
 
 private:
-    friend struct AdaptiveOsProbe;
+    friend struct AdaptiveOsProbe;  // #148 research access to prepared packs and histories, separate from #115.
 
     Status install(double fs_base, int os, const Pack& p, Lpf lpf, const FirDesign& fir) {
         if (!rs_.prepare(os, fs_base, fir)) return Status::bad_argument;

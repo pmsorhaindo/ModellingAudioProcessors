@@ -29,8 +29,7 @@ struct AdaptiveOsProbe {
 namespace {
 using namespace dk6as6;
 constexpr int block = 64;
-constexpr int factors[] = {16, 32};
-constexpr double overlap_seconds = 0.015;  // same duration as the existing post-filter fade, an experimental choice
+constexpr double fade_seconds = 0.015;  // same duration as the existing post-filter fade, an experimental choice
 constexpr double crossover_ma = 0.35;
 using ResearchStage = StageT<64>;
 static_assert(std::atomic<double>::is_always_lock_free && std::atomic<std::uint8_t>::is_always_lock_free,
@@ -59,8 +58,8 @@ struct Path {
     ResearchStage stage;
     const Pack* current = nullptr;
     int delay = 0;
-    // With k140 the difference is at most one base sample for these factors.
-    double previous = 0.0;
+    // With k140 the 16× path needs one sample of compensation for 32× and two for 64×.
+    std::array<double, 2> history{};
     bool primed = false;
     Stats retired{};
 
@@ -82,19 +81,23 @@ struct Path {
         }
         stage.process(x, y, n);
         if (delay == 0) return;
-        if (!primed) { previous = y[0]; primed = true; }
-        for (int i = 0; i < n; ++i) std::swap(y[i], previous);
+        if (!primed) { history.fill(y[0]); primed = true; }
+        for (int i = 0; i < n; ++i)
+            for (int j = 0; j < delay; ++j) std::swap(y[i], history[j]);
     }
 };
 
-enum class Method { fixed16, fixed32, fade, handoff };
-struct Frame { double output, weight32, dual; };
+enum class Method { fixed16, fixed_high, fade, handoff, long_fade };
+struct Frame { double output, weight_high, dual; };
 struct Command { std::size_t first; const Control* control; int target; };
 
 class Switch {
 public:
-    Switch(double fs, const Control& first, int target, Method method)
-        : samples_(int(std::lround(fs * overlap_seconds))), active_(target), method_(method) {
+    Switch(double fs, const Control& first, int target, int high, Method method, double long_warm)
+        : samples_(int(std::lround(fs * fade_seconds))),
+          warm_samples_(int(std::lround(fs * (method == Method::long_fade ? long_warm : fade_seconds)))),
+          active_(target), method_(method) {
+        const int factors[] = {16, high};
         for (int i = 0; i < 2; ++i) {
             check(paths_[i].stage.prepare_pack(fs, factors[i], first.packs[i], first.settings.lpf));
             paths_[i].current = &first.packs[i];
@@ -102,19 +105,20 @@ public:
         latency = std::max(paths_[0].stage.latency_samples(), paths_[1].stage.latency_samples());
         for (auto& path : paths_) {
             path.delay = latency - path.stage.latency_samples();
-            if (path.delay > 1) throw std::runtime_error("latency difference exceeds the probe's alignment buffer");
+            if (path.delay > int(path.history.size()))
+                throw std::runtime_error("latency difference exceeds the probe's alignment buffer");
         }
         if (method == Method::fixed16) active_ = 0;
-        if (method == Method::fixed32) active_ = 1;
+        if (method == Method::fixed_high) active_ = 1;
     }
 
     // May return early at a warm-up or fade boundary. The caller resumes with the same control.
     int segment(const Command& command, const double* x, Frame* out, int n) noexcept {
-        const bool adaptive = method_ == Method::fade || method_ == Method::handoff;
+        const bool adaptive = method_ != Method::fixed16 && method_ != Method::fixed_high;
         const bool toward_pending = adaptive && command.target != active_;
         if (toward_pending && !pending_) {
             pending_ = true;
-            warm_ = samples_;
+            warm_ = warm_samples_;
             paths_[1 - active_].start(command.control->packs[1 - active_]);
         }
         if (!toward_pending && mix_ == 0) pending_ = false;
@@ -168,7 +172,7 @@ private:
     }
 
     Path paths_[2];
-    int samples_, active_;
+    int samples_, warm_samples_, active_;
     Method method_;
     bool pending_ = false;
     int warm_ = 0, mix_ = 0;
@@ -181,7 +185,8 @@ struct Timeline {
     std::vector<Command> commands;
     std::map<std::pair<double, Mode>, Control> controls;
 
-    Timeline(const std::vector<Input>& input, double fs, Lpf lpf, const GridParams* grid) {
+    Timeline(const std::vector<Input>& input, double fs, Lpf lpf, const GridParams* grid, int high) {
+        const int factors[] = {16, high};
         for (const auto& row : input) {
             if (!std::isfinite(row.bias_ma) || (row.triode != 0 && row.triode != 1) || (row.hq != 0 && row.hq != 1))
                 throw std::runtime_error("invalid control row");
@@ -202,18 +207,19 @@ struct Timeline {
     }
 };
 
-void transition(double fs, Lpf lpf, const GridParams* grid, int reps) {
+void transition(double fs, Lpf lpf, const GridParams* grid, int reps, int high, double long_warm) {
     std::vector<Input> input;
     Input row;
     while (std::cin.read(reinterpret_cast<char*>(&row), sizeof(row))) input.push_back(row);
     if (std::cin.gcount() != 0 || input.empty()) throw std::runtime_error("expected complete input frames");
-    const Timeline timeline(input, fs, lpf, grid);
+    const Timeline timeline(input, fs, lpf, grid, high);
     const auto& commands = timeline.commands;
     const auto& x = timeline.volts;
     std::vector<Frame> out(x.size());
-    for (auto method : {Method::fixed16, Method::fixed32, Method::fade, Method::handoff}) {
+    for (auto method : {Method::fixed16, Method::fixed_high, Method::fade, Method::handoff, Method::long_fade}) {
+        if (method == Method::long_fade && long_warm == 0.0) continue;
         for (int rep = 0; rep < reps; ++rep) {
-            Switch sw(fs, *commands.front().control, commands.front().target, method);
+            Switch sw(fs, *commands.front().control, commands.front().target, high, method, long_warm);
             double single_ns = 0, dual_ns = 0;
             std::size_t dual_samples = 0;
             long allocs;
@@ -246,6 +252,19 @@ void transition(double fs, Lpf lpf, const GridParams* grid, int reps) {
     }
 }
 
+void resample_impulse(double fs, int factor) {
+    ResearchStage::Resampler rs;
+    if (!rs.prepare(factor, fs, DEFAULT_FIR)) throw std::runtime_error("invalid resampler configuration");
+    std::array<double, 64> up{};
+    // Place the impulse after the decimator has been primed with silence.
+    for (int n = 0; n < 512; ++n) {
+        rs.up(n == 32 ? 1.0 : 0.0, up.data());
+        const double down = rs.down(up.data());
+        std::cout.write(reinterpret_cast<const char*>(up.data()), factor * sizeof(double));
+        std::cout.write(reinterpret_cast<const char*>(&down), sizeof(down));
+    }
+}
+
 void steady(double fs, int os, const Settings& settings, const GridParams* grid, int tone) {
     ResearchStage stage;
     Pack p;
@@ -268,18 +287,28 @@ void steady(double fs, int os, const Settings& settings, const GridParams* grid,
 int main(int argc, char** argv) {
     try {
         const std::string action = argc > 1 ? argv[1] : "";
-        if ((action != "transition" || argc != 8) && (action != "steady" || argc != 11))
-            throw std::runtime_error("transition fs lpf gg xi cg reps | steady fs lpf gg xi cg os mode bias tone");
+        if ((action != "transition" || argc != 10) && (action != "steady" || argc != 11) &&
+            (action != "resample-impulse" || argc != 4))
+            throw std::runtime_error("transition fs lpf gg xi cg reps high long_warm | "
+                                     "steady fs lpf gg xi cg os mode bias tone | resample-impulse fs os");
         const double fs = std::stod(argv[2]);
         if (fs != 44100.0 && fs != 48000.0) throw std::runtime_error("use 44100 or 48000 Hz");
+        if (action == "resample-impulse") {
+            resample_impulse(fs, std::stoi(argv[3]));
+            return 0;
+        }
         const Lpf lpf = Lpf(std::stoi(argv[3]));
         if (lpf != Lpf::off && lpf != Lpf::k4 && lpf != Lpf::k7) throw std::runtime_error("invalid filter");
         const GridParams bound{std::stod(argv[4]), std::stod(argv[5]), std::stod(argv[6]), HARDNESS};
         const GridParams* grid = bound.GG == 0.0 ? nullptr : &bound;
         if (action == "transition") {
             const int reps = std::stoi(argv[7]);
-            if (reps < 1) throw std::runtime_error("repetitions must be positive");
-            transition(fs, lpf, grid, reps);
+            const int high = std::stoi(argv[8]);
+            const double long_warm = std::stod(argv[9]);
+            if (reps < 1 || (high != 32 && high != 64) ||
+                !(long_warm == 0.0 || (fade_seconds <= long_warm && long_warm <= 10.0)))
+                throw std::runtime_error("invalid repetition count, high factor or warm-up");
+            transition(fs, lpf, grid, reps, high, long_warm);
         } else {
             Settings settings;
             settings.mode = std::string(argv[8]) == "T" ? Mode::T : Mode::P1;
