@@ -25,7 +25,8 @@ the keys forwarded to the host, the keys the page itself saw, `document.hasFocus
 bundle's factory class. It puts each editor in a plain NSWindow whose content view stands in for the host and counts
 the keys that reach it. Events are synthetic NSEvents sent through `-[NSWindow sendEvent:]`. This tests the
 responder-chain mechanism. It cannot show what a particular DAW does with the keys it gets back. Run on this Mac
-(macOS 15.6, Apple silicon, Retina) on 23 Nov 2026. "yes" means the behaviour held. Mode 3's rows are pass / fail
+(macOS 15.6.1, Apple silicon, Retina) on 23 Nov 2026, universal build: the arm64 slices, and the x86_64 slices under
+Rosetta (`arch -x86_64 map_ui_test --au`), with the same results. "yes" means the behaviour held. Mode 3's rows are pass / fail
 checks.
 
 | check (both formats gave the same result) | mode 0 | mode 1 | mode 2 | mode 3 |
