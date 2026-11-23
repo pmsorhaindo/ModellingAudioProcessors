@@ -10,7 +10,10 @@ Fixed 32× independently fails the stationary rule at T 0.5 mA. With the 4k filt
 misses by 23.47 dB at 44.1 kHz and 17.08 dB at 48 kHz. Both published grid shapes also fail at that
 endpoint. The 16×/32× policy therefore fails the stationary rule even with both lanes fully warm.
 
-The 0.35 mA crossover remains provisional. The experiment lives in a standalone probe and the
+The 16×/64× policy clears the stationary probes through 0.5 mA. A 750 ms warm-up followed by
+the fade cuts the 16×/64× held-sweep residual by about 65 dB. Its low-frequency tail still exceeds
+the short-window diagnostic limit, and the method completes no transfer during the fast automation
+test. The experiments support a negative result for deployment. The 0.35 mA crossover remains provisional. The experiment lives in a standalone probe and the
 product's T range extends to 0.5 mA.
 
 The standalone C++ probe uses the k140 resampler and the current 6AS6 solver. It requests the higher
@@ -158,32 +161,124 @@ any broadband cold-start transient at the probe frequency.
 | 48 kHz | up | 2999 / 8494 | -79.9 / -118.3 | -106.2 / -124.6 | -58.5 / -67.1 | -119.6 / -109.1 |
 | 48 kHz | down | 2999 / 8494 | -78.9 / -144.7 | -85.1 / -102.5 | -36.4 / -45.0 | -119.6 / -109.1 |
 
-### CPU
+### The 16×/64× stationary screen
 
-Apple M1, Apple Clang 17 at `-O2`, one mono channel, max block 64 samples, timing the calling
-thread around each processing segment. Median of three runs of the same 1037 Hz automation
-timeline, including a 100 ms preroll. Times include dispatch to the stage and mixing during overlap,
-and exclude pack preparation and file I/O. The host was under load. Core percentage is the processing time per sample
-divided by the host sample period.
+At the 4k position, the new 64× probes use 19,831 Hz at 44.1 kHz and 19,987 Hz at 48 kHz.
+These are the nominal 32× endpoint stress tones. The 0.5 mA row uses the prior multi-tone screen.
+Cells show the smallest margin across RSD-1, RSD-2 and EHX-1. The low-side 16× results remain
+in the tables above. The positive margins apply to the sampled tones and biases.
 
-| Host | Method | Whole (µs/sample) | One core | × fixed 16 / fixed 32 | Overlap (µs/sample) | One core in overlap |
+| T bias (mA) | 64× at 44.1 kHz (dB) | 64× at 48 kHz (dB) |
+|---:|---:|---:|
+| 0.35 | +26.37 | +35.83 |
+| 0.351 | +26.61 | +35.13 |
+| 0.4 | +31.80 | +27.21 |
+| 0.45 | +24.47 | +24.35 |
+| 0.5 | +16.00 | +20.04 |
+
+### Causal long warm-up and the 16×/64× handoff
+
+The round trips ramp between 0.349 and 0.351 mA in 32 ms and hold each side long enough for the
+750 ms warm-up and the 15 ms fade. That keeps the outgoing 16× lane near the crossover while it
+remains audible. All paths receive the same control timing. Each event window follows the actual
+mix edge, so the late handoff is included. The 16×/32× case uses 1037 Hz with the filter off.
+The 16×/64× tests use the high tones and the 4k filter at both host rates.
+
+The first two level columns are relative to the always-warm mix. **Mix step** is the largest
+rate-only, one-sample term across the entire changing weight. Level and phase are maxima relative
+to the always-warm mix at the edges. The spectrum column is the smallest off-harmonic residual
+margin by the short-window diagnostic. It includes cold-circuit transients and sidebands.
+
+| Host / factors | Direction | Method | Peak residual (dBFS) | First difference (dBFS) | Mix step (dBFS) | Level / phase (dB / °) | Spectrum margin (dB) |
+|---|---|---|---:|---:|---:|---:|---:|
+| 44.1 kHz · 16/32× | up | 15 ms fade | -27.9 | -58.6 | -136.3 | 0.0050 / 0.039 | -71.6 |
+| 44.1 kHz · 16/32× | up | 15 ms handoff | -26.4 | -27.1 | -119.9 | 0.0216 / 0.008 | -73.6 |
+| 44.1 kHz · 16/32× | up | 750 ms fade | -93.5 | -133.3 | -204.3 | 0.0000 / 0.000 | -6.3 |
+| 44.1 kHz · 16/32× | down | 15 ms fade | -27.1 | -57.7 | -137.0 | 0.0046 / 0.049 | -72.5 |
+| 44.1 kHz · 16/32× | down | 15 ms handoff | -25.6 | -26.4 | -120.2 | 0.0270 / 0.010 | -74.5 |
+| 44.1 kHz · 16/32× | down | 750 ms fade | -95.2 | -134.3 | -204.1 | 0.0000 / 0.000 | -4.6 |
+| 44.1 kHz · 16/64× | up | 15 ms fade | -5.3 | -47.7 | -110.7 | 0.0005 / 0.009 | -94.7 |
+| 44.1 kHz · 16/64× | up | 15 ms handoff | -3.8 | -3.8 | -56.1 | 0.0196 / 0.015 | -96.6 |
+| 44.1 kHz · 16/64× | up | 750 ms fade | -69.6 | -114.9 | -112.2 | 0.0000 / 0.000 | -30.3 |
+| 44.1 kHz · 16/64× | down | 15 ms fade | -4.4 | -45.7 | -110.7 | 0.0006 / 0.007 | -95.6 |
+| 44.1 kHz · 16/64× | down | 15 ms handoff | -2.9 | -2.9 | -79.7 | 0.0255 / 0.018 | -97.6 |
+| 44.1 kHz · 16/64× | down | 750 ms fade | -71.1 | -115.7 | -112.3 | 0.0000 / 0.000 | -28.8 |
+| 48 kHz · 16/64× | up | 15 ms fade | -5.2 | -48.0 | -112.2 | 0.0069 / 0.050 | -94.7 |
+| 48 kHz · 16/64× | up | 15 ms handoff | -3.8 | -3.8 | -73.9 | 0.0186 / 0.022 | -96.7 |
+| 48 kHz · 16/64× | up | 750 ms fade | -69.6 | -115.5 | -114.1 | 0.0000 / 0.000 | -30.4 |
+| 48 kHz · 16/64× | down | 15 ms fade | -4.3 | -46.0 | -112.1 | 0.0074 / 0.034 | -95.6 |
+| 48 kHz · 16/64× | down | 15 ms handoff | -2.8 | -2.8 | -59.8 | 0.0262 / 0.012 | -97.6 |
+| 48 kHz · 16/64× | down | 750 ms fade | -71.1 | -116.3 | -114.1 | 0.0000 / 0.000 | -28.8 |
+
+With the 750 ms fade at 16×/64×, all four high-tone edge windows put the worst residual near
+125 Hz. At the tracked fold frequencies, the largest extra component relative to the
+always-warm mix is −148.4 dBFS. The low-frequency residual still drives the negative
+short-window margins, and the fold probes cover only the frequencies listed above.
+
+Carrier-envelope zipper diagnostic over each take, dBFS relative to the always-warm mix. The
+automation row uses the same 9 Hz crossings and 65 Hz reversals as the short-warm experiment.
+
+| Host / factors | Control | 15 ms fade | 15 ms handoff | 750 ms fade |
+|---|---|---:|---:|---:|
+| 44.1 kHz · 16/32× | roundtrip | -73.6 | -64.9 | -139.2 |
+| 44.1 kHz · 16/64× | roundtrip | -105.4 | -67.1 | -175.6 |
+| 48 kHz · 16/64× | roundtrip | -105.7 | -67.6 | -176.8 |
+| 48 kHz · 16/64× | automation | -97.8 | -67.2 | zero |
+
+The 750 ms method began no audible transfer on the 22 fast automation requests.
+Its output matched the fixed 16× lane exactly. A causal 750 ms wait leaves the low-rate lane
+audible at the new bias, which can cross into the measured 16× failure region. A control hold
+near the crossover therefore demonstrates settling but supplies no solution for arbitrary
+automation. The transition diagnostics do not support a production switch. A transferable
+running state would require handling capacitor histories and rate-specific filter histories.
+
+### CPU on the Apple M1
+
+The repeated 16×/32× automation and the new 16×/64× tests use Apple Clang 17 at `-O3`,
+one mono lane, max block 64 and thread CPU time around processing segments. Preparation and
+file I/O are outside the timed regions. Compare within-test ratios under the host load in
+this run. The original `-O2` automation data remain in `cpu.json`.
+
+| Host | Method | Whole (µs/sample) | × fixed 16× | Dual only (µs/sample) |
+|---|---|---:|---:|---:|
+| 44.1 kHz | Fixed 16× | 22.9 | 1.00 | — |
+| 44.1 kHz | Fixed 32× | 43.9 | 1.91 | — |
+| 44.1 kHz | 15 ms fade | 39.0 | 1.70 | 67.9 |
+| 44.1 kHz | 15 ms handoff | 35.3 | 1.54 | 68.7 |
+| 48 kHz | Fixed 16× | 23.0 | 1.00 | — |
+| 48 kHz | Fixed 32× | 45.4 | 1.98 | — |
+| 48 kHz | 15 ms fade | 39.7 | 1.73 | 70.3 |
+| 48 kHz | 15 ms handoff | 35.1 | 1.53 | 68.3 |
+
+The following handoff timings include the common preroll and use one pass per take.
+Each adaptive cell shows whole / dual-only thread microseconds per sample.
+
+| Host / factors | Control | Fixed 16× | Fixed high | 15 ms fade | 15 ms handoff | 750 ms fade |
 |---|---|---:|---:|---:|---:|---:|
-| 44.1 kHz | Fixed 16× | 22.7 | 100% | 1.00 / 0.49 | — | — |
-| 44.1 kHz | Fixed 32× | 46.1 | 203% | 2.03 / 1.00 | — | — |
-| 44.1 kHz | Fade | 40.1 | 177% | 1.77 / 0.87 | 70.0 | 309% |
-| 44.1 kHz | Warm handoff | 35.3 | 156% | 1.56 / 0.77 | 70.0 | 309% |
-| 48 kHz | Fixed 16× | 23.4 | 112% | 1.00 / 0.51 | — | — |
-| 48 kHz | Fixed 32× | 45.5 | 218% | 1.95 / 1.00 | — | — |
-| 48 kHz | Fade | 40.6 | 195% | 1.74 / 0.89 | 71.4 | 343% |
-| 48 kHz | Warm handoff | 35.2 | 169% | 1.51 / 0.77 | 68.3 | 328% |
+| 44.1 kHz · 16/32× | roundtrip | 22.1 | 44.6 | 29.3 / 67.0 | 29.0 / 65.9 | 44.9 / 68.4 |
+| 44.1 kHz · 16/64× | roundtrip | 34.5 | 109.9 | 60.1 / 151.5 | 59.1 / 150.0 | 92.8 / 149.3 |
+| 48 kHz · 16/64× | roundtrip | 33.3 | 106.3 | 58.0 / 143.1 | 57.5 / 140.8 | 89.9 / 145.0 |
+| 48 kHz · 16/64× | automation | 32.9 | 107.8 | 52.7 / 141.4 | 49.0 / 143.2 | 48.5 / 143.0 |
 
-- At 44.1 kHz, dual processing covers 31.0% of the take for the fade and 18.3% for the warm handoff.
-- At 48 kHz, dual processing covers 30.9% of the take for the fade and 18.3% for the warm handoff.
+The fixed-rate cross-check uses the repository's 48 kHz T 0.5 mA, 8 V peak guitar phrase,
+filter off and block 64, with `-O3` and three timed two-second passes. Wall throughput in
+this run includes extensive descheduling. The CPU-on and performance-core cycle fractions
+record that difference. The historical stock 16× run measured 13.4 µs/sample with 93.3%
+CPU-on time and 96.4% of cycles on performance cores. Use that record for absolute time under
+its host conditions. The continuous-tone probe and this run's scheduling both differ from it.
+[Historical M1 benchmark](../cpp/bench_6as6_apple_m1_loaded.json)
+
+| Build / factor | Wall µs/sample | CPU-on fraction | Performance-core cycle fraction |
+|---|---:|---:|---:|
+| stock 16× | 273.8 | 8.7% | 54.4% |
+| extended 16× | 165.3 | 14.9% | 52.6% |
+| extended 32× | 338.4 | 13.7% | 52.5% |
+| extended 64× | 619.9 | 14.6% | 51.7% |
 
 ### Records and verification
 
 The stationary screen has 232 fresh points and 128 pinned #146 summary rows. The switch study
-has 24 driven cases with a WAV for each of four paths. The fixed 16× path above the validated
+has 24 original cases with four WAVs each and four additional cases with five WAVs each. The fixed 16× path above the validated
 range is a diagnostic comparison. The static probe matches the selected continuous rate sample-for-sample
 on the two sides of the threshold. Automation has 22 requests per take, including the fast reversals,
 and each method begins a mix or handoff on eight of them.
@@ -191,10 +286,12 @@ and each method begins a mix or handoff on eight of them.
 There were no solver failures, out-of-law samples or state recoveries in the fresh measurements. The
 transient and CPU runs recorded zero allocations with the repository's allocation hooks. The local
 C++ suites passed 53 tests with 3 skips. A separate ASan/UBSan smoke run covered the automation and
-a 64× stationary render. Exact-zero residuals in the records can appear at the numerical logarithm floor
+a 64× stationary render in round one. The eight focused tests in round two include 32× and 64×
+interpolator and round-trip impulse parity against the Python resampler at both rates, plus the timed
+16×/64× hold and reversal tests. Exact-zero residuals in the records can appear at the numerical logarithm floor
 of −6000 dBFS. The assessment here is numerical. The WAVs are available for audition.
 
-[Stationary records](steady.json) · [Transient records](transient.json) · [CPU records](cpu.json)
+[Stationary records](steady.json) · [Transient records](transient.json) · [Round-one CPU records](cpu.json) · [Review-round measurements](review-round-2.json)
 
 ## Reproduction
 
@@ -206,8 +303,13 @@ cd prototypes/fullstage
 python -m adaptive_os.run steady --workers 4
 python -m adaptive_os.run transient
 python -m adaptive_os.run bench
+python -m adaptive_os.run review-steady --workers 3
+python -m adaptive_os.run review-transient --workers 3
+python -m adaptive_os.run review-fixed-bench
 python -m adaptive_os.run verify
 python -m pytest -q adaptive_os/test_transition.py
 ```
 
-Use `--output` to choose a results directory and `--resume` to reuse completed sweep or render rows from an interrupted run of the same probe. The default writes to the worktree's excluded `.dispatch/issue148` directory. The transient command writes four mono float WAVs per case with the same gain within a case and about 1 dB headroom at the largest peak. Filename components are sample rate, control scenario, stimulus tone and method. Each WAV retains 820 ms starting at the end of the preroll.
+Use `--output` to choose a results directory and `--resume` to reuse completed sweep or render rows from an interrupted run of the same probe. The default writes to the worktree's excluded `.dispatch/issue148` directory. The transient command writes four mono float WAVs per case with the same gain within a case and about 1 dB headroom at the largest peak. Filename components are sample rate, control scenario, stimulus tone and method. Each original WAV retains 820 ms starting at the end of the preroll. The review and bench commands
+default to `.dispatch/issue148/round2`. The review WAVs retain the full 2.15 s held take or 0.85 s
+automation take after the preroll.
