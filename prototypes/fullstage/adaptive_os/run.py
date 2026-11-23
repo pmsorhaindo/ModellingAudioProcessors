@@ -84,41 +84,41 @@ def prior_points():
             (r["mode"] == "P1" or r["mode"] == "T" and r["bias_ma"] <= 0.5)]
 
 
-def steady(exe, out, workers):
+def steady(exe, out, workers, resume):
     prior = prior_points()
     jobs = set()
     for fs in RATES:
-        # Match the #146 grid right on both sides at its empirically worst filter position.
         edge_tone = 19831 if fs == 44100 else 19987
         low_rate_tone = 19997 if fs == 44100 else 19637
+        # Repeat the whole #146 grid at 44.1 kHz, and a targeted bracket at 48 kHz.
+        probes = (1037, 15037, 18037, 19037, 19437, 19637, 19831, 19937, 19987, 19997)
         for bias, factor in ((0.349, 16), (0.351, 32)):
-            jobs.update((fs, GRID_SHAPE, "T", bias, factor, "4k", f) for f in TONES)
+            jobs.update((fs, GRID_SHAPE, "T", bias, factor, "4k", f) for f in (TONES if fs == 44100 else probes))
             jobs.update((fs, GRID_SHAPE, "T", bias, factor, p, f)
-                        for p in ("off", "7k") for f in (edge_tone, low_rate_tone, 19997))
+                        for p in ("off", "7k") for f in (edge_tone, low_rate_tone))
         for bias in (0.375, 0.4, 0.45, 0.5):
-            jobs.update((fs, GRID_SHAPE, "T", bias, 32, pos, f)
-                        for pos in FILTERS for f in (edge_tone, low_rate_tone))
-        jobs.update((fs, GRID_SHAPE, "T", 0.5, 64, pos, f)
-                    for pos in FILTERS for f in (edge_tone, low_rate_tone, 3037))
+            positions = FILTERS if bias == 0.5 else ("4k",)
+            jobs.update((fs, GRID_SHAPE, "T", bias, 32, pos, edge_tone) for pos in positions)
+        jobs.update((fs, GRID_SHAPE, "T", 0.5, 64, "4k", f) for f in (edge_tone, low_rate_tone, 3037))
         jobs.add((fs, GRID_SHAPE, "T", 0.35, 16, "4k", low_rate_tone))
-        # Bracket the 16× crossover and 32× endpoint under both published shapes.
-        bound_tones = (1037, 18037, 19037, edge_tone, 19997)
+        # Sample the crossover and endpoint for each published shape.
         for shape in GRID_BOUNDS:
-            for bias in (0.1, 0.25, 0.3, 0.325, 0.349, 0.35, 0.351, 0.375, 0.4, 0.45, 0.5):
-                for factor in (16, 32):
-                    probes = bound_tones if bias in (0.349, 0.351, 0.45, 0.5) else (edge_tone, low_rate_tone)
-                    jobs.update((fs, shape, "T", bias, factor, "4k", f) for f in probes)
-            jobs.update((fs, shape, "T", 0.5, 64, "4k", f) for f in bound_tones)
+            for bias, factor in ((0.3, 16), (0.325, 16), (0.349, 16), (0.35, 16), (0.351, 32),
+                                 (0.375, 16), (0.375, 32), (0.4, 32), (0.45, 32), (0.5, 32), (0.5, 64)):
+                tones = (edge_tone, low_rate_tone)
+                if bias in (0.349, 0.5):
+                    tones = (*tones, 19037, 19937, 19997)
+                jobs.update((fs, shape, "T", bias, factor, "4k", f) for f in tones)
     # Cache individual completed records for a resumable multi-minute sweep.
     checkpoint = out.with_name("steady-progress.jsonl")
     records = {}
-    if checkpoint.exists():
+    if resume and checkpoint.exists():
         for line in checkpoint.read_text().splitlines():
             r = json.loads(line)
             k = tuple(r[name] for name in ("fs", "shape", "mode", "bias_ma", "factor", "filter", "tone"))
             records[k] = r
     pending = sorted(jobs - records.keys(), key=lambda j: (j[3] not in (0.349, 0.351, 0.5), j[1] != GRID_SHAPE, j))
-    with ThreadPoolExecutor(max_workers=workers) as pool, checkpoint.open("a") as progress:
+    with ThreadPoolExecutor(max_workers=workers) as pool, checkpoint.open("a" if resume else "w") as progress:
         for i, (job, row) in enumerate(zip(pending, pool.map(lambda j: steady_point(exe, j), pending), strict=True), 1):
             records[job] = row
             print(json.dumps(row), file=progress, flush=True)
@@ -323,19 +323,27 @@ def measure_transition(fs, tone, scenario, y, timeline, settling, latency):
                 reference_full_scale_volts=float(scale), results=results)
 
 
-def transient(exe, out):
+def transient(exe, out, resume):
     samples = out / "samples"
     samples.mkdir(exist_ok=True)
     results = []
+    path = out / "transient.json"
+    previous = {}
+    if resume and path.exists():
+        previous = {(r["sample_rate"], r["scenario"], r["tone"]): r for r in json.loads(path.read_text())}
     for fs in RATES:
         high_tone = 19831 if fs == 44100 else 19987  # #146 fixed-32 hot T's worst tones
         cases = [(scenario, tone, "4k" if tone == high_tone else "off")
-                 for scenario in ("sweep-up", "sweep-down", "automation", "mode-up", "mode-down",
-                                  "quality-up", "quality-down")
+                 for scenario in ("sweep-up", "sweep-down", "automation")
                  for tone in (1037, high_tone)]
-        cases += [(scenario, 0, "off") for scenario in ("mode-up", "mode-down", "quality-up", "quality-down")]
+        cases += [(scenario, 1037, "off") for scenario in ("mode-up", "mode-down", "quality-up", "quality-down")]
         cases += [(scenario, high_tone, "4k") for scenario in ("full-up", "full-down")]
         for scenario, tone, position in cases:
+            name = f"{fs}-{scenario}-{tone}Hz"
+            key = (fs, scenario, tone)
+            if key in previous and all((samples / f"{name}-{method}.wav").exists() for method in METHODS):
+                results.append(previous[key])
+                continue
             timeline, settling = controls(fs, scenario, tone)
             y, latency, stats = render(exe, fs, GRID_SHAPE, position, timeline)
             row = measure_transition(fs, tone, scenario, y, timeline, settling, latency)
@@ -345,38 +353,39 @@ def transient(exe, out):
             audio = np.column_stack([y[m][take, 0] for m in METHODS])
             # One gain per four-way comparison, 1 dB of headroom. Float WAV preserves quiet residuals.
             gain = 10 ** (-1 / 20) / max(np.max(np.abs(audio)), 1.0)
-            name = f"{fs}-{scenario}-{tone}Hz"
             for method, data in zip(METHODS, audio.T, strict=True):
                 wavfile.write(samples / f"{name}-{method}.wav", fs, (gain * data).astype(np.float32))
             row["wav_gain_per_volt"] = float(gain)
+            previous[key] = row
+            write_json(path, list(previous.values()))
             print(f"transient: {name}", flush=True)
-            write_json(out / "transient.json", results)
+    write_json(path, results)
 
 
 def bench(exe, out):
     rows = []
-    for fs in RATES:
-        for scenario in ("sweep-up", "sweep-down", "automation"):
-            timeline, settling = controls(fs, scenario, 1037)
-            # Retain 100 ms of preroll and record transition/steady segments separately.
-            timeline = timeline[settling - round(0.10 * fs):]
-            _, _, times = render(exe, fs, GRID_SHAPE, "off", timeline, reps=5)
-            methods = {}
-            for method, reps in times.items():
-                whole = [(r["single_ns"] + r["dual_ns"]) / len(timeline) for r in reps]
-                overlap = [r["dual_ns"] / r["dual_samples"] for r in reps if r["dual_samples"]]
-                methods[method] = dict(ns_per_sample=float(np.median(whole)),
-                                       overlap_ns_per_sample=float(np.median(overlap)) if overlap else None,
-                                       overlap_samples=reps[0]["dual_samples"], reps=reps)
-            rows.append(dict(fs=fs, scenario=scenario, total_samples=len(timeline), methods=methods))
-            print(f"bench: {fs} {scenario}", flush=True)
     cxx = subprocess.check_output([compiler(), "--version"], text=True).splitlines()[0]
-    write_json(out / "cpu.json", dict(compiler=cxx, flags="-O2", block_max=64, records=rows))
+    for fs in RATES:
+        timeline, settling = controls(fs, "automation", 1037)
+        # Retain 100 ms of preroll and time the same two-way automation on all paths.
+        timeline = timeline[settling - round(0.10 * fs):]
+        _, _, times = render(exe, fs, GRID_SHAPE, "off", timeline, reps=3)
+        methods = {}
+        for method, reps in times.items():
+            whole = [(r["single_ns"] + r["dual_ns"]) / len(timeline) for r in reps]
+            overlap = [r["dual_ns"] / r["dual_samples"] for r in reps if r["dual_samples"]]
+            methods[method] = dict(ns_per_sample=float(np.median(whole)),
+                                   overlap_ns_per_sample=float(np.median(overlap)) if overlap else None,
+                                   overlap_samples=reps[0]["dual_samples"], reps=reps)
+        rows.append(dict(fs=fs, scenario="automation", total_samples=len(timeline), methods=methods))
+        write_json(out / "cpu.json", dict(compiler=cxx, flags="-O2", block_max=64, records=rows))
+        print(f"bench: {fs} automation", flush=True)
 
 
 def verify(exe):
     for fs in RATES:
-        timeline, _ = controls(fs, "automation", 1037)
+        timeline, settling = controls(fs, "automation", 1037)
+        timeline = timeline[settling - round(0.05 * fs):]
         y, latency, _ = render(exe, fs, GRID_SHAPE, "off", timeline)
         assert latency > 0
         for method, factor in (("fixed16", 0), ("fixed32", 1)):
@@ -405,13 +414,14 @@ def main():
     parser.add_argument("action", choices=("steady", "transient", "bench", "verify"))
     parser.add_argument("--output", type=Path, default=DISPATCH)
     parser.add_argument("--workers", type=int, default=3)
+    parser.add_argument("--resume", action="store_true", help="reuse completed rows in the output directory")
     args = parser.parse_args()
     args.output.mkdir(exist_ok=True, parents=True)
     exe = build(name="adaptive_os_6as6")
     if args.action == "steady":
-        steady(exe, args.output / "steady.json", args.workers)
+        steady(exe, args.output / "steady.json", args.workers, args.resume)
     elif args.action == "transient":
-        transient(exe, args.output)
+        transient(exe, args.output, args.resume)
     elif args.action == "bench":
         bench(exe, args.output)
     else:

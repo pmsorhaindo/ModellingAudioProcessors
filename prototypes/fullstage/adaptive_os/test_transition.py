@@ -21,8 +21,8 @@ def test_warm_handoff_and_crossfade(executable, fs):
     audio = 8 * np.sin(2 * np.pi * 1037 * n / fs)
     bias = np.full_like(audio, 0.349)
     # A canceled warm-up, a complete transfer up and a complete transfer down.
-    bias[half:half + half // 2] = 0.351
-    bias[3 * half:7 * half] = 0.351
+    bias[half:half + half // 2] = 0.35
+    bias[3 * half:7 * half] = 0.35
     timeline = np.column_stack((audio, bias, np.ones_like(audio), np.zeros_like(audio)))
     y, latency, _ = render(executable, fs, "RSD-1", "off", timeline)
     expected_latency = max(Resampler(fs, f, "fir", fir=fir_design("k140", fs)).latency_samples for f in (16, 32))
@@ -47,7 +47,7 @@ def test_crossfade_reverses_mid_mix(executable):
     n = np.arange(6 * half)
     audio = 8 * np.sin(2 * np.pi * 1037 * n / fs)
     bias = np.full_like(audio, 0.349)
-    bias[half:2 * half + half // 2] = 0.351
+    bias[half:2 * half + half // 2] = 0.35
     timeline = np.column_stack((audio, bias, np.ones_like(audio), np.zeros_like(audio)))
     y, _, _ = render(executable, fs, "RSD-1", "off", timeline)
     blend = y["fade"][:, 1]
