@@ -5,6 +5,7 @@
 #ifndef MAP_PARAMS_H
 #define MAP_PARAMS_H
 
+#include <cmath>
 #include <cstdint>
 
 namespace mapvs {
@@ -46,6 +47,31 @@ inline double to_norm(const Range& r, double plain) { return clamp01((plain - r.
 inline int clamp_quality(int q) { return q < 0 ? 0 : (q >= kNumQualities ? kNumQualities - 1 : q); }
 inline int quality_from_norm(double norm) { return clamp_quality(int(clamp01(norm) * (kNumQualities - 1) + 0.5)); }
 inline double quality_to_norm(int q) { return double(clamp_quality(q)) / double(kNumQualities - 1); }
+
+/* Plain value <-> normalized, per parameter: the AU's values are plain (Drive x, Bias x Rk, Output x, Quality index,
+ * Bypass 0 / 1), the VST 3 ones normalized. The web editor works in normalized values for both (#105). */
+inline double param_to_plain(std::uint32_t id, double norm) {
+    if (!std::isfinite(norm)) norm = 0.0;
+    switch (id) {
+    case kDrive: return to_plain(kDriveRange, norm);
+    case kBias: return to_plain(kBiasRange, norm);
+    case kOutput: return to_plain(kOutputRange, norm);
+    case kQuality: return double(quality_from_norm(norm));
+    case kBypass: return clamp01(norm) >= 0.5 ? 1.0 : 0.0;
+    default: return 0.0;
+    }
+}
+inline double param_to_norm(std::uint32_t id, double plain) {
+    if (!std::isfinite(plain)) return 0.0;      // NaN / Inf from a host: never passed on (int() of NaN is UB)
+    switch (id) {
+    case kDrive: return to_norm(kDriveRange, plain);
+    case kBias: return to_norm(kBiasRange, plain);
+    case kOutput: return to_norm(kOutputRange, plain);
+    case kQuality: return quality_to_norm(int(plain + 0.5));
+    case kBypass: return plain >= 0.5 ? 1.0 : 0.0;
+    default: return 0.0;
+    }
+}
 
 /* VST 3 state layout (processor getState / setState, controller setComponentState): int32 kStateVersion, then the
  * kNumParams normalized values as doubles, in ParamID order, little endian (IBStreamer). */

@@ -4,7 +4,9 @@ The first loadable plugin. It wraps `dkcore::StereoStage` from
 [`prototypes/fullstage/cpp/dk_core.h`](../prototypes/fullstage/cpp/dk_core.h): the validated 12AX7
 common-cathode stage, #75 option A. The wrapper is a thin one of our own, written directly against the Steinberg
 VST® 3 SDK and Apple's AudioUnitSDK ([licensing plan](../docs/licensing-and-wrapper-plan.md), section 6). It does not
-use iPlug2, JUCE, VSTGUI or Steinberg's AUWrapper. The host shows its generic parameter UI; there is no custom GUI.
+use iPlug2, JUCE, VSTGUI or Steinberg's AUWrapper. The editor (#105, in progress) is a web page in a system
+WKWebView, through Tracktion's header-only CHOC `WebView` (ISC), hosted in our own VST 3 `IPlugView` and AU Cocoa view;
+see [Editor](#editor-105). For now the page is the #105 keyboard-focus spike.
 Nothing is notarised or published, and no signing identity is used. The only signatures are ad-hoc, with no
 identity: the linker's automatic one on both binaries, and the VST 3 SDK's post-build `codesign --sign -` of the
 .vst3 bundle (its "Adhoc codesign workaround for Xcode 15" in `smtg_add_vst3plugin`). The AU is not signed
@@ -25,6 +27,10 @@ these, so a renamed plugin looks like a new plugin to them, and old sessions wil
 | `src/vst3/map_vst3.cpp` | VST 3 processor, controller and factory |
 | `src/au/map_au.cpp` | AU v2 effect (`ausdk::AUEffectBase`) |
 | `src/*/Info.plist.in` | bundle plists, filled from `map_identity.h` |
+| `src/ui/map_webui.{h,mm}` | the web editor both formats share: choc WebView in an NSView, page served from memory, the JS bridge, the key-focus policy (#105) |
+| `src/au/map_au_view.mm` | the AU's Cocoa view factory (`kAudioUnitProperty_CocoaUI`) and view; parameters through the AudioUnit API |
+| `ui/` | the page files, compiled in by `cmake/embed_resources.cmake` (now `ui/spike/`: the key-focus spike page) |
+| `tests/ui_test.mm` | both editors in a test window: page load, parameter bridge both ways, NaN / out-of-range from the page, resize, key focus per mitigation mode, open / close ×20 with dealloc checks |
 | `tests/smoothing_test.cpp` | #73: full-range Drive / Output / Bias moves during a sine and silence (worst step vs a continuous reference, stated limits), block sizes 16 / 64 / 512, the Drive ramp vs aliasing ([results](../prototypes/fullstage/cpp/RESULTS-smoothing.md)) |
 | `tests/engine_test.cpp` | engine tests: exact null vs the core (3 qualities × 44.1 / 48 / 96 kHz, stereo and mono), no allocation in `process()`, bypass, live quality / bias switch, NaN input |
 | `tests/null_vst3.cpp`, `tests/null_au.cpp` | offline renders **through the built plugins** (VST 3 hosting classes; AudioComponent API), compared to the direct core |
@@ -49,6 +55,32 @@ plugin/tests/run_checks.sh plugin/build --au     # + installs the AU to ~/Librar
 - The VST 3 SDK's `SMTG_CREATE_PLUGIN_LINK` and its post-build validator run are off. The build does not touch
   `~/Library/Audio/Plug-Ins`; only `run_checks.sh --au` copies the AU there.
 - `dk_core.h` must not be built with `-ffast-math` (it `#error`s).
+
+## Editor (#105)
+
+Michael's choice (22 Nov 2026): a WebView with CHOC first, VSTGUI as the fallback. Status: **keyboard-focus spike**,
+the go / no-go step before the full UI. The page (`ui/spike/index.html`) has a Drive knob, a Bypass button, a text
+field, the focus-mode selector and diagnostics. Results and the DAW checklist: [ui/FOCUS_SPIKE.md](ui/FOCUS_SPIKE.md).
+
+- **Shared code.** `src/ui/map_webui.mm` builds one NSView with the WKWebView in it. The VST 3 `IPlugView` adds it to
+  the host's parent view; the AU factory returns it inside its own view. The page is served from memory through
+  choc's `fetchResource` under a private `gyre://` scheme (no `file://`), and may not navigate anywhere else.
+- **Parameters.** Page edits are host edits: VST 3 `beginEdit` / `performEdit` / `endEdit`; AU begin / end gesture
+  events and `AUParameterSet`. Values from the page that are NaN or outside [0, 1] are dropped. Host automation and
+  state recall reach the page through `WebEditor::set_param` (relaxed atomics and a dirty mask, any thread), which a
+  ~30 Hz main-thread timer sends to the page as one `evaluateJavascript` call. The UI never touches the engine.
+- **Key focus.** A focused WKWebView swallows the host's keys (reproduced by `map_ui_test` in mode 0: the space bar
+  and letter keys after a knob drag, and Cmd-Z). The editor adds three mitigations, cumulative, selectable in the
+  spike page; mode 3 (all three) is the default: (a) keys go to the next responder unless a page text input has focus,
+  and Cmd shortcuts are left to the host's menus; (b) the web view refuses first responder on clicks, and the first
+  click acts; (c) it takes key focus only while a page text input has focus, and hands it back on blur (Esc, a click
+  elsewhere in the page or in the host).
+- **Objective-C names.** The AU's view classes carry a per-build suffix (`MAP_OBJC_SUFFIX`: version + a token drawn at
+  configure time), so two builds in one host process cannot collide. choc names its own runtime classes uniquely.
+- **Size.** 760 × 400 points for the spike; VST 3 hosts may resize it between 75 % and 200 %
+  (`checkSizeConstraint`), and the page can ask for a size (`IPlugFrame::resizeView`, AU view frame). HiDPI is the
+  WKWebView's own (devicePixelRatio 2 on a Retina display).
+- Right-click › Inspect Element opens Safari's inspector on the page (v0.1 test builds).
 
 ## Parameters
 
