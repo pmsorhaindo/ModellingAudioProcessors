@@ -874,14 +874,15 @@ struct Settings {
 
 /* Build a pack at internal rate fs (stage.Stage.__init__ minus the resampler): Rk for the target current, the matrices
  * at fs, the DC operating point at that Rk, and the deviation form's rest constants. Non-RT, no allocation. */
-inline Status build_pack(Pack& out, double fs, const Settings& s) {
+namespace detail {
+inline Status build_pack_with_grid(Pack& out, double fs, const Settings& s, const GridParams* g) {
     if (!(fs > 0.0) || !std::isfinite(fs) || !(s.bias_ma > 0.0) || !std::isfinite(s.bias_ma) || !(s.grid_hardness >= 0.0)
         || !std::isfinite(s.grid_hardness) || s.newton.max_it < 1 || !(s.newton.tol_v >= 0.0) || !(s.newton.tol_f >= 0.0))
         return Status::bad_argument;
     Pack c{};
     c.fs = fs; c.bias_ma = s.bias_ma; c.mode = s.mode; c.par = s.par; c.newton = s.newton;
     c.grid = s.grid_hardness != 0.0;
-    c.g = grid(s.grid_hardness, s.par);
+    c.g = g ? *g : grid(s.grid_hardness, s.par);
     c.supported = supported(s.mode, s.bias_ma, s.grid_hardness);
     if (!c.supported && !s.experimental) return Status::unsupported_setting;
     Status st = cathode_resistor(s.bias_ma, s.par, s.newton, s.mode, c.grid, c.g, s.values, c.rk);
@@ -918,6 +919,11 @@ inline Status build_pack(Pack& out, double fs, const Settings& s) {
     }
     out = c;
     return Status::ok;
+}
+}  // namespace detail
+
+inline Status build_pack(Pack& out, double fs, const Settings& s) {
+    return detail::build_pack_with_grid(out, fs, s, nullptr);
 }
 
 // ---- the post-distortion low-pass (lpf.SVF, lpf.PostFilter) --------------------------------------------------------
@@ -1011,9 +1017,9 @@ struct Stats {                            // audio-thread side; since reset()
 struct Record { double* vgk = nullptr; double* vg2k = nullptr; double* vak = nullptr; double* ig1 = nullptr;
                 double* ipk = nullptr; std::uint16_t* it = nullptr; };
 
-class Stage {
+template <int MaxOs> class StageT {
 public:
-    using Resampler = dkcore::ResamplerT<double, dkcore::K140_FIRST_MAX_TAPS, dkcore::K140_LATER_TAPS>;
+    using Resampler = dkcore::ResamplerT<double, dkcore::K140_FIRST_MAX_TAPS, dkcore::K140_LATER_TAPS, MaxOs>;
     static_assert(dkcore::K140_FIRST_MAX_TAPS >= dkcore::FIR_MAX_TAPS && dkcore::K140_LATER_TAPS >= dkcore::FIR_LATER_TAPS,
                   "the stage's resampler holds both designs");
 
@@ -1086,6 +1092,8 @@ public:
     const PostFilter& post_filter() const { return lpf_; }
 
 private:
+    friend struct AdaptiveOsProbe;
+
     Status install(double fs_base, int os, const Pack& p, Lpf lpf, const FirDesign& fir) {
         if (!rs_.prepare(os, fs_base, fir)) return Status::bad_argument;
         if (!lpf_.prepare(p.fs, lpf)) return Status::bad_argument;
@@ -1164,7 +1172,7 @@ private:
     }
 
     template <bool GRID, class S> void run(const S* in, S* out, std::size_t n, double drive, double og, const Record* rec) noexcept {
-        double u[dkcore::MAX_OS], y[dkcore::MAX_OS];
+        double u[MaxOs], y[MaxOs];
         const int os = rs_.os();
         for (std::size_t i = 0; i < n; ++i) {
             double x = drive * double(in[i]);            // checked after the gain: a finite sample times a gain can overflow
@@ -1219,6 +1227,7 @@ private:
     std::atomic<double> drive_{1.0}, output_{1.0};
     std::atomic<std::uint8_t> lpf_req_{0};
 };
+using Stage = StageT<dkcore::MAX_OS>;
 
 }  // namespace dk6as6
 #endif
