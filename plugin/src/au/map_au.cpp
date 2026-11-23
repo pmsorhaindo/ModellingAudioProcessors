@@ -1,6 +1,7 @@
 /* map_au.cpp -- AUv2 effect for the DK stage (#22), built directly against Apple's AudioUnitSDK (Apache-2.0).
  *
- * Thin glue over mapvs::Engine (../map_engine.h). Generic host UI only (no Cocoa view).
+ * Thin glue over mapvs::Engine (../map_engine.h). The editor is a Cocoa view (kAudioUnitProperty_CocoaUI, factory in
+ * map_au_view.mm, #105) around the shared web editor; it talks to the AU only through the AudioUnit parameter API.
  *   Initialize / Cleanup   engine prepare / release (non-RT; the host does not render meanwhile)
  *   Reset                  engine.request_reset(), honoured by the audio thread at its next block (not while
  *                          host-bypassed: see Reset)
@@ -85,6 +86,33 @@ public:
     }
     Float64 GetTailTime() AUSDK_RTSAFE override { return kTailSeconds; }
     bool SupportsTail() AUSDK_RTSAFE override { return true; }
+
+    // ---- Cocoa view (#105) ------------------------------------------------------------------------------------
+    OSStatus GetPropertyInfo(AudioUnitPropertyID id, AudioUnitScope scope, AudioUnitElement element, UInt32& size,
+                             bool& writable) override {
+        if (id == kAudioUnitProperty_CocoaUI && scope == kAudioUnitScope_Global) {
+            size = sizeof(AudioUnitCocoaViewInfo);
+            writable = false;
+            return noErr;
+        }
+        return Base::GetPropertyInfo(id, scope, element, size, writable);
+    }
+    OSStatus GetProperty(AudioUnitPropertyID id, AudioUnitScope scope, AudioUnitElement element, void* data) override {
+        if (id == kAudioUnitProperty_CocoaUI && scope == kAudioUnitScope_Global) {
+            // the host releases both references
+            CFBundleRef bundle = CFBundleGetBundleWithIdentifier(CFSTR(MAP_AU_BUNDLE_ID));
+            if (!bundle) return kAudioUnitErr_InvalidProperty;
+            CFURLRef url = CFBundleCopyBundleURL(bundle);
+            if (!url) return kAudioUnitErr_InvalidProperty;
+            AudioUnitCocoaViewInfo info{};
+            info.mCocoaAUViewBundleLocation = url;
+            info.mCocoaAUViewClass[0] = CFStringCreateWithCString(kCFAllocatorDefault, MAP_AU_VIEW_FACTORY_NAME,
+                                                                  kCFStringEncodingUTF8);
+            *static_cast<AudioUnitCocoaViewInfo*>(data) = info;
+            return noErr;
+        }
+        return Base::GetProperty(id, scope, element, data);
+    }
 
     // ---- parameters ------------------------------------------------------------------------------------------
     OSStatus GetParameterInfo(AudioUnitScope scope, AudioUnitParameterID id, AudioUnitParameterInfo& info) override {

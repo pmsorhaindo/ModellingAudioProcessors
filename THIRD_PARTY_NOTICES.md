@@ -2,8 +2,8 @@
 
 This repository's own code is MIT-licensed ([LICENSE](LICENSE)), except the adapted SciPy source listed below, which
 keeps SciPy's BSD licence. The plugin wrapper in [plugin/](plugin/) builds
-against the two SDKs below. Neither is vendored into this repository. CMake fetches each one at a pinned tag when the
-build is configured ([plugin/CMakeLists.txt](plugin/CMakeLists.txt)). Their files keep their own licences. Our
+against the two SDKs below, and its editor uses the CHOC headers below. None of them is vendored into this repository. CMake fetches each one at a pinned tag or commit when
+the build is configured ([plugin/CMakeLists.txt](plugin/CMakeLists.txt)). Their files keep their own licences. Our
 `LICENSE` does not relicense them. Any distributed binary must carry these notices and the licence texts (see
 [docs/licensing-and-wrapper-plan.md](docs/licensing-and-wrapper-plan.md), section 3.3). Nothing is distributed yet.
 
@@ -31,6 +31,30 @@ VST is a registered trademark of Steinberg Media Technologies GmbH.
 
 > This product includes Apple's AudioUnitSDK, Copyright (C) 2023 Apple Inc., licensed under the Apache License,
 > Version 2.0 (https://github.com/apple/AudioUnitSDK/blob/AudioUnitSDK-1.4.0/LICENSE.txt).
+
+## CHOC (Tracktion), the web editor's WebView (#105)
+
+- Version: commit `8af031c2ba4f5723f4b0a5ca14e0b4984af15b0e` (main, 23 Oct 2026), fetched by CMake. Header-only.
+  The plugin compiles `choc/gui/choc_WebView.h` and the headers it includes (on macOS: `platform/choc_Platform.h`,
+  `choc_Assert.h`, `choc_ObjectiveCHelpers.h`; `text/choc_JSON.h`, `choc_StringUtilities.h`, `choc_UTF8.h`,
+  `choc_FloatToString.h`; `containers/choc_Value.h`; `math/choc_MathHelpers.h`). On macOS the WebView is the system's WKWebView (WebKit framework); no browser
+  engine is bundled. The Windows-only code in that header (which embeds Microsoft's WebView2 loader, under its own
+  licence) is not compiled on macOS.
+- Licence: ISC, <https://github.com/Tracktion/choc/blob/8af031c2ba4f5723f4b0a5ca14e0b4984af15b0e/LICENSE.md>,
+  reproduced here as it requires ("the above copyright notice and this permission notice appear in all copies"):
+
+```
+Copyright (c) 2025 Tracktion Corporation
+
+Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby
+granted, provided that the above copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN
+AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+```
 
 ## SciPy (adapted source: Brent's root finder)
 

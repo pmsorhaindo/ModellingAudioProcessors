@@ -68,7 +68,16 @@ FetchContent_Declare(audiounitsdk
     GIT_PROGRESS FALSE
     SOURCE_SUBDIR do-not-add-automatically
 )
-FetchContent_MakeAvailable(vst3sdk audiounitsdk)
+# CHOC (ISC, Tracktion), pinned by commit (main, 23 Oct 2026). Header-only; we include choc/gui/choc_WebView.h and the
+# few headers it pulls in (THIRD_PARTY_NOTICES.md lists them). Fetched, not vendored, like the SDKs. A full clone at
+# a commit (FetchContent cannot shallow-fetch a SHA): about 15 MB.
+FetchContent_Declare(choc
+    GIT_REPOSITORY https://github.com/Tracktion/choc.git
+    GIT_TAG 8af031c2ba4f5723f4b0a5ca14e0b4984af15b0e
+    GIT_PROGRESS FALSE
+    SOURCE_SUBDIR do-not-add-automatically
+)
+FetchContent_MakeAvailable(vst3sdk audiounitsdk choc)
 
 # ---- VST 3 SDK: libraries, the validator and moduleinfotool; no examples, no VSTGUI ---------------------------
 set(SMTG_ENABLE_VST3_PLUGIN_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -111,9 +120,39 @@ target_compile_options(map_engine PRIVATE -Wall -Wextra)
 find_package(Threads REQUIRED)
 target_link_libraries(map_engine PUBLIC Threads::Threads)
 
+# ---- web editor (#105): choc WebView + the page files, shared by both formats ---------------------------------
+# The page is served from memory (choc fetchResource), so the files under ui/ are compiled in: no file:// URLs and no
+# bundle resources to find at run time.
+set(MAP_UI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ui/spike")
+set(MAP_UI_FILES index.html)
+set(_ui_deps "")
+foreach(_f IN LISTS MAP_UI_FILES)
+    list(APPEND _ui_deps "${MAP_UI_DIR}/${_f}")
+endforeach()
+set(MAP_UI_RESOURCES_CPP "${CMAKE_CURRENT_BINARY_DIR}/generated/map_ui_resources.cpp")
+add_custom_command(OUTPUT "${MAP_UI_RESOURCES_CPP}"
+    COMMAND "${CMAKE_COMMAND}" -DROOT=${MAP_UI_DIR} -DOUT=${MAP_UI_RESOURCES_CPP} "-DFILES=${MAP_UI_FILES}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_resources.cmake"
+    DEPENDS ${_ui_deps} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_resources.cmake"
+    COMMENT "Embedding the web editor page")
+add_library(map_webui STATIC src/ui/map_webui.mm src/ui/map_webui.h "${MAP_UI_RESOURCES_CPP}")
+target_include_directories(map_webui PUBLIC src/ui PRIVATE "${choc_SOURCE_DIR}")
+target_compile_features(map_webui PUBLIC cxx_std_17)
+# manual reference counting (the code releases what it retains); choc's ObjC helpers work either way
+target_compile_options(map_webui PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fno-objc-arc>)
+set_target_properties(map_webui PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden
+    OBJCXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+target_link_libraries(map_webui PUBLIC "-framework Cocoa" "-framework WebKit")
+
+# Objective-C class names must be unique per build (map_au_view.mm): version + a token drawn at configure time.
+string(REPLACE "." "_" _map_ver_ "${MAP_VERSION_STRING}")
+string(RANDOM LENGTH 8 ALPHABET "abcdefghijklmnopqrstuvwxyz0123456789" _map_tok)
+set(MAP_OBJC_SUFFIX "_${_map_ver_}_${_map_tok}")
+message(STATUS "[MAP] Objective-C class suffix: ${MAP_OBJC_SUFFIX}")
+
 # ---- VST 3 ----------------------------------------------------------------------------------------------------
 smtg_add_vst3plugin(map_vst3 PACKAGE_NAME "${MAP_BUNDLE_FILE}" SOURCES_LIST src/vst3/map_vst3.cpp)
-target_link_libraries(map_vst3 PRIVATE sdk map_engine)
+target_link_libraries(map_vst3 PRIVATE sdk map_engine map_webui)
 target_compile_features(map_vst3 PRIVATE cxx_std_17)
 smtg_target_set_bundle(map_vst3 BUNDLE_IDENTIFIER "${MAP_VST3_BUNDLE_ID}" COMPANY_NAME "${MAP_VENDOR_NAME}")
 # The SDK helper only fills the plist under the Xcode generator; set ours (from map_identity.h) for every generator.
@@ -129,10 +168,14 @@ set_target_properties(map_ausdk PROPERTIES CXX_EXTENSIONS OFF POSITION_INDEPENDE
 
 set(MAP_AU_EXECUTABLE "${MAP_BUNDLE_FILE}")
 configure_file(src/au/Info.plist.in "${CMAKE_CURRENT_BINARY_DIR}/generated/au-Info.plist" @ONLY)
-add_library(map_au MODULE src/au/map_au.cpp)
-target_link_libraries(map_au PRIVATE map_ausdk map_engine
+add_library(map_au MODULE src/au/map_au.cpp src/au/map_au_view.mm)
+target_link_libraries(map_au PRIVATE map_ausdk map_engine map_webui
     "-framework AudioToolbox" "-framework CoreAudio" "-framework CoreFoundation" "-framework AudioUnit")
 target_compile_features(map_au PRIVATE cxx_std_23)
+target_compile_options(map_au PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fno-objc-arc>)
+# the Cocoa view factory's class name, also returned by kAudioUnitProperty_CocoaUI (map_au.cpp)
+target_compile_definitions(map_au PRIVATE MAP_OBJC_SUFFIX=${MAP_OBJC_SUFFIX}
+    MAP_AU_VIEW_FACTORY_NAME="GyreAUViewFactory${MAP_OBJC_SUFFIX}")
 set_target_properties(map_au PROPERTIES
     BUNDLE TRUE
     BUNDLE_EXTENSION component
@@ -171,8 +214,22 @@ get_target_property(MAP_VST3_PACKAGE map_vst3 SMTG_PLUGIN_PACKAGE_PATH)
 target_compile_definitions(map_null_vst3 PRIVATE MAP_TEST_VST3_PATH="${MAP_VST3_PACKAGE}")
 add_dependencies(map_null_vst3 map_vst3)
 
+# #105: the web editors of both built plugins in a test window (key focus, parameter bridge, resize, open / close)
+add_executable(map_ui_test tests/ui_test.mm
+    "${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/plugprovider.cpp"
+    "${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/module_mac.mm")
+set_source_files_properties(tests/ui_test.mm PROPERTIES COMPILE_FLAGS "-fno-objc-arc")
+set_source_files_properties("${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/module_mac.mm"
+    PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+target_include_directories(map_ui_test PRIVATE src)
+target_link_libraries(map_ui_test PRIVATE sdk_hosting "-framework Cocoa" "-framework WebKit" "-framework AudioToolbox"
+    "-framework CoreFoundation" "-framework Foundation")
+target_compile_features(map_ui_test PRIVATE cxx_std_17)
+target_compile_definitions(map_ui_test PRIVATE MAP_TEST_VST3_PATH="${MAP_VST3_PACKAGE}")
+add_dependencies(map_ui_test map_vst3 map_au)
+
 # the validator is EXCLUDE_FROM_ALL with the SDK; build it with the default target
 add_custom_target(map_all ALL DEPENDS map_vst3 map_au validator map_engine_test map_smoothing_test map_null_au
-    map_null_vst3)
+    map_null_vst3 map_ui_test)
 message(STATUS "[MAP] VST 3 bundle: ${MAP_VST3_PACKAGE}")
 message(STATUS "[MAP] AU bundle:    ${MAP_AU_BUNDLE}")

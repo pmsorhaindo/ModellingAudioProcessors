@@ -1,23 +1,31 @@
 /* map_vst3.cpp -- VST 3 processor, controller and factory for the DK stage (#22).
  *
- * Thin glue over mapvs::Engine (../map_engine.h): parameters in, audio through, latency out. Generic host UI only
- * (no IPlugView). Built directly against the Steinberg VST 3 SDK (MIT, 3.8.x); no VSTGUI.
+ * Thin glue over mapvs::Engine (../map_engine.h): parameters in, audio through, latency out. The editor is our own
+ * IPlugView around the shared web editor (../ui/map_webui.h, #105). Built directly against the Steinberg VST 3 SDK
+ * (MIT, 3.8.x); no VSTGUI.
  */
 #include "../map_engine.h"
 #include "../map_identity.h"
 #include "../map_params.h"
+#include "../ui/map_webui.h"
 
 #include "base/source/fstreamer.h"
 #include "pluginterfaces/base/ibstream.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
 #include "pluginterfaces/vst/vsttypes.h"
+#include "public.sdk/source/common/pluginview.h"
 #include "public.sdk/source/main/pluginfactory.h"
 #include "public.sdk/source/vst/vstaudioeffect.h"
 #include "public.sdk/source/vst/vsteditcontroller.h"
 #include "public.sdk/source/vst/vstparameters.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstring>
+#include <memory>
+#include <mutex>
+#include <vector>
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
@@ -165,6 +173,47 @@ private:
     std::atomic<double> norm_[kNumParams]{};
 };
 
+// ---- editor view (main thread) ------------------------------------------------------------------------------------
+
+class Controller;
+
+// The editor's logical size in points (macOS IPlugView coordinates are logical), and the host-resize limits.
+inline constexpr int kEditorW = 760, kEditorH = 400;
+inline constexpr double kMinScale = 0.75, kMaxScale = 2.0;
+
+class EditorView : public CPluginView {
+public:
+    explicit EditorView(Controller* c);
+    ~EditorView() override;
+
+    tresult PLUGIN_API isPlatformTypeSupported(FIDString type) override {
+        return type && std::strcmp(type, kPlatformTypeNSView) == 0 ? kResultTrue : kResultFalse;
+    }
+    tresult PLUGIN_API attached(void* parent, FIDString type) override;
+    tresult PLUGIN_API removed() override;
+    tresult PLUGIN_API canResize() override { return kResultTrue; }
+    tresult PLUGIN_API checkSizeConstraint(ViewRect* r) override {
+        if (!r) return kResultFalse;
+        const int w = std::clamp(int(r->getWidth()), int(kEditorW * kMinScale), int(kEditorW * kMaxScale));
+        const int h = std::clamp(int(r->getHeight()), int(kEditorH * kMinScale), int(kEditorH * kMaxScale));
+        r->right = r->left + w;
+        r->bottom = r->top + h;
+        return kResultTrue;
+    }
+    tresult PLUGIN_API onSize(ViewRect* r) override {
+        const tresult res = CPluginView::onSize(r);
+        if (r && editor_) editor_->set_size(int(r->getWidth()), int(r->getHeight()));
+        return res;
+    }
+    void param_changed(Steinberg::Vst::ParamID id, ParamValue v) {   // any thread (atomics in the editor)
+        if (editor_) editor_->set_param(int(id), v);
+    }
+
+private:
+    IPtr<Controller> ctl_;
+    std::unique_ptr<ui::WebEditor> editor_;
+};
+
 // ---- controller --------------------------------------------------------------------------------------------------
 
 class Controller : public EditController {
@@ -209,9 +258,81 @@ public:
         const tresult r = EditController::setParamNormalized(tag, value);
         if (r == kResultOk && tag == kQuality && quality_from_norm(value) != before && componentHandler)
             componentHandler->restartComponent(kLatencyChanged);
+        if (r == kResultOk) {
+            std::lock_guard<std::mutex> lk(views_mu_);  // controller side only, never the audio thread
+            for (EditorView* v : views_) v->param_changed(tag, getParamNormalized(tag));
+        }
         return r;
     }
+
+    IPlugView* PLUGIN_API createView(FIDString name) override {
+        if (!name || std::strcmp(name, ViewType::kEditor) != 0) return nullptr;
+        return new EditorView(this);
+    }
+
+    // the web editor's edits (main thread): one gesture per begin/end, like a host-drawn control
+    void ui_begin(int id) {
+        if (id >= 0 && id < kNumParams) beginEdit(Steinberg::Vst::ParamID(id));
+    }
+    void ui_perform(int id, double norm) {
+        if (id < 0 || id >= kNumParams) return;
+        setParamNormalized(Steinberg::Vst::ParamID(id), norm);
+        performEdit(Steinberg::Vst::ParamID(id), getParamNormalized(Steinberg::Vst::ParamID(id)));
+    }
+    void ui_end(int id) {
+        if (id >= 0 && id < kNumParams) endEdit(Steinberg::Vst::ParamID(id));
+    }
+    double ui_norm(int id) {
+        return id >= 0 && id < kNumParams ? getParamNormalized(Steinberg::Vst::ParamID(id)) : 0.0;
+    }
+    void add_view(EditorView* v) {
+        std::lock_guard<std::mutex> lk(views_mu_);
+        views_.push_back(v);
+    }
+    void remove_view(EditorView* v) {
+        std::lock_guard<std::mutex> lk(views_mu_);
+        views_.erase(std::remove(views_.begin(), views_.end(), v), views_.end());
+    }
+
+private:
+    std::mutex views_mu_;
+    std::vector<EditorView*> views_;
 };
+
+EditorView::EditorView(Controller* c) : CPluginView(nullptr), ctl_(c) {
+    ViewRect r(0, 0, kEditorW, kEditorH);
+    CPluginView::rect = r;
+}
+EditorView::~EditorView() {
+    if (editor_) ctl_->remove_view(this);
+    editor_.reset();
+}
+
+tresult PLUGIN_API EditorView::removed() {
+    if (editor_) ctl_->remove_view(this);
+    editor_.reset();                                    // removes the NSView from the host's parent
+    return CPluginView::removed();
+}
+
+tresult PLUGIN_API EditorView::attached(void* parent, FIDString type) {
+    if (!parent || editor_ || isPlatformTypeSupported(type) != kResultTrue) return kResultFalse;
+    ui::Callbacks cb;
+    Controller* c = ctl_.get();
+    cb.begin_edit = [c](int id) { c->ui_begin(id); };
+    cb.perform_edit = [c](int id, double n) { c->ui_perform(id, n); };
+    cb.end_edit = [c](int id) { c->ui_end(id); };
+    cb.get_norm = [c](int id) { return c->ui_norm(id); };
+    cb.request_resize = [this](int w, int h) {
+        if (!plugFrame) return false;
+        ViewRect r(0, 0, w, h);
+        checkSizeConstraint(&r);
+        return plugFrame->resizeView(this, &r) == kResultTrue;   // the host then calls onSize
+    };
+    editor_ = std::make_unique<ui::WebEditor>(std::move(cb), int(rect.getWidth()), int(rect.getHeight()), "VST3");
+    editor_->attach(parent);
+    ctl_->add_view(this);
+    return CPluginView::attached(parent, type);
+}
 
 }  // namespace mapvs
 

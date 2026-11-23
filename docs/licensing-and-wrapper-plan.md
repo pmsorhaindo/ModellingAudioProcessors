@@ -298,6 +298,19 @@ Open issues the wrapper will meet:
 - The mapping between host full scale and the stage's volts, input and output, is still undefined (recorded on #22,
   14 Nov 2026).
 
+### 6.1 Editor UI dependency (#105, 23 Nov 2026)
+
+The editor (#105) is a WebView page in our own VST 3 `IPlugView` and AU Cocoa view. Michael chose this on
+22 Nov 2026 ("Let's try webview with choc first"), with VSTGUI (BSD-3-Clause, in the pinned SDK) as the fallback.
+
+- **CHOC** (Tracktion), ISC licence, header-only: `choc/gui/choc_WebView.h` and the headers it includes. Fetched by
+  CMake at a pinned commit, not vendored. The ISC licence asks only that the copyright and permission notice appear
+  in all copies: it is in `THIRD_PARTY_NOTICES.md`, and the editor's About text will carry it. It is compatible with
+  this MIT repository and with closed binaries.
+- **WKWebView** is part of macOS (WebKit framework), linked, not bundled.
+- Not used: VSTGUI, JUCE, iPlug2. On Windows (later) choc embeds Microsoft's WebView2 loader, which has its own
+  licence; check it before any Windows build.
+
 ## 7. Naming rule
 
 No brand or device names in the product name; "inspired by" only (#75, #22). The product name itself is still to be

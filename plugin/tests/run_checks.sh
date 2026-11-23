@@ -2,10 +2,10 @@
 # run_checks.sh -- the plugin checks (#22), after `cmake --build plugin/build`.
 #
 #   plugin/tests/run_checks.sh [build-dir]            engine and smoothing tests, VST 3 validator (normal +
-#                                                     extensive), VST 3 null
+#                                                     extensive), VST 3 null, VST 3 web editor test
 #   plugin/tests/run_checks.sh [build-dir] --au       also: install the AU into ~/Library/Audio/Plug-Ins/Components
 #                                                     (the user's own folder), auval, AU null (arm64, and x86_64
-#                                                     under Rosetta when it is installed)
+#                                                     under Rosetta when it is installed), AU web editor test
 #
 # Exits non-zero at the first failure. No signing identity is used (only ad-hoc signatures: the linker's, and the
 # VST 3 SDK's post-build one on the .vst3), and nothing is published.
@@ -46,6 +46,9 @@ echo "== VST 3 null (48 kHz standard; 44.1 kHz eco; 96 kHz hq)"
 "$BIN/map_null_vst3" "$VST3" --fs 44100 --quality 0 --drive 4 --bias 1.0 --output 0.5
 "$BIN/map_null_vst3" "$VST3" --fs 96000 --quality 2 --drive 1 --bias 1.5 --output 1
 
+UI_ARGS=("$VST3")
+[[ $AU == 1 ]] && UI_ARGS+=(--au)
+
 if [[ $AU == 1 ]]; then
     DEST="$HOME/Library/Audio/Plug-Ins/Components/$BUNDLE_FILE.component"
     echo "== install AU -> $DEST"
@@ -66,5 +69,13 @@ if [[ $AU == 1 ]]; then
         echo "== AU null, x86_64 slice (Rosetta)"
         arch -x86_64 "$BIN/map_null_au"
     fi
+fi
+# #105: both editors in a test window (needs a window server, i.e. a logged-in GUI session; MAP_SKIP_UI_TEST=1 skips)
+if [[ "${MAP_SKIP_UI_TEST:-0}" == 1 ]]; then
+    echo "== web editor test: skipped (MAP_SKIP_UI_TEST=1)"
+else
+    echo "== web editor test (VST 3$([[ $AU == 1 ]] && echo " + AU"): page, parameter bridge, key focus, resize, open / close)"
+    # the full per-check listing is long; show the summary lines (pipefail keeps the test's exit status)
+    "$BIN/map_ui_test" "${UI_ARGS[@]}" | grep -E "FAIL|PASS|info|^==|-> mode"
 fi
 echo "== all plugin checks passed"
