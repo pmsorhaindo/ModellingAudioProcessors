@@ -69,6 +69,8 @@ def steady_point(exe, job):
         raise ValueError("invalid steady render")
     y = y - y.mean()
     peak = np.max(np.abs(y))
+    if not peak > 0:
+        raise ValueError("silent steady render")
     f = np.arange(fs // 2 + 1)
     use = (f >= BAND_HZ[0]) & (f <= BAND_HZ[1]) & (f % tone != 0)
     return dict(fs=fs, shape=shape, mode=mode, bias_ma=bias, factor=factor, filter=position, tone=int(tone),
@@ -331,6 +333,10 @@ def transient(exe, out, resume):
     previous = {}
     if resume and path.exists():
         previous = {(r["sample_rate"], r["scenario"], r["tone"]): r for r in json.loads(path.read_text())}
+        for row in previous.values():
+            for counters in row["stats"].values():
+                for key in ("single_ns", "dual_ns", "dual_samples"):
+                    counters.pop(key, None)
     for fs in RATES:
         high_tone = 19831 if fs == 44100 else 19987  # #146 fixed-32 hot T's worst tones
         cases = [(scenario, tone, "4k" if tone == high_tone else "off")
@@ -347,7 +353,8 @@ def transient(exe, out, resume):
             timeline, settling = controls(fs, scenario, tone)
             y, latency, stats = render(exe, fs, GRID_SHAPE, position, timeline)
             row = measure_transition(fs, tone, scenario, y, timeline, settling, latency)
-            row.update(filter=position, stats={m: t[0] for m, t in stats.items()})
+            counters = ("allocations", "nonconverged", "out_of_law", "recoveries")
+            row.update(filter=position, stats={m: {k: t[0][k] for k in counters} for m, t in stats.items()})
             results.append(row)
             take = slice(settling, settling + round(0.82 * fs))
             audio = np.column_stack([y[m][take, 0] for m in METHODS])
