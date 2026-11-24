@@ -1861,9 +1861,7 @@ entries reproduce exactly). 44.1 kHz: `python -m dk6as6.grid_bounds_burst` → `
 (`validate.run`, unchanged, at 44.1 kHz, the same references, signals and `dk/validate.CRIT`).
 **Every case passes every criterion** at both rates, standard and hq (experimental settings, recorded, not counted as
 supported passes).
-**Pending: EHX-1 at T 0.35 mA.** The burst analysis of its new ngspice reference was still running at this commit
-(the other 17 bound references took 10–30 min; this one is past 2.5 h), so its rows read —. They are added when it
-completes, or reported as DK-only if ngspice hits `run_refs.NGSPICE_TIMEOUT_S` (4 h).
+EHX-1's T 0.35 mA reference took 3 h 52 min for its burst (the others 10–30 min; inside `run_refs.NGSPICE_TIMEOUT_S`, 4 h).
 
 **48 kHz** (`python -m dk6as6.grid_bounds tables`, burst part):
 
@@ -1877,7 +1875,7 @@ completes, or reported as DK-only if ngspice hits `run_refs.NGSPICE_TIMEOUT_S` (
 | 0.25 mA | EHX-1 | -5.3748 | -0.529 | -5.904 / -5.374 / -5.374 / -5.374 | 113.9 ms | passed / passed |
 | 0.35 mA | RSD-1 | -3.9416 | -0.682 | -4.624 / -3.940 / -3.941 / -3.941 | 111.9 ms | passed / passed |
 | 0.35 mA | RSD-2 | -3.9416 | -0.682 | -4.624 / -3.940 / -3.941 / -3.941 | 111.9 ms | passed / passed |
-| 0.35 mA | EHX-1 | — | — | — | — | — |
+| 0.35 mA | EHX-1 | -3.9416 | -0.682 | -4.624 / -3.940 / -3.941 / -3.941 | 111.9 ms | passed / passed |
 | 0.45 mA | RSD-1 | -2.6527 | -0.854 | -3.507 / -2.662 / -2.661 / -2.657 | 107.1 ms | passed / passed |
 | 0.45 mA | RSD-2 | -2.6527 | -0.848 | -3.500 / -2.655 / -2.655 / -2.654 | 106.3 ms | passed / passed |
 | 0.45 mA | EHX-1 | -2.6527 | -0.853 | -3.505 / -2.660 / -2.659 / -2.656 | 107.0 ms | passed / passed |
@@ -1892,7 +1890,7 @@ completes, or reported as DK-only if ngspice hits `run_refs.NGSPICE_TIMEOUT_S` (
 |---|---|---|
 | 0.1 mA | 0.35 / 0.35 / 0.35 | 0.17 / 0.17 / 0.17 |
 | 0.25 mA | 0.81 / 0.81 / 0.81 | 0.39 / 0.39 / 0.39 |
-| 0.35 mA | 1.24 / 1.24 / — | 0.59 / 0.59 / — |
+| 0.35 mA | 1.24 / 1.24 / 1.24 | 0.59 / 0.59 / 0.59 |
 | 0.45 mA | -8.98 / -2.75 / -7.32 | -4.12 / -1.25 / -3.35 |
 | 0.5 mA | -237.63 / -218.03 / -235.87 | -107.97 / -99.08 / -107.17 |
 | 0.6 mA | -1020.34 / -998.81 / -1021.27 | -451.89 / -442.49 / -452.36 |
@@ -1907,6 +1905,7 @@ completes, or reported as DK-only if ngspice hits `run_refs.NGSPICE_TIMEOUT_S` (
 | 0.25 mA | EHX-1 | 0.02027 % (H2 -73.9, H3 -133.1, H4 -153.1) | 0.2028 % (H2 -53.9, H3 -94.3, H4 -128.9) | 0.8211 % (H2 -41.7, H3 -70.0, H4 -93.0) | 4.162 % (H2 -27.8, H3 -42.5, H4 -52.9) |
 | 0.35 mA | RSD-1 | 0.02964 % (H2 -70.6, H3 -134.6, H4 -152.5) | 0.2966 % (H2 -50.6, H3 -96.2, H4 -125.3) | 1.201 % (H2 -38.4, H3 -71.9, H4 -89.2) | 5.991 % (H2 -24.6, H3 -40.8, H4 -55.2) |
 | 0.35 mA | RSD-2 | 0.02964 % (H2 -70.6, H3 -134.6, H4 -152.5) | 0.2966 % (H2 -50.6, H3 -96.2, H4 -125.3) | 1.201 % (H2 -38.4, H3 -71.9, H4 -89.2) | 6.038 % (H2 -24.5, H3 -42.0, H4 -52.0) |
+| 0.35 mA | EHX-1 | 0.02964 % (H2 -70.6, H3 -134.6, H4 -152.5) | 0.2966 % (H2 -50.6, H3 -96.2, H4 -125.3) | 1.201 % (H2 -38.4, H3 -71.9, H4 -89.2) | 6.001 % (H2 -24.5, H3 -41.1, H4 -54.4) |
 | 0.45 mA | RSD-1 | 0.04691 % (H2 -66.6, H3 -138.6, H4 -151.6) | 0.4697 % (H2 -46.6, H3 -96.4, H4 -116.4) | 1.916 % (H2 -34.4, H3 -71.5, H4 -80.0) | 10.03 % (H2 -22.6, H3 -24.5, H4 -33.5) |
 | 0.45 mA | RSD-2 | 0.04691 % (H2 -66.6, H3 -138.6, H4 -151.6) | 0.4697 % (H2 -46.6, H3 -96.4, H4 -116.4) | 1.916 % (H2 -34.4, H3 -71.5, H4 -80.0) | 9.992 % (H2 -22.6, H3 -24.6, H4 -33.4) |
 | 0.45 mA | EHX-1 | 0.04691 % (H2 -66.6, H3 -138.6, H4 -151.6) | 0.4697 % (H2 -46.6, H3 -96.4, H4 -116.4) | 1.916 % (H2 -34.4, H3 -71.5, H4 -80.0) | 10.05 % (H2 -22.6, H3 -24.4, H4 -33.4) |
@@ -1931,7 +1930,7 @@ residual blocking and THD agree to the digits shown, apart from a few harmonics 
 | 0.25 mA | EHX-1 | -5.3748 | -0.528 | -5.903 / -5.374 / -5.374 / -5.374 | 113.9 ms | passed / passed |
 | 0.35 mA | RSD-1 | -3.9416 | -0.682 | -4.623 / -3.940 / -3.941 / -3.941 | 111.9 ms | passed / passed |
 | 0.35 mA | RSD-2 | -3.9416 | -0.682 | -4.623 / -3.940 / -3.941 / -3.941 | 111.9 ms | passed / passed |
-| 0.35 mA | EHX-1 | — | — | — | — | — |
+| 0.35 mA | EHX-1 | -3.9416 | -0.682 | -4.623 / -3.940 / -3.941 / -3.941 | 111.9 ms | passed / passed |
 | 0.45 mA | RSD-1 | -2.6527 | -0.854 | -3.506 / -2.662 / -2.661 / -2.657 | 107.1 ms | passed / passed |
 | 0.45 mA | RSD-2 | -2.6527 | -0.847 | -3.500 / -2.655 / -2.655 / -2.654 | 106.4 ms | passed / passed |
 | 0.45 mA | EHX-1 | -2.6527 | -0.852 | -3.505 / -2.660 / -2.659 / -2.656 | 107.0 ms | passed / passed |
@@ -1943,7 +1942,7 @@ residual blocking and THD agree to the digits shown, apart from a few harmonics 
 - **0.1–0.35 mA: the 4 V burst does not block.** After the burst Vgk sits 0.35–1.24 mV *above* rest at 35 ms: the
   coupling-cap tail, not grid blocking. The bounds read the nominal to the digits shown in every burst column.
 - **THD at 0.1–0.35 mA** is the nominal's to 4 significant figures, except 8 V at 0.35 mA: 5.991 % (RSD-1) against
-  6.038 % (RSD-2), with H4 −55.2 against −52.0 dBc. That is where the 8 V tone starts to reach the grid onset.
+  6.038 % (RSD-2) and 6.001 % (EHX-1), with H4 −55.2 against −52.0 / −54.4 dBc. That is where the 8 V tone starts to reach the grid onset.
 - **0.45–0.5 mA** move as #131a reported: the peak shift and the tail τ by ≤ 2 %, the residual blocking by up to
   19.6 mV (0.5 mA, RSD-2, 8.25 %), and 8 V THD by ≤ 0.05 points.
 
