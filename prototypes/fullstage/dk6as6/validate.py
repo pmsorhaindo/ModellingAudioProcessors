@@ -139,13 +139,14 @@ def sines(quality="standard", filt="fir", model="dual", T=0.5, amps=AMPS, bias=B
     return out, times, its
 
 
-def burst(quality="standard", filt="fir", model="dual", bias=BIAS_MA, mode=MODE, t_stop=0.12, raw=False):
-    """The 4 V 1 kHz tone burst (10-30 ms, t_stop = 120 ms as the references) through Stage.process: (burst_metrics of
-    Vgk, iteration stats); raw=True adds the internal-rate (t, Vgk) as m["raw"]."""
+def burst(quality="standard", filt="fir", model="dual", bias=BIAS_MA, mode=MODE, t_stop=0.12, raw=False, amp=4.0):
+    """The `amp` V (4 V: #128's, the references' main burst; 8 V: run_refs.BURST_AMPS, #131) 1 kHz tone burst (10-30 ms,
+    t_stop = 120 ms as the references) through Stage.process: (burst_metrics of Vgk, iteration stats); raw=True adds
+    the internal-rate (t, Vgk) as m["raw"]."""
     s = stage(model, bias=bias, quality=quality, filt=filt, mode=mode)
     nb = int(t_stop * FS)
     tb = np.arange(nb + s.latency_samples) / FS
-    xb = 4 * np.sin(2 * np.pi * 1000 * tb) * ((tb > 10e-3) & (tb < 30e-3))
+    xb = amp * np.sin(2 * np.pi * 1000 * tb) * ((tb > 10e-3) & (tb < 30e-3))
     rb = aligned(s, xb, record=("out", "vgk", "vg2k"))
     vg = rb["_internal"]["vgk"]
     ti = (np.arange(len(vg)) - s.rs.up_delay_internal) / s.fs   # Vgk is seen after the interpolator only

@@ -297,14 +297,17 @@ def _results(model):
     return json.load(open(fn)) if os.path.exists(fn) else {}
 
 
-def burst_thd_tables():
-    """Burst (grid DC, shift, tail tau) and THD per shape at run_refs.BOUND_BIASES, DK standard, with the status of
-    each DK run against its own same-model ngspice reference."""
+def burst_thd_tables(res=None, biases=None):
+    """Burst (grid DC, shift, tail tau) and THD per shape at run_refs.BOUND_BIASES (or `biases`), DK standard, with
+    the status of each DK run against its own same-model ngspice reference. res: {shape: validate results by bias}
+    (default: the 48 kHz validate.py records; grid_bounds_burst passes its 44.1 kHz ones)."""
     models = (("RSD-1", "dualg"),) + tuple((R.GRID_SHAPE[m], m) for m in R.GRID_SHAPE)
-    res = {s: _results(m) for s, m in models}
+    if res is None:
+        res = {s: _results(m) for s, m in models}
+    biases = R.BOUND_BIASES["T"] if biases is None else biases
     lines = ["| T, bias | shape | rest | shift | at 30 / 35 / 50 / 118.5 ms | tail τ | vs ngspice (std / hq) |",
              "|---|---|---|---|---|---|---|"]
-    for b in R.BOUND_BIASES["T"]:
+    for b in biases:
         for s, m in models:
             rb = res[s].get(f"{b:g}")
             if rb is None:
@@ -319,7 +322,7 @@ def burst_thd_tables():
     lines.append("| T, bias | residual blocking (Vgk - rest), mV, at 35 ms: " + " / ".join(s for s, _ in models)
                  + " | at 118.5 ms |")
     lines.append("|---|---|---|")
-    for b in R.BOUND_BIASES["T"]:
+    for b in biases:
         rows = [GR._burst_row(res[s][f"{b:g}"]["standard"]["burst"]) if f"{b:g}" in res[s] else None for s, _ in models]
         cell = lambda ms: " / ".join("—" if r is None else f"{1e3 * (r[f'vgk_{ms:g}ms'] - r['rest_vgk']):.2f}"  # noqa: E731
                                      for r in rows)
@@ -327,7 +330,7 @@ def burst_thd_tables():
     lines.append("")
     lines.append("| T, bias | shape | " + " | ".join(f"{a} V" for a in R.AMPS) + " |")
     lines.append("|---|---|" + "---|" * len(R.AMPS))
-    for b in R.BOUND_BIASES["T"]:
+    for b in biases:
         for s, m in models:
             rb = res[s].get(f"{b:g}")
             if rb is None:
