@@ -57,6 +57,72 @@ def main(workers=None, fs=FS, out=JSON, shapes=tuple(MODELS)):
     return {s: {b: {q: V.status(r) for q, r in rb.items()} for b, rb in sb.items()} for s, sb in rec["results"].items()}
 
 
+# --- the 8 V burst (PR #151 review: the issue asks for the #128 checks "at 8 V") ---------------------------------
+BURST8_JSON = os.path.join(HERE, f"results_grid_bounds_{MODE}_burst8V.json")
+BURST8_RATES = (48000.0, 44100.0)
+BURST8_AMP = R.BURST_AMPS[0]
+
+
+def _burst8(a):
+    """DK `BURST8_AMP` V burst (validate.burst, unchanged but for the amplitude) at one rate and quality, against the
+    case's own 8 V ngspice reference (run_refs.burst_ref_file): validate.burst_compare and burst_ok (dk/validate.CRIT),
+    and the op point against the reference's (CRIT op_rel)."""
+    shape, bias, quality, fs = a
+    V.FS = fs
+    model = MODELS[shape]
+    ref = json.load(open(R.burst_ref_file(model, bias, MODE, BURST8_AMP)))
+    m, its = V.burst(quality, model=model, bias=bias, mode=MODE, amp=BURST8_AMP)
+    st = V.stage(model, bias=bias, quality=quality, mode=MODE)
+    op = V.op_record(st)
+    cmp = V.burst_compare(m, ref["burst"])
+    op_rel = {k: abs(op[k] / ref["op"][k] - 1) for k in ("ia", "ig2", "ik", "vgk")}
+    passed = dict(op=all(v < V.CRIT["op_rel"] for v in op_rel.values()),
+                  burst=None if cmp.get("spice_exp_capped") else V.burst_ok(cmp), newton=its["converged"])
+    return dict(shape=shape, model=model, bias_ma=bias, quality=quality, fs_base=fs, burst_amp_v=BURST8_AMP,
+                oversampling=st.os, rk=st.rk, grid=st.grid, op=op, op_rel=op_rel, burst=m, vs=cmp,
+                iterations=its, passed=passed, supported=bool(st.supported))
+
+
+def burst8_main(workers=None, out=BURST8_JSON, shapes=tuple(MODELS), biases=BIASES):
+    """Run every (rate, shape, bias, quality) whose 8 V reference exists and is not yet in `out`; merge into `out`."""
+    rec = json.load(open(out)) if os.path.exists(out) else dict(label=LABEL, mode=MODE, burst_amp_v=BURST8_AMP,
+                                                                 models=MODELS, criteria=V.CRIT, results={})
+    have = lambda s, b, q, fs: q in rec["results"].get(f"{int(fs)}", {}).get(s, {}).get(f"{b:g}", {})  # noqa: E731
+    js = [(s, b, q, fs) for fs in BURST8_RATES for b in biases for s in shapes for q in QUALITY
+          if os.path.exists(R.burst_ref_file(MODELS[s], b, MODE, BURST8_AMP)) and not have(s, b, q, fs)]
+    with ProcessPoolExecutor(workers) as ex:
+        res = list(ex.map(_burst8, js))
+    for (s, b, q, fs), r in zip(js, res):
+        rec["results"].setdefault(f"{int(fs)}", {}).setdefault(s, {}).setdefault(f"{b:g}", {})[q] = r
+    json.dump(rec, open(out, "w"), indent=1, default=float)
+    return {fs: {s: {b: {q: V.status(r) for q, r in rb.items()} for b, rb in sb.items()} for s, sb in d.items()}
+            for fs, d in rec["results"].items()}
+
+
+def burst8_tables(path=BURST8_JSON):
+    """The 8 V burst table per rate (DK standard; vs ngspice, standard / hq) and the residual blocking."""
+    from dk6as6 import grid as GR
+    rec = json.load(open(path))
+    L = []
+    for fs, d in rec["results"].items():
+        L += [f"**{int(fs) / 1000:g} kHz, {rec['burst_amp_v']:g} V burst**", "",
+              "| T, bias | shape | rest | shift | at 30 / 35 / 50 / 118.5 ms | tail τ | residual at 35 / 118.5 ms, mV "
+              "| vs ngspice (std / hq) |", "|---|---|---|---|---|---|---|---|"]
+        for b in BIASES:
+            for s in MODELS:
+                rb = d.get(s, {}).get(f"{b:g}")
+                if rb is None:
+                    continue
+                row = GR._burst_row(rb["standard"]["burst"])
+                traj = " / ".join(f"{row[f'vgk_{ms:g}ms']:.3f}" for ms in GR.TRAJ_MS)
+                res = " / ".join(f"{1e3 * (row[f'vgk_{ms:g}ms'] - row['rest_vgk']):.2f}" for ms in (35.0, 118.5))
+                st = " / ".join(V.status(rb[q]) for q in QUALITY if q in rb)
+                L.append(f"| {b:g} mA | {s} | {row['rest_vgk']:.4f} | {row['shift_v']:.3f} | {traj} | "
+                         f"{1e3 * row['tail_tau_s']:.1f} ms | {res} | {st} |")
+        L.append("")
+    return "\n".join(L)
+
+
 def tables(path=JSON):
     """The RESULTS.md burst / blocking / THD tables at 44.1 kHz (grid_bounds.burst_thd_tables' format)."""
     from dk6as6 import grid_bounds
@@ -69,5 +135,9 @@ if __name__ == "__main__":
     ap.add_argument("--workers", type=int, default=os.cpu_count())
     ap.add_argument("--shapes", nargs="*", default=list(MODELS))
     ap.add_argument("--tables", action="store_true")
+    ap.add_argument("--burst8", action="store_true", help="the 8 V burst at both rates -> " + BURST8_JSON)
     a = ap.parse_args()
-    print(tables() if a.tables else json.dumps(main(a.workers, shapes=tuple(a.shapes))))
+    if a.burst8:
+        print(burst8_tables() if a.tables else json.dumps(burst8_main(a.workers, shapes=tuple(a.shapes))))
+    else:
+        print(tables() if a.tables else json.dumps(main(a.workers, shapes=tuple(a.shapes))))

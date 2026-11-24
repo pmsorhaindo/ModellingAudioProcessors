@@ -254,6 +254,24 @@ def ref_file(model, bias, mode=MODE):
     return os.path.join(HERE, f"reference_{tag(model, mode)}_{bias:g}mA.json")
 
 
+# #131 review: the issue asks for the #128 burst / blocking / recovery checks "at 8 V". The 4 V burst (BURST, #128)
+# stays the references' main burst; BURST_AMPS adds an 8 V burst, as its own reference file per case
+# (burst_ref_file), with the op point (for the check) and that burst only (run_burst).
+BURST_AMPS = (8.0,)
+
+
+def burst_of(amp):
+    """spice/run_refs.BURST at amplitude `amp` V (4 V: BURST itself); same 1 kHz, 10-30 ms, 120 ms."""
+    if amp != BURST["amp"] and amp not in BURST_AMPS:
+        raise ValueError(f"burst amplitude {amp:g} V is neither BURST's {BURST['amp']:g} V nor in BURST_AMPS")
+    return dict(BURST, amp=float(amp))
+
+
+def burst_ref_file(model, bias, mode=MODE, amp=BURST_AMPS[0]):
+    """The reference of the `amp` V burst (BURST_AMPS) of a case: reference_<tag>_<bias>mA_burst<amp>V.json."""
+    return os.path.join(HERE, f"reference_{tag(model, mode)}_{bias:g}mA_burst{amp:g}V.json")
+
+
 def split_analyses():
     """The 'main' analysis as separate ngspice runs (run(split=True), #112): 'opac' (.op and .ac) and one 'sine:<A>' per
     AMPS amplitude. Each tran of 'main' starts from its own operating point (its source differs only in the SIN
@@ -303,11 +321,12 @@ wrdata {out}/{name}_ac.txt db(v(out)) ph(v(out))
   wrdata $fn v(out) v(g) v(k)
 end""")
         control = control.rstrip("\n")
-    elif analysis == "burst":
-        b = BURST
+    elif analysis == "burst" or analysis.startswith("burst:"):
+        b = BURST if analysis == "burst" else burst_of(float(analysis[6:]))
+        sfx = "" if analysis == "burst" else f"_{b['amp']:g}v"
         vin = f"Bin src 0 V = {b['amp']:g}*sin(2*3.14159265*{f0}*time)*((time>{b['t_on']:g})&(time<{b['t_off']:g}))"
         control = f"""tran {ts} {b['t_stop']:g} 0 {tm}
-wrdata {out}/{name}_burst.txt v(g) v(k) v(out) v(gl)"""
+wrdata {out}/{name}_burst{sfx}.txt v(g) v(k) v(out) v(gl)"""
     else:
         raise ValueError(f"unknown analysis {analysis!r}")
     lines = [inc, f"VHT ht 0 DC {spice_num(values['HT'])}"]
@@ -450,6 +469,71 @@ def run(model, bias, solver=SOLVER, out="out", write=True, mode=MODE, split=Fals
     if write:
         json.dump(res, open(ref_file(model, bias, mode), "w"), indent=1)
     return res
+
+
+def run_burst(model, bias, amp=BURST_AMPS[0], solver=SOLVER, out="out", mode=MODE):
+    """The `amp` V burst reference of a case (BURST_AMPS; #131 review): 'opac' (the op point, checked against the main
+    reference's) and 'burst:<amp>' as two ngspice calls, staged, analysed in place and published as run() does
+    (case <case>_burst<amp>v), then written to burst_ref_file. Same netlist, Rk, solver and spiceinit as run()."""
+    check_mode(model, mode)
+    if open(model_file(model, mode)).read() != subckt(model, mode=mode):
+        raise RuntimeError(f"{model_file(model, mode)} is stale; run python spice6as6/run_refs.py --write-netlist")
+    b = burst_of(amp)
+    o = os.path.join(HERE, out)
+    os.makedirs(o, exist_ok=True)
+    spiceinit()
+    rk = rk_of(model, bias, mode)
+    c = case(model, bias, mode)
+    cb = f"{c}_burst{amp:g}v"
+    rid = f"{time.strftime('%Y%m%dT%H%M%S')}_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    stage = os.path.join(out, f"_staging_{cb}_{rid}")
+    sdir = os.path.join(HERE, stage)
+    os.makedirs(sdir)
+    def one(name):
+        tagn = name.replace(":", "_")
+        fn = os.path.join(HERE, f"_gen_{out.replace('/', '_')}_{cb}_{rid}_{tagn}.cir")
+        open(fn, "w").write(netlist(model, name, bias, out=stage, solver=solver, rk=rk, mode=mode))
+        try:
+            code, log = ngspice(["-b", fn])
+        finally:
+            os.remove(fn)
+        open(os.path.join(o, f"{cb}_{tagn}_log.txt"), "w").write(log)
+        if code != 0:
+            raise RuntimeError(f"ngspice failed on {name} ({cb}), see {o}/{cb}_{tagn}_log.txt")
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(2) as ex:
+            futs = [ex.submit(one, n) for n in ("opac", f"burst:{amp:g}")]
+        errs = [f.exception() for f in futs if f.exception() is not None]
+        if errs:
+            raise errs[0]
+        gen = dict(generator(model, bias, solver, mode, False, rk), burst=b, analyses=["opac", f"burst:{amp:g}"],
+                   run_id=rid)
+        del gen["sine"]
+        json.dump(gen, open(os.path.join(sdir, GENERATOR), "w"), indent=1)
+        res = analyse_burst(model, bias, amp, stage, gen, mode)
+        publish(sdir, o, cb, rid)
+    finally:
+        shutil.rmtree(sdir, ignore_errors=True)
+    json.dump(res, open(burst_ref_file(model, bias, mode, amp), "w"), indent=1)
+    return res
+
+
+def analyse_burst(model, bias, amp, out, generator, mode=MODE):
+    """The op point and the `amp` V burst metrics (burst_metrics, as analyse()) of a run_burst run directory."""
+    o = os.path.join(HERE, out)
+    c = case(model, bias, mode)
+    op = np.loadtxt(os.path.join(o, f"{c}_op.txt"))
+    va, vk, vg, ia, ig2 = op[1], op[3], op[5], op[9], op[11]
+    ig1 = op[13] if HARDNESS[model] else None
+    t, v = load_wrdata(os.path.join(o, f"{c}_burst_{amp:g}v.txt"), 4)
+    tu, g = resample_uniform(t, v[:, 0], 1e6, 0.0, BURST["t_stop"])
+    _, k = resample_uniform(t, v[:, 1], 1e6, 0.0, BURST["t_stop"])
+    return dict(model=model, bias_ma=bias, burst_amp_v=float(amp), generator=generator,
+                **({} if mode == "P1" else dict(mode=mode)),
+                op=dict(va=va, vk=vk, ia=ia, ig2=ig2, ik=ia + ig2 + (ig1 or 0.0), vgk=vg - vk,
+                        **({} if ig1 is None else dict(ig1=ig1))),
+                burst=burst_metrics(tu, g - k))
 
 
 GENERATOR = "generator.json"          # the run's generator record, inside its run directory
@@ -601,6 +685,11 @@ if __name__ == "__main__":
     if "--split" in args:          # --split N: run 'main' as split_analyses(), N ngspice calls at a time (#112)
         i = args.index("--split")
         split, args = int(args[i + 1]), args[:i] + args[i + 2:]
+    if args[:1] == ["--burst8"]:   # the 8 V burst references (#131 review): --burst8 model/mode:bias ...
+        for mdl, md, bias in cases(args[1:]):
+            r = run_burst(mdl, bias, 8.0, mode=md)
+            print(case(mdl, bias, md), "8 V burst", {k: r["burst"][k] for k in ("rest_vgk", "min_vgk", "t_min")})
+        sys.exit(0)
     analyse_only = "--analyse-only" in args      # re-analyse a finished run's out/ files (no ngspice)
     args = [a for a in args if a != "--analyse-only"]
     for mdl, md, bias in cases(args or list(PARAMS)):
