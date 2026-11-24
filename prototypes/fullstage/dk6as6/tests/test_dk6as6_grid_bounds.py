@@ -16,7 +16,7 @@ from dk import triode  # noqa: E402 -- after the sys.path setup
 from dk6as6 import pentode as P, stage as stg, grid as GR, validate as V, aliasing as A6  # noqa: E402
 from dk6as6 import grid_bounds as GB  # noqa: E402 -- after the sys.path setup
 from dk6as6 import aliasing_guard as A6G  # noqa: E402 -- after the sys.path setup
-from dk6as6.stage import Stage, UnsupportedSettingError, ExperimentalWarning  # noqa: E402
+from dk6as6.stage import Stage, UnsupportedSettingError, ExperimentalWarning, record_stage, QUALITY_RECORDS  # noqa: E402,E501
 from spice6as6 import run_refs as R  # noqa: E402 -- after the sys.path setup
 
 FS = 48000.0
@@ -107,8 +107,9 @@ def test_bound_currents_match_the_reference_and_its_jacobian(shape):
 # --- the stage: bounds selectable, nominal untouched -------------------------------------------------------------
 
 def test_bounds_have_no_supported_envelope():
-    """A bound is experimental only, in every mode; the nominal envelope is unchanged."""
-    assert stg.envelope() == stg.envelope(1.0, "RSD-1") == stg.SUPPORTED_MA == {"P1": (0.1, 0.6), "T": (0.1, 0.5)}
+    """A bound is experimental only, in every mode; the nominal envelope is the stage's (T to 0.35 mA since the #113
+    rework; 0.5 mA when #131 measured these bounds)."""
+    assert stg.envelope() == stg.envelope(1.0, "RSD-1") == stg.SUPPORTED_MA == {"P1": (0.1, 0.6), "T": (0.1, 0.35)}
     assert stg.envelope(0.0, "EHX-1") == stg.SUPPORTED_MA_NO_GRID      # no grid current: the shape is moot
     for s in P.GRID_BOUNDS:
         assert stg.envelope(1.0, s) == {}
@@ -128,7 +129,7 @@ def _onset(shape=None, bias=0.5, f0=18037.0, quality="standard"):
     kw = {} if shape is None else dict(grid_shape=shape)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        st = Stage(FS, bias=bias, mode="T", quality=quality, experimental=True, fir=GR.FIR, **kw)
+        st = record_stage(FS, bias=bias, mode="T", quality=quality, experimental=True, fir=GR.FIR, **kw)   # grid.json
         t = np.arange(int(GR.ONSET_S * FS) + st.latency_samples) / FS
         return st, st.process(8.0 * np.sin(2 * np.pi * f0 * t), record=("out", "vgk", "vak", "ig1", "ipk"))
 
@@ -153,7 +154,7 @@ def test_nominal_stage_is_bit_identical_to_main():
     assert float(i["ipk"].min()) == pytest.approx(row["ipk_min"], rel=0, abs=1e-14)
     assert a.iteration_stats()["max"] == row["it_max"]
     rec = json.load(open(V.results_file("T", "dualg")))["0.5"]["standard"]
-    m, _ = V.burst(model="dualg", bias=0.5, mode="T")
+    m, _ = V.burst(QUALITY_RECORDS["standard"], model="dualg", bias=0.5, mode="T")    # the record's 8x (k140)
     assert m["traj_vgk"] == pytest.approx(rec["burst"]["traj_vgk"], rel=0, abs=1e-8)
     assert m["min_vgk"] == pytest.approx(rec["burst"]["min_vgk"], rel=0, abs=1e-8)
     assert V.stage("dualg", bias=0.5, mode="T").rk == pytest.approx(rec["rk"], rel=1e-11)
@@ -233,7 +234,8 @@ def test_bound_study_keeps_its_shipped_fir_configuration():
     assert nom["fir"] == "shipped"
     assert {int(fs): {k: sorted(map(int, v["tones"])) for k, v in vals.items()} for fs, vals in nom["values"].items()} \
         == {fs: {GB.guard_key(*k): sorted(t) for k, (_, t) in keys.items()} for fs, keys in GB.GUARD_T_KEYS.items()}
-    assert {GB.guard_key(*k) for k in GB.GUARD_T_KEYS[48000]}.isdisjoint(A6G.limits_by_key(48000))
+    assert {GB.guard_key(*k) for k in GB.GUARD_T_KEYS[48000]}.isdisjoint(
+        A6G.key(m, b, q, d, lp) for q, keys in A6G.CI[48000].items() for m, b, lp, d in keys)
     rows = [ln for ln in GB.tables().splitlines() if "kHz, T/" in ln]
     assert len(rows) == sum(map(len, GB.GUARD_T_KEYS.values())) and not any("—" in ln for ln in rows), rows
     j = dict(next(j for j in GB.alias_jobs("RSD-2")[1] if j["fs"] == 44100), window=0.01, settle=0.0)

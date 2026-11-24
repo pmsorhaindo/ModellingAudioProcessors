@@ -1,0 +1,549 @@
+{
+ "method": "dk6as6/inaudible_bench.cpp built against PR #133's cpp/dk6as6_core.h (head fc5d690, MAX_OS 64, later_[5]), Apple clang 17 -O3, Apple M1, thread CPU time per base-rate sample of one mono Stage, 256-sample blocks, k140; run 1: 5 rounds x 0.5 s, load average 75-190 from other jobs; run 2: 7 rounds x 1 s, load average 4 at the start rising to about 90 during the run. Min and median over the rounds.",
+ "runs": {
+  "loaded_run_1": [
+   {
+    "case": "P1 0.45 mA 2 V",
+    "fs": 48000,
+    "os": 4,
+    "ns_per_sample_min": 6387.4,
+    "ns_per_sample_median": 6752.8,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "P1 0.45 mA 2 V",
+    "fs": 48000,
+    "os": 8,
+    "ns_per_sample_min": 10767.9,
+    "ns_per_sample_median": 11164.9,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "P1 0.45 mA 2 V",
+    "fs": 48000,
+    "os": 16,
+    "ns_per_sample_min": 20995.3,
+    "ns_per_sample_median": 22290.2,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "P1 0.45 mA 2 V",
+    "fs": 48000,
+    "os": 32,
+    "ns_per_sample_min": 38468.7,
+    "ns_per_sample_median": 38946.1,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "P1 0.45 mA 2 V",
+    "fs": 48000,
+    "os": 64,
+    "ns_per_sample_min": 66452.7,
+    "ns_per_sample_median": 68682.9,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "P1 0.45 mA 8 V",
+    "fs": 48000,
+    "os": 4,
+    "ns_per_sample_min": 7214.6,
+    "ns_per_sample_median": 7953.2,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "P1 0.45 mA 8 V",
+    "fs": 48000,
+    "os": 8,
+    "ns_per_sample_min": 12823.5,
+    "ns_per_sample_median": 13415.8,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "P1 0.45 mA 8 V",
+    "fs": 48000,
+    "os": 16,
+    "ns_per_sample_min": 22042.4,
+    "ns_per_sample_median": 22381.2,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "P1 0.45 mA 8 V",
+    "fs": 48000,
+    "os": 32,
+    "ns_per_sample_min": 42255.2,
+    "ns_per_sample_median": 43430.1,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "P1 0.45 mA 8 V",
+    "fs": 48000,
+    "os": 64,
+    "ns_per_sample_min": 67918.4,
+    "ns_per_sample_median": 69476.0,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "T 0.5 mA 8 V",
+    "fs": 48000,
+    "os": 4,
+    "ns_per_sample_min": 7308.7,
+    "ns_per_sample_median": 7511.7,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "T 0.5 mA 8 V",
+    "fs": 48000,
+    "os": 8,
+    "ns_per_sample_min": 12891.5,
+    "ns_per_sample_median": 13093.9,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "T 0.5 mA 8 V",
+    "fs": 48000,
+    "os": 16,
+    "ns_per_sample_min": 21844.9,
+    "ns_per_sample_median": 22452.6,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "T 0.5 mA 8 V",
+    "fs": 48000,
+    "os": 32,
+    "ns_per_sample_min": 41690.0,
+    "ns_per_sample_median": 42517.1,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "T 0.5 mA 8 V",
+    "fs": 48000,
+    "os": 64,
+    "ns_per_sample_min": 66493.3,
+    "ns_per_sample_median": 68340.3,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "P1 0.45 mA 2 V",
+    "fs": 44100,
+    "os": 4,
+    "ns_per_sample_min": 7046.1,
+    "ns_per_sample_median": 7707.1,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "P1 0.45 mA 2 V",
+    "fs": 44100,
+    "os": 8,
+    "ns_per_sample_min": 11800.6,
+    "ns_per_sample_median": 12627.5,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "P1 0.45 mA 2 V",
+    "fs": 44100,
+    "os": 16,
+    "ns_per_sample_min": 24001.9,
+    "ns_per_sample_median": 24713.3,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "P1 0.45 mA 2 V",
+    "fs": 44100,
+    "os": 32,
+    "ns_per_sample_min": 44759.1,
+    "ns_per_sample_median": 45136.6,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "P1 0.45 mA 2 V",
+    "fs": 44100,
+    "os": 64,
+    "ns_per_sample_min": 73295.2,
+    "ns_per_sample_median": 74376.9,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "P1 0.45 mA 8 V",
+    "fs": 44100,
+    "os": 4,
+    "ns_per_sample_min": 8038.5,
+    "ns_per_sample_median": 8445.9,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "P1 0.45 mA 8 V",
+    "fs": 44100,
+    "os": 8,
+    "ns_per_sample_min": 14229.2,
+    "ns_per_sample_median": 14886.8,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "P1 0.45 mA 8 V",
+    "fs": 44100,
+    "os": 16,
+    "ns_per_sample_min": 24282.8,
+    "ns_per_sample_median": 24423.9,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "P1 0.45 mA 8 V",
+    "fs": 44100,
+    "os": 32,
+    "ns_per_sample_min": 47387.6,
+    "ns_per_sample_median": 48097.2,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "P1 0.45 mA 8 V",
+    "fs": 44100,
+    "os": 64,
+    "ns_per_sample_min": 76667.3,
+    "ns_per_sample_median": 78798.1,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "T 0.5 mA 8 V",
+    "fs": 44100,
+    "os": 4,
+    "ns_per_sample_min": 8813.4,
+    "ns_per_sample_median": 8990.3,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "T 0.5 mA 8 V",
+    "fs": 44100,
+    "os": 8,
+    "ns_per_sample_min": 14527.0,
+    "ns_per_sample_median": 14887.9,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "T 0.5 mA 8 V",
+    "fs": 44100,
+    "os": 16,
+    "ns_per_sample_min": 24571.7,
+    "ns_per_sample_median": 25373.5,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "T 0.5 mA 8 V",
+    "fs": 44100,
+    "os": 32,
+    "ns_per_sample_min": 46945.0,
+    "ns_per_sample_median": 47188.4,
+    "rounds": 5,
+    "seconds": 0.5
+   },
+   {
+    "case": "T 0.5 mA 8 V",
+    "fs": 44100,
+    "os": 64,
+    "ns_per_sample_min": 73553.5,
+    "ns_per_sample_median": 76872.8,
+    "rounds": 5,
+    "seconds": 0.5
+   }
+  ],
+  "run_2": [
+   {
+    "case": "P1 0.45 mA 2 V",
+    "fs": 48000,
+    "os": 4,
+    "ns_per_sample_min": 5960.5,
+    "ns_per_sample_median": 6034.5,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "P1 0.45 mA 2 V",
+    "fs": 48000,
+    "os": 8,
+    "ns_per_sample_min": 10041.1,
+    "ns_per_sample_median": 10375.9,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "P1 0.45 mA 2 V",
+    "fs": 48000,
+    "os": 16,
+    "ns_per_sample_min": 19668.6,
+    "ns_per_sample_median": 20062.1,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "P1 0.45 mA 2 V",
+    "fs": 48000,
+    "os": 32,
+    "ns_per_sample_min": 34505.0,
+    "ns_per_sample_median": 35434.7,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "P1 0.45 mA 2 V",
+    "fs": 48000,
+    "os": 64,
+    "ns_per_sample_min": 59728.5,
+    "ns_per_sample_median": 63390.5,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "P1 0.45 mA 8 V",
+    "fs": 48000,
+    "os": 4,
+    "ns_per_sample_min": 7416.5,
+    "ns_per_sample_median": 7600.4,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "P1 0.45 mA 8 V",
+    "fs": 48000,
+    "os": 8,
+    "ns_per_sample_min": 13185.2,
+    "ns_per_sample_median": 13329.5,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "P1 0.45 mA 8 V",
+    "fs": 48000,
+    "os": 16,
+    "ns_per_sample_min": 21714.7,
+    "ns_per_sample_median": 22635.1,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "P1 0.45 mA 8 V",
+    "fs": 48000,
+    "os": 32,
+    "ns_per_sample_min": 43437.9,
+    "ns_per_sample_median": 44221.5,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "P1 0.45 mA 8 V",
+    "fs": 48000,
+    "os": 64,
+    "ns_per_sample_min": 67943.3,
+    "ns_per_sample_median": 69124.2,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "T 0.5 mA 8 V",
+    "fs": 48000,
+    "os": 4,
+    "ns_per_sample_min": 7923.5,
+    "ns_per_sample_median": 8054.5,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "T 0.5 mA 8 V",
+    "fs": 48000,
+    "os": 8,
+    "ns_per_sample_min": 12795.1,
+    "ns_per_sample_median": 13317.8,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "T 0.5 mA 8 V",
+    "fs": 48000,
+    "os": 16,
+    "ns_per_sample_min": 22885.0,
+    "ns_per_sample_median": 23174.7,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "T 0.5 mA 8 V",
+    "fs": 48000,
+    "os": 32,
+    "ns_per_sample_min": 42027.7,
+    "ns_per_sample_median": 43151.0,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "T 0.5 mA 8 V",
+    "fs": 48000,
+    "os": 64,
+    "ns_per_sample_min": 69069.0,
+    "ns_per_sample_median": 69919.9,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "P1 0.45 mA 2 V",
+    "fs": 44100,
+    "os": 4,
+    "ns_per_sample_min": 5521.0,
+    "ns_per_sample_median": 7090.3,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "P1 0.45 mA 2 V",
+    "fs": 44100,
+    "os": 8,
+    "ns_per_sample_min": 11423.6,
+    "ns_per_sample_median": 11903.1,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "P1 0.45 mA 2 V",
+    "fs": 44100,
+    "os": 16,
+    "ns_per_sample_min": 22063.9,
+    "ns_per_sample_median": 23627.2,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "P1 0.45 mA 2 V",
+    "fs": 44100,
+    "os": 32,
+    "ns_per_sample_min": 41364.2,
+    "ns_per_sample_median": 42716.4,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "P1 0.45 mA 2 V",
+    "fs": 44100,
+    "os": 64,
+    "ns_per_sample_min": 68156.4,
+    "ns_per_sample_median": 70043.5,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "P1 0.45 mA 8 V",
+    "fs": 44100,
+    "os": 4,
+    "ns_per_sample_min": 7601.0,
+    "ns_per_sample_median": 8129.5,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "P1 0.45 mA 8 V",
+    "fs": 44100,
+    "os": 8,
+    "ns_per_sample_min": 13567.9,
+    "ns_per_sample_median": 13857.6,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "P1 0.45 mA 8 V",
+    "fs": 44100,
+    "os": 16,
+    "ns_per_sample_min": 23035.3,
+    "ns_per_sample_median": 23290.9,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "P1 0.45 mA 8 V",
+    "fs": 44100,
+    "os": 32,
+    "ns_per_sample_min": 44918.3,
+    "ns_per_sample_median": 45691.2,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "P1 0.45 mA 8 V",
+    "fs": 44100,
+    "os": 64,
+    "ns_per_sample_min": 72526.2,
+    "ns_per_sample_median": 72903.9,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "T 0.5 mA 8 V",
+    "fs": 44100,
+    "os": 4,
+    "ns_per_sample_min": 8183.0,
+    "ns_per_sample_median": 8559.2,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "T 0.5 mA 8 V",
+    "fs": 44100,
+    "os": 8,
+    "ns_per_sample_min": 13379.8,
+    "ns_per_sample_median": 13992.6,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "T 0.5 mA 8 V",
+    "fs": 44100,
+    "os": 16,
+    "ns_per_sample_min": 22709.0,
+    "ns_per_sample_median": 23299.3,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "T 0.5 mA 8 V",
+    "fs": 44100,
+    "os": 32,
+    "ns_per_sample_min": 41716.5,
+    "ns_per_sample_median": 44481.0,
+    "rounds": 7,
+    "seconds": 1
+   },
+   {
+    "case": "T 0.5 mA 8 V",
+    "fs": 44100,
+    "os": 64,
+    "ns_per_sample_min": 70675.8,
+    "ns_per_sample_median": 71154.4,
+    "rounds": 7,
+    "seconds": 1
+   }
+  ]
+ }
+}

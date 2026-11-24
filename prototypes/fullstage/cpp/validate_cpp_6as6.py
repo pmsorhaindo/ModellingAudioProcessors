@@ -26,7 +26,10 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 from dk.resample import Resampler  # noqa: E402 -- after the sys.path setup
 from dk6as6 import circuit, pentode, validate  # noqa: E402 -- after the sys.path setup
-from dk6as6.stage import QUALITY, BIAS_MA, GRID_SHAPE, supported  # noqa: E402 -- after the sys.path setup
+# The core's qualities and envelope are still #104's (standard 8x / hq 16x, T to 0.5 mA), which the committed Python
+# results*.json were run at: stage.QUALITY_RECORDS / supported_records, until the core follows #113's rework.
+from dk6as6.stage import (QUALITY_RECORDS as QUALITY, BIAS_MA, GRID_SHAPE,  # noqa: E402 -- after the sys.path setup
+                          supported_records as supported)
 from spice6as6.run_refs import MODE_BIASES, GRID_BIASES  # noqa: E402 -- after the sys.path setup
 from cpp.build import build  # noqa: E402 -- after the sys.path setup
 from cpp.export_vectors_6as6 import K140  # noqa: E402 -- after the sys.path setup

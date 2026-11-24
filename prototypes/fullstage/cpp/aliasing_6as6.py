@@ -55,7 +55,9 @@ sys.path.insert(0, ROOT)
 from dk import aliasing as AL, aliasing_guard as AG  # noqa: E402 -- after the sys.path setup
 from dk.resample import Resampler  # noqa: E402 -- after the sys.path setup
 from dk6as6.aliasing import SETTLE_S  # noqa: E402 -- after the sys.path setup
-from dk6as6.stage import QUALITY  # noqa: E402 -- after the sys.path setup
+# The C++ core's qualities and envelope are still #104's (standard 8x / hq 16x, T to 0.5 mA): the Python stage's
+# pre-rework ones (stage.QUALITY_RECORDS), until the core follows #113's rework (Michael's call, PR #146).
+from dk6as6.stage import QUALITY_RECORDS as QUALITY  # noqa: E402 -- after the sys.path setup
 from cpp import validate_cpp_6as6 as VC  # noqa: E402 -- after the sys.path setup
 from cpp.export_vectors_6as6 import K140  # noqa: E402 -- after the sys.path setup
 
@@ -285,7 +287,7 @@ def guard_grid(workers):
     guard's GRID_HARDNESS); and the same keys and the guard's tones in its CI window (dk.aliasing.CI_WINDOW_S), for the
     Python / C++ parity of its baselines. -> dk6as6/aliasing_guard_k140.json, from which the guard's limits and tones
     are derived (#113's rule: the worst + 3 dB; the highest <= 3 tones within 3 dB of it)."""
-    from dk6as6 import aliasing_guard as PG, aliasing_quality as Q
+    from dk6as6 import aliasing_guard_dbc as PG, aliasing_quality as Q   # #113's dBc guard, frozen (#113 rework)
     tones = tuple(sorted(set(Q.GRID_HZ) | set(Q.SCAN_HZ) | set(GUARD_GRID_EXTRA_HZ)))
     keys = [(fs, m, b, st, d) for fs in RATES for (m, b, st, d) in PG.CI[fs]]
     jobs = [(fs, st, "default", m, b, d, f) for fs, m, b, st, d in keys for f in tones]

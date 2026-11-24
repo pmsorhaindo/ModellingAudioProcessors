@@ -4,8 +4,10 @@ Two separate checks (#111 review):
               per Distortion-switch mode: without grid current (the #111 records) T and P2 at CI_CASES_MODES; with
               the default g1 grid current (#112) P1 and T at CI_CASES_GRID, against LIMIT_DBC_GRID. These baselines
               are chosen from the measurements, so they show reproducibility only.
-  quality     every SUPPORTED setting (stage.envelope of the sweep's grid hardness) within QUALITY_GATE_DBC, the
-              shipped 12AX7 stage's committed budget, which no 6AS6 result chose.
+  quality     every setting supported when these records were made (stage.SUPPORTED_MA_RECORDS with grid current,
+              SUPPORTED_MA_NO_GRID without) within QUALITY_GATE_DBC, the shipped 12AX7 stage's committed budget, which
+              no 6AS6 result chose. Since the #113 rework the acceptance test is the inaudibility criterion
+              (test_dk6as6_aliasing_guard.py); these records and checks are the pre-rework (shipped-FIR, 8x) ones.
 Run from prototypes/fullstage:  python -m pytest -q dk6as6/tests
 """
 import json
@@ -16,11 +18,16 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from dk.aliasing import MARGIN_DB, LIMIT_DBC as LIMIT_DBC_12AX7
 from dk6as6 import aliasing as A
-from dk6as6.stage import supported, envelope
+from dk6as6.stage import supported_records as supported, SUPPORTED_MA_RECORDS, SUPPORTED_MA_NO_GRID
 from dk6as6.pentode import HARDNESS
 
 # Experimental (unsupported) settings are run on purpose here; their ExperimentalWarning is expected.
 pytestmark = pytest.mark.filterwarnings("ignore::dk6as6.stage.ExperimentalWarning")
+
+
+def envelope(gh):
+    """The envelope these records were judged against (the #113 rework narrowed T's: stage.SUPPORTED_MA)."""
+    return SUPPORTED_MA_RECORDS if gh else SUPPORTED_MA_NO_GRID
 
 
 CI_CASES = ([(m, b, d, f, 0.0) for m, b, d, f in A.CI_CASES_MODES]

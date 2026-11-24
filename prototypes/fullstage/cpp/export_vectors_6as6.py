@@ -221,7 +221,9 @@ def entries():
         st = stage(fs, os_, mode, h, b)
         m, dc = st.m, st.dc
         nu, ni = m["B"].shape[1], m["C"].shape[1]
-        add(f"{name}.cfg", [fs, os_, MODES.index(mode), h, b, nu, ni, 1.0 if st.supported else 0.0])
+        # the core's own envelope (dk6as6_core.h SUPPORTED_MA: #104's, T to 0.5 mA), stage.supported_records, until the
+        # core follows #113's rework (PR #146); stage.supported is the Python stage's narrowed one
+        add(f"{name}.cfg", [fs, os_, MODES.index(mode), h, b, nu, ni, 1.0 if S.supported_records(mode, b, h) else 0.0])
         add(f"{name}.rk", [st.rk])
         for k in "ABCDEFGHK":
             add(f"{name}.{k}", m[k])
@@ -274,7 +276,7 @@ def entries():
         y, stats, hist, st = _run_case(fs, os_, mode, h, b, dr, og, lp, sw, nw, fir, x)
         at, to = sw or (-1, lp)
         add(f"case.{name}.cfg", [fs, os_, MODES.index(mode), h, b, dr, og, LPFS.index(lp), at, LPFS.index(to), *nw,
-                                 FIRS.index(fir), 1.0 if st.supported else 0.0])
+                                 FIRS.index(fir), 1.0 if S.supported_records(mode, b, h) else 0.0])
         add(f"case.{name}.in", x)
         add(f"case.{name}.out", y)
         add(f"case.{name}.stats", stats)

@@ -8,15 +8,19 @@ latency, the resampler and iteration_stats()):
                   cathode_resistor() solves the Rk that gives this current at the DC operating point, and Rk is then
                   a fixed resistor for the run (Stage.rk; live bias changes are #115). The panel knob maps to it by
                   knob_bias() (#110); bias_point() reports Rk, Vk, Ip, Ig2 and Ik for a setting (a bias meter).
-  quality       : QUALITY key, or an (os, prewarp_hz) pair for experiments. Validated here: "standard" = 8x (the
-                  12AX7 stage's default) and "hq" = 16x. No eco setting yet: the 12AX7's PREWARP_HZ was derived for
-                  its circuit, and a 6AS6 one would need its own minimax derivation and validation.
+  quality       : QUALITY key, or an (os, prewarp_hz) pair for experiments. Since the #113 rework (proposed, pending
+                  Michael's decision: dk6as6/RESULTS.md, "#113 rework"): "standard" = 16x and "hq" = 32x, both with
+                  the k140 resampler, chosen so that aliasing meets the inaudibility criterion (dk6as6/inaudible.py)
+                  over the whole supported envelope; 8x fails it (P1 0.6 mA at 8 V). No eco setting: a cheaper
+                  setting that meets the criterion needs ADAA (#136). Every record made before the rework
+                  ("standard" / "hq" in results*.json, envelope*.json, grid*.json, aliasing*.json, ...) is at
+                  QUALITY_RECORDS' factors (8x / 16x) and the shipped FIR; record_stage() builds that stage for the
+                  helpers that reproduce one.
   filt          : resampler, "fir" (default) or "iir" (dk/resample.py)
-  fir           : the FIR design (filt "fir"): "k140" (default; #134, Michael's decision on PR #133: #113's
-                  k140, the C++ core's DEFAULT_FIR, K140 below) or "shipped" (dk/resample.py's FIR_FIRST / FIR_LATER,
-                  the resampler of the #102-#113 sweeps in aliasing*.json, lpf_aliasing.json and
-                  aliasing_quality.json; the helpers that reproduce them name it explicitly). With "shipped", P1
-                  0.6 mA at 2 V and 44.1 kHz is over the aliasing gate from ~19957 Hz up (cpp/README-6as6.md).
+  fir           : the FIR design (filt "fir"): "k140" (default; #113 rework, as #134 / PR #133 does: #113's k140,
+                  K140 below) or "shipped" (dk/resample.py's FIR_FIRST / FIR_LATER, the resampler of the #102-#113
+                  sweeps in aliasing*.json, lpf_aliasing.json and aliasing_quality.json; the helpers that reproduce
+                  them name it explicitly).
   pentode       : valve parameter set (default pentode.DUAL_CONTROL, issue #55; pentode.REFIT_51 for comparison)
   mode          : the Distortion switch (#111), circuit.MODES: "P1" (default; g3 on the cathode, screen at the stiff
                   EC2 = 120 V), "T" (g2 + g3 strapped to the plate) or "P2" (g3 to ground, our hypothesis). Fixed
@@ -43,12 +47,13 @@ from . import circuit
 from .solver import solve, solve_grid, solve_grid_restarts
 from .pentode import DUAL_CONTROL, HARDNESS, GRID_SHAPE, grid as grid_law
 
-QUALITY = {"hq": (16, None), "standard": (8, None)}   # (os, prewarp_hz)
+QUALITY = {"hq": (32, None), "standard": (16, None)}   # (os, prewarp_hz): the offered qualities (#113 rework)
+QUALITY_RECORDS = {"hq": (16, None), "standard": (8, None)}   # the factors of every record made before the rework
 # #113's k140 half-band FIR design (dk6as6/resampler_study.py CANDIDATES["k140"], which derives it: Kaiser's beta for a
 # 140 dB stopband, 0.1102 (140 - 8.7) = 14.47, and per stage the shortest 4m + 3 length with >= 140 dB over its
 # folding band and <= 0.005 dB ripple): ((first-stage taps, beta), (later taps, beta)) per host rate. Derived for 48 and
-# 44.1 kHz only; another rate uses the 48 kHz design, as the C++ core (dk_core.h K140_FIR) does, without a claim.
-# test_dk6as6_stage.py checks it against resampler_study.CANDIDATES and cpp/dk_core.h.
+# 44.1 kHz only; another rate uses the 48 kHz design, without a claim. The same table and API as PR #133 (#134).
+# test_dk6as6_stage.py checks it against resampler_study.CANDIDATES.
 K140 = {48000.0: ((123, 14.47), (47, 14.47)), 44100.0: ((219, 14.47), (47, 14.47))}
 FIRS = ("k140", "shipped")
 FIR = "k140"                       # the default design
@@ -59,6 +64,8 @@ def fir_design(fir, fs):
     if fir not in FIRS:
         raise ValueError(f"fir must be one of {FIRS}, got {fir!r}")
     return K140.get(float(fs), K140[48000.0]) if fir == "k140" else None
+
+
 BIAS_MA = 0.45                     # default target cathode current, mA (S6's default; #102)
 BIAS_RANGE_MA = (0.6, 0.1)         # target Ik at the knob's two ends, mA (#110; knob_bias)
 KNOB = (1.0, 11.0)                 # the panel's Bias scale (SOS 2003: "calibrated from one to 11")
@@ -76,22 +83,35 @@ NEWTON = dict(max_it=MAX_IT, tol_v=TOL_V, tol_f=TOL_F)
 #                plate and screen currents never go negative (Ik >= Ig1, the grid law's limit) and Newton converges
 #                (envelope_grid.json): g1 may go positive, which the (unvalidated) grid law models;
 #   validated    passing same-model ngspice references (dk/validate.CRIT) at or bracketing each end;
-#   aliasing     within the shipped 12AX7 stage's budget for the same setting (aliasing.QUALITY_GATE_DBC).
+#   inaudible    aliasing meets the inaudibility criterion (dk6as6/inaudible.py: every alias product below -100 dBFS and
+#                10 dB under the threshold of hearing) at every offered quality, both drives (2 / 8 V) and both rates
+#                (44.1 / 48 kHz) on the full assessment grid (dk6as6/inaudible.json; #113 rework). Before the rework
+#                this was the 12AX7 stage's dBc budget (aliasing.QUALITY_GATE_DBC), an engineering budget only.
 # P1 holds all three over the whole documented 0.1-0.6 mA, with or without grid current. T without grid current only to
 # 0.3 mA (at 0.35 mA an 8 V step onset at 100 Hz takes g1 to +0.30 V; its top end lies between the passing 0.25 and
-# 0.35 mA references); with it to 0.5 mA (dk6as6/RESULTS.md, "Grid current (#112)"). P2 nowhere (our wiring
-# hypothesis on the fit's weakest g3 region, #123, and its resampler aliasing fails the gate at every current).
+# 0.35 mA references); with it to 0.35 mA since the #113 rework (proposed, Michael's call; 0.5 mA before): above it
+# an 8 V drive's grid-current onset folds alias products 7-30 dB over the criterion at 16x; 32x would clear T to
+# 0.45 mA and 64x to 0.6 mA, at about 2 / 3 cores per mono channel in the C++ core (RESULTS.md). The no-grid envelope
+# was not re-assessed: it is not the production default, and with grid current P1 and T <= 0.3 mA read the same to
+# 4.4e-4 dB (aliasing_quality.json model_check). P2 nowhere (our wiring hypothesis on the fit's weakest g3 region,
+# #123; at 8 V its band-edge resampler share fails the criterion at every factor to 64x: RESULTS.md).
 # Outside the derivation's stimulus class the runtime guard (Stage.out_of_law, OutOfLawWarning) still counts every
 # internal sample outside the law in force (Stage.process_internal).
 SUPPORTED_MA_NO_GRID = {"P1": (0.1, 0.6), "T": (0.1, 0.3)}
-SUPPORTED_MA = {"P1": (0.1, 0.6), "T": (0.1, 0.5)}
+SUPPORTED_MA = {"P1": (0.1, 0.6), "T": (0.1, 0.35)}
+# The envelope with grid current that every record made before the #113 rework was judged against (the "supported"
+# flags in results*.json, aliasing*.json, aliasing_quality.json, grid*.json, grid_bounds.json): T to 0.5 mA, under the
+# dBc gate. supported_records() reads it; the record helpers and tests use it, the stage does not.
+SUPPORTED_MA_RECORDS = {"P1": (0.1, 0.6), "T": (0.1, 0.5)}
 WHY_UNSUPPORTED = {      # with grid current (the default); without it, WHY_UNSUPPORTED_NO_GRID
-    "T": "above 0.5 mA g1 rests within ~1.3 V of the cathode and a 2 V drive's grid-current onset aliases above the "
-         "quality gate (aliasing.QUALITY_GATE_DBC) at 8x",
-    "P2": "P2 (g3 to ground) is our hypothesis on the fit's weakest g3 region, and its aliasing fails the quality gate",
+    "T": "above 0.35 mA an 8 V drive's grid-current onset folds alias products over the inaudibility criterion "
+         "(dk6as6/inaudible.py) at standard 16x (#113 rework)",
+    "P2": "P2 (g3 to ground) is our hypothesis on the fit's weakest g3 region, and its aliasing fails the "
+          "inaudibility criterion at 8 V",
 }
-__all__ = ["Stage", "QUALITY", "K140", "FIRS", "FIR", "fir_design",
-           "BIAS_MA", "BIAS_RANGE_MA", "KNOB", "SUPPORTED_MA", "SUPPORTED_MA_NO_GRID", "envelope",
+__all__ = ["Stage", "QUALITY", "QUALITY_RECORDS", "K140", "FIRS", "FIR", "fir_design", "BIAS_MA", "BIAS_RANGE_MA",
+           "KNOB", "SUPPORTED_MA", "SUPPORTED_MA_NO_GRID", "SUPPORTED_MA_RECORDS", "supported_records", "record_stage",
+           "FIR_RECORDS", "envelope",
            "knob_bias", "bias_knob",
            "bias_point", "cathode_resistor", "operating_point", "supported", "OperatingPointError",
            "NonConvergenceWarning", "UnsupportedSettingError", "ExperimentalWarning", "OutOfLawWarning"]
@@ -126,6 +146,14 @@ def supported(mode, bias_ma, grid_hardness=HARDNESS, grid_shape=GRID_SHAPE):
     """True if `bias_ma` mA in `mode` is inside envelope(grid_hardness, grid_shape) (to 1e-9 mA)."""
     lo, hi = envelope(grid_hardness, grid_shape).get(mode, (np.inf, -np.inf))
     return lo - 1e-9 <= bias_ma <= hi + 1e-9
+
+
+def supported_records(mode, bias_ma, grid_hardness=HARDNESS, grid_shape=GRID_SHAPE):
+    """supported() as every record before the #113 rework was judged: SUPPORTED_MA_RECORDS with grid current."""
+    if grid_hardness == HARDNESS and grid_shape == GRID_SHAPE:
+        lo, hi = SUPPORTED_MA_RECORDS.get(mode, (np.inf, -np.inf))
+        return lo - 1e-9 <= bias_ma <= hi + 1e-9
+    return supported(mode, bias_ma, grid_hardness, grid_shape)
 
 
 def _grid(grid_hardness, par, grid_shape=GRID_SHAPE):
@@ -372,3 +400,13 @@ class Stage(_Stage12AX7):
                           f"(max_it, tol_v, tol_f = {self.newton}); kept the best finite iterate",
                           NonConvergenceWarning, stacklevel=2)
         return rec
+
+
+FIR_RECORDS = "shipped"          # the resampler of every record made before the #113 rework
+
+
+def record_stage(fs, quality="standard", **kw):
+    """The stage that made the records before the #113 rework, for the helpers that reproduce them: a quality name is
+    read in QUALITY_RECORDS (8x / 16x), and the FIR is FIR_RECORDS ("shipped") unless given."""
+    kw.setdefault("fir", FIR_RECORDS)
+    return Stage(fs, quality=QUALITY_RECORDS[quality] if isinstance(quality, str) else quality, **kw)

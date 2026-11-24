@@ -14,7 +14,7 @@ from dk import aliasing as AL
 from dk.resample import Resampler
 from dk6as6 import aliasing_quality as Q, resampler_study as RS, lpf
 from dk6as6 import validate as V
-from dk6as6.stage import supported
+from dk6as6.stage import supported_records as supported   # #113's record: its envelope
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 AQ = json.load(open(Q.OUT_JSON))

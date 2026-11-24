@@ -10,13 +10,16 @@ import warnings
 import numpy as np
 import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from dk6as6.stage import (Stage, QUALITY, SUPPORTED_MA, SUPPORTED_MA_NO_GRID, envelope,  # noqa: F401
-                           OutOfLawWarning)
+from dk6as6.stage import (Stage, QUALITY, QUALITY_RECORDS, SUPPORTED_MA, SUPPORTED_MA_NO_GRID,  # noqa: F401
+                           envelope, OutOfLawWarning)
 from dk6as6 import envelope as E, validate as V
 from dk6as6.pentode import HARDNESS
 from dk.validate import aligned
 
 pytestmark = pytest.mark.filterwarnings("ignore::dk6as6.stage.ExperimentalWarning")
+# The model checks at the end (P1's grid current negligible, T 0.4 mA kept in the law) were established at standard 8x
+# (to 1e-12 relative; at 16x the same comparison read 1.15e-12 on CI, Linux); they keep that factor.
+Q8 = QUALITY_RECORDS["standard"]
 
 
 # Live re-checks of both supported envelopes (with and without grid current) at both ends of every range, with
@@ -26,7 +29,12 @@ STAYS = [(m, b, f, ph, gh, q) for gh in (HARDNESS, 0.0) for m, ends in envelope(
          for f, ph in ((100, "cos"), (20, "cos"), (18000, "sin")) for q in QUALITY]
 
 
-@pytest.mark.parametrize("mode, bias, f, phase, hardness, quality", STAYS)
+def _id(case):     # "withgrid" / "nogrid" and the quality in every id: the CI shards select on them (ci.yml)
+    m, b, f, ph, gh, q = case
+    return f"{m}-{b:g}-{f}-{ph}-{'withgrid' if gh else 'nogrid'}-{q}"
+
+
+@pytest.mark.parametrize("mode, bias, f, phase, hardness, quality", STAYS, ids=[_id(c) for c in STAYS])
 def test_supported_envelope_stays_in_the_law(mode, bias, f, phase, hardness, quality):
     """At both ends of each supported range, 8 V peak tones from silence (envelope.py's worst stimuli: the step onset
     at 100 Hz and 20 Hz, the slope onset at 18 kHz) stay in the law in force on the interpolated internal-rate voltages
@@ -35,12 +43,12 @@ def test_supported_envelope_stays_in_the_law(mode, bias, f, phase, hardness, qua
     counts nothing and warns nothing."""
     with warnings.catch_warnings():
         warnings.simplefilter("error", OutOfLawWarning)
-        r = E.excursion(mode, bias, quality, f, phase, hardness)
+        r = E.excursion(mode, bias, quality, f, phase, hardness, offered=True)
     assert E.in_law(r) and r["out_of_law"] == 0, r
 
 
 @pytest.mark.parametrize("quality", QUALITY)
-@pytest.mark.parametrize("hardness", [HARDNESS, 0.0])
+@pytest.mark.parametrize("hardness", [HARDNESS, 0.0], ids=["withgrid", "nogrid"])
 def test_tone_onset_from_silence_at_the_top_of_t(quality, hardness):
     """The PR #121 re-review reproduction: an 8 V peak, zero-phase 18 kHz sine from silence through Stage.process.
     The interpolator overshoots (8.63 V); at T's supported top (of each hardness) the runtime guard sees nothing;
@@ -70,7 +78,7 @@ def test_grid_current_keeps_that_onset_in_the_law(quality):
     nothing."""
     with warnings.catch_warnings():
         warnings.simplefilter("error", OutOfLawWarning)
-        r = E.excursion("T", 0.35, quality, 100, "cos", HARDNESS)
+        r = E.excursion("T", 0.35, quality, 100, "cos", HARDNESS, offered=True)
     assert r["vg1k_max"] < 0.0 and E.in_law(r) and r["out_of_law"] == 0, r
 
 
@@ -91,7 +99,7 @@ def test_envelope_record_is_the_supported_range():
 def _swing_8v(mode, bias, hardness=HARDNESS, f0=1000.0):
     """(max Vg1k, min Vak, min Ip + Ig2, exp-capped) over the last 20 cycles of a 30 ms, 8 V peak sine at f0 (1 kHz)
     (standard 8x), at `hardness`."""
-    st = Stage(V.FS, bias=bias, mode=mode, experimental=True, grid_hardness=hardness)
+    st = Stage(V.FS, bias=bias, mode=mode, experimental=True, grid_hardness=hardness, quality=Q8)
     t = np.arange(int(0.03 * V.FS) + st.latency_samples) / V.FS
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", OutOfLawWarning)
@@ -108,7 +116,7 @@ def test_p1_grid_current_is_negligible():
     1e-14 A: run_refs.BIASES["dualg"] stops at 0.45 mA (RESULTS.md, "Grid current (#112)")."""
     r = {}
     for gh in (HARDNESS, 0.0):
-        st = Stage(V.FS, bias=0.6, grid_hardness=gh)
+        st = Stage(V.FS, bias=0.6, grid_hardness=gh, quality=Q8)
         t = np.arange(int(0.03 * V.FS) + st.latency_samples) / V.FS
         r[gh] = aligned(st, 8.0 * np.sin(2 * np.pi * 1000 * t), record=("out", "vgk", "ig1"))
     g = r[HARDNESS]["_internal"]

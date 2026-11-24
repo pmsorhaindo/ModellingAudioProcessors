@@ -29,6 +29,14 @@ reference (ii), ngspice running the same valve law. The bias control (#110) is i
 > **#131 (part a): bounds on that borrowed law.** DZ Table 1's other two measured 12AX7s (RSD-2, EHX-1), scaled the
 > same way, are opt-in bounds (`Stage(grid_shape=...)`, experimental only); the default stays RSD-1, bit for bit.
 > "Grid-current bounds (#131)" at the end has how far the T 0.45–0.6 mA results move.
+>
+> **#113 rework (22 Nov 2026; proposed, Michael's call): inaudible aliasing.** Aliasing on this path is now judged by
+> an inaudibility criterion (`dk6as6/inaudible.py`), not the dBc gate (and the CI guard checks it). Standard is 16×
+> and hq 32× (k140, #134's default). There is no eco, and T with grid current is supported to 0.35 mA. Details:
+> "Inaudible aliasing in every mode and quality (#113 rework)", after the #113 section. Every record in this file was
+> made before the rework, at standard 8× / hq 16× and judged against T to 0.5 mA. The aliasing records use the shipped
+> FIR, and the validation records `results*.json` use k140 since #134. None is re-run: `stage.record_stage` and
+> `QUALITY_RECORDS` reproduce them, and #104's C++ core and its tests still run those factors.
 
 ## Circuit values (#102)
 Copied from the #102 research pass
@@ -743,6 +751,376 @@ No listening test was run, and none is claimed; audibility stays open for produc
 - Grid-current T folding at 16×: more oversampling or ADAA for the grid law (with #104), once the grid law is validated.
 - Measure the 12AX7 stage at the band edge and with a k140-class resampler.
 - A 4×-accurate post-filter, if eco is ever wanted.
+
+## Inaudible aliasing in every mode and quality (#113 rework, 22 Nov 2026)
+Michael reopened #113 (21 Nov 2026). For this path he replaced the dBc gate with an inaudibility criterion that must
+hold in every mode and quality, with grid current, at 2 and 8 V and at 44.1 and 48 kHz. He also asked for an eco quality
+and for the k140 FIR. PR #129 stays (no revert); everything here is measured on top of it.
+- Criterion: `dk6as6/inaudible.py`.
+- Assessment: `python -m dk6as6.inaudible_sweep` → `inaudible.json`.
+- CI guard: `python -m dk6as6.aliasing_guard`, with baselines `aliasing_baseline_inaudible_<fs>.json`.
+- Tests: `test_dk6as6_inaudible.py`, `test_dk6as6_aliasing_guard.py`.
+
+### Proposal for Michael (a decision is needed; the numbers are below)
+This PR implements the proposal so that CI enforces the criterion on what is offered. Every item is a two-way door in
+the code (`stage.QUALITY`, `stage.SUPPORTED_MA`).
+1. **Standard 8× → 16×, hq 16× → 32×, both with k140.**
+   - 8× fails at 8 V in P1 at every bias (−7.9 to −21.3 dB) and in T 0.35 mA (−22.5 / −20.3 dB at 48 / 44.1 kHz).
+   - 16× passes every supported case at both rates and drives, in every post-filter position, for inputs below 20 kHz:
+     by at least +9.8 dB (T 0.35 mA, 8 V, 44.1 kHz, filter 4k; +25.7 dB with the filter off).
+   - 32× passes them by at least +18.5 dB (filter 4k; +34.3 dB off).
+   - CPU (C++ core) relative to today's 8×: 16× costs 1.65–1.96×, 32× 3.12–3.62×.
+2. **T with grid current supported to 0.35 mA (from 0.5 mA).** This caps a supported range.
+   - At 16× and 8 V (48 / 44.1 kHz): T 0.375 mA +3.7 / −6.7 dB, 0.4 mA −12.4 / −15.3, 0.45 mA −23.3 / −25.2,
+     0.5 mA −28.6 / −29.5. All of it is internal folding from the grid-current onset.
+   - Higher factors would hold more of the range. 32× holds T to 0.45 mA (+13.0 / +7.1 dB) and T 0.5 mA at 48 kHz only (+3.2 dB; −3.6 dB at 44.1 kHz, where it needs 64×).
+     But 32× as standard costs about two cores per mono channel in today's C++ core (CPU, below).
+   - ADAA (#136) may hold the range more cheaply. It is not built yet.
+3. **No eco.** Without ADAA (#136), no setting cheaper than 16× meets the criterion at 8 V.
+   - 8× misses by up to 22.5 dB (T 0.35 mA) and 21.3 dB (P1 0.6 mA); 4× by up to 60.3 dB (P1 0.6 mA, 44.1 kHz). At 4× and 8 V every supported case fails, even T 0.1 mA (−2.2 / −14.9 dB).
+   - Eco therefore waits for #136. Its numbers are posted there.
+4. **hq at 32×:** about two cores per mono channel on this M1 (measured under load, below). Michael's call: keep hq at
+   32× (for example render-only), leave it at 16× (then equal to standard), or drop it.
+5. **P2 stays experimental.** At 8 V and 16× it fails at 0.25 mA (−2.5 / −9.7 dB) and at 0.45 mA at 44.1 kHz (−1.9).
+   - The failing products are the resampler share at the band edge: a 19997 Hz tone's interpolator image mixes onto
+     |2f − fs|. A higher factor does not change that: 32× and 64× read the same as 16× to 0.1 dB (0.25 mA: −2.4 / −9.6 dB).
+6. **Inputs above 20 kHz fail at every factor (1088 of the 1248 points measured), and this PR does not guarantee them
+   (#147).** A tone between
+   20 kHz and Nyquist keeps an interpolator image at fs − f, inside the k140 half-band's transition band, which the
+   stage mixes onto |2f − fs|. At 8 V and 16×, filter off: 48 kHz, 23299 Hz → 1402 Hz at −29.7 dBFS (−83.3 dB);
+   44.1 kHz, 21799 Hz → 502 Hz at −27.3 dBFS (−81.5 dB). The 4k / 7k positions read worse (down to −104.6 dB), and
+   32× reads the same. The 12AX7 path has the same mechanism. The guarantee, the guard and the tables above cover
+   inputs below 20 kHz; fixing the rest needs an input band-limit or a first interpolator stage that stops from
+   fs / 2 (#147, with latency and CPU to measure). Michael's call whether that blocks this rework.
+7. **C++ (#104 / PR #133).** Its core has `MAX_OS` = 16 with standard 8× and hq 16×. If this is accepted, it needs 32×,
+   and the plugin's Quality menu changes (#115).
+
+### The criterion (`dk6as6/inaudible.py`)
+Every alias product must sit below −100 dBFS **and** at least 10 dB under the absolute threshold of hearing at its own
+frequency. Per product:
+- margin = limit − level;
+- limit(f) = min(−100 dBFS, T_q(f) − 10 dB − 105 dB).
+
+A point passes when every product's margin is ≥ 0.
+- **Threshold curve:** Terhardt's approximation of the threshold in quiet,
+  T_q(f) = 3.64 (f/kHz)^−0.8 − 6.5 e^(−0.6 (f/kHz − 3.3)²) + 10^−3 (f/kHz)^4 dB SPL.
+  - Sources: E. Terhardt, "Calculating virtual pitch", *Hearing Research* 1 (1979) 155–182; in the form of T. Painter
+    and A. Spanias, "Perceptual coding of digital audio", *Proc. IEEE* 88(4) (2000) 451–515, eq. 1.
+  - Its minimum is about −5 dB SPL near 3.3 kHz, so the limit is lowest there, about −120 dBFS.
+  - The threshold term binds only between about 170 Hz and 10.97 kHz. Outside that the −100 dBFS floor binds, so the
+    curve's steep top end, which is lenient (66 dB SPL at 16 kHz), decides no product.
+- **SPL calibration (an assumption):** a full-scale sine (0 dBFS, AES17) reproduces at 105 dB SPL.
+  - This is the SMPTE RP 200 cinema monitoring reference (pink noise at −20 dBFS RMS = 85 dB SPL, C-weighted, per
+    channel), taken for a sine. It is a loud listening level.
+  - A quieter calibration only loosens the threshold term. Every record's `spl_headroom_db` says how much louder the
+    calibration could be before that term fails. At the worst supported points it equals the margin (the table below).
+- **Full scale:** the output's own sample peak in the window, i.e. the level at which Output puts the processed signal at
+  full scale, the loudest that does not clip.
+  - It does not use the provisional volts mapping (#22, 1/64 FS per V at Output 1). At 8 V the stage peaks at
+    75–90 V, which that mapping would put 1.4–3 dB over full scale.
+- **Products:** a coherent tone on a DFT bin, 20 Hz–20 kHz. Every bin except the harmonics' own is read as a product,
+  from the unwindowed DFT, 20 log10(2 |R| / n / peak): exact for each coherent line whatever its neighbours (metric 3).
+  - History: metric 1 masked ±3 bins around every harmonic and could hide a folded line next to one (review round 2).
+    Metric 2 read the other bins through a Hann window, whose estimate subtracts half of each neighbour, so in-phase
+    neighbouring lines cancelled part of a line (review round 3: a cluster of seven folded lines passed both CI checks
+    over its limit). Every record carries `margin_hann_db`, metric 2's reading, for comparison.
+  - Cost: energy that is not a line (the start-up residue of the 1.25 s settle, mostly near 20 Hz) leaks further, about
+    10 dB above the windowed reading. It is −109 to −131 dBFS re the peak in the 0.1 s CI window and −130 to −146 dBFS
+    in 1 s at the guard keys, which still pass; where alias lines are the worst products the two readings agree to
+    0.4 dB.
+  - A harmonic's own bin is unmeasurable. Every record carries `first_hidden_order`, the lowest order whose fold could
+    land exactly on one: at least order 2090 on the 1 s grid, far above any order that reaches a measurable level.
+  - `test_dk6as6_inaudible.py` checks it on synthetic lines of known level, including both review cases: a −95 dBFS
+    line one bin from the fundamental (round 2; it fails by 5.0 dB), and the in-phase cluster (round 3; its centre at
+    1.5 dB over the limit fails the criterion, and 3 dB under its baseline margin fails the ratchet).
+  - Energy that is not a line is read per bin at the window's resolution. In the 0.1 s CI window, lines less than
+    10 Hz apart share a bin and read as their sum.
+- The dBc totals of the earlier sections stay as supporting evidence. They are no longer the gate for this path.
+
+### Method
+- **Grid:** 29 tones: the #6 tones (1037 … 19037 Hz), #113's band-edge scan and #104's 19957 / 19977 / 19997 Hz.
+  2 and 8 V; 44.1 and 48 kHz; a 1 s window after `SETTLE_S` (1.25 s).
+  - Always the production default stage: g1 grid current (`pentode.HARDNESS`), k140.
+  - **Post-filter (#103):** off everywhere. 7k and 4k as well at 16× and 32× for the supported cases (plus T 0.45 /
+    0.6 mA). The filter lowers the absolute alias energy, but it lowers the output peak (0 dBFS here) more at high
+    tones, so it costs margin (PR #146 review round 2).
+  - **Inputs above 20 kHz** (`ABOVE_20K_HZ`: 20299–23899 Hz at 48 kHz, 20299–21799 Hz at 44.1 kHz, below Nyquist) at
+    16× and 32× for those cases, every position. They are out of the guaranteed scope; see "What fails, and why".
+- **Cases:**
+  - P1: 0.1 / 0.25 / 0.45 / 0.6 mA.
+  - T: 0.1 / 0.25 / 0.3 / 0.35 / 0.375 / 0.4 / 0.45 / 0.5 / 0.55 / 0.6 mA, which covers #132's range.
+  - P2 (experimental): 0.1 / 0.25 / 0.45 / 0.6 mA.
+  - Factors: 8×, 16×, 32× everywhere; 64× for T 0.375–0.6 mA and P2 at 8 V; 4× for the supported cases.
+- **Engines.** The pure-Python stage costs about 75 µs per internal sample on this shared M1, so a 32× point takes about
+  5 min. The full grid (7830 points) is out of reach with it.
+  - So the grid ran on the C++ 6AS6 core (#104, `cpp/dk6as6_core.h`) through its `test_core_6as6 cli` harness,
+    built with Apple clang 17 at −O2. It was built from PR #133's head fc5d690, whose core files are identical to main's
+    since #133 merged (c8d882a).
+  - Two lines were changed so that it runs 32× and 64×: `MAX_OS` 16 → 64, and `ResamplerT::later_[3]` → `later_[5]`.
+  - The patched build is not committed.
+  - The Python stage re-measures every guard key's deciding tone and every failing point that a conclusion rests on
+    (`records_python`, `parity`): 33 points: every guard key's deciding tone (21), and the twelve failing points the proposal and the reviews cite. Those include the round-2 20299 Hz / 4k case and a 22999 Hz input. |Python − C++| ≤ 2e-4 dB in margin on all 32 paired points, with the same worst product. The 22999 Hz point is Python only.
+- **CPU:** thread CPU time per base-rate sample of one mono C++ Stage (`dk6as6/inaudible_bench.cpp`).
+  - 256-sample blocks, k140, a 1 + 7 + 13 kHz sum at 2 / 8 V peak.
+  - Best of 7 rounds of 1 s per factor, the factors interleaved in each round.
+  - Measured on the same M1, which other jobs shared: the load average was 4 at the start and about 90 during the run.
+    An earlier run under heavier load (75–190) gives the same ratios to within 0.2 (`inaudible_bench.json` has both).
+    The absolute numbers carry that load, so the ratios to 8× are the portable figure.
+- **Accuracy:** `dk6as6.validate.run` (every `dk/validate.CRIT` criterion against the same-model ngspice references) at
+  every reference setting of both models (44).
+  - It ran on the same C++ core with PR #133's `CppStage`, which #133 holds to Python within its parity limits
+    (`cpp/validate_cpp_6as6.LIMITS`: AC ≤ 1e-6 dB, harmonics ≤ 3e-4 dB), at 8×, 16×, 32× and 64× with k140.
+  - The live CI tests (`test_dk6as6_stage.py`, `test_dk6as6_validation.py`) run the Python stage at the new standard
+    and hq.
+
+### The smallest margin per case (C++ screen, every grid tone; dB, negative = fails)
+**2 V**: the smallest margin over the 29 grid tones, dB (negative = fails)
+
+| case | 48 kHz 4x | 48 kHz 8x | 48 kHz 16x | 48 kHz 32x | 48 kHz 64x | 44.1 kHz 4x | 44.1 kHz 8x | 44.1 kHz 16x | 44.1 kHz 32x | 44.1 kHz 64x |
+|---|---|---|---|---|---|---|---|---|---|---|
+| P1 0.1 mA | +62.7 | +62.7 | +62.7 | +62.7 | — | +55.7 | +62.0 | +62.0 | +62.0 | — |
+| P1 0.25 mA | +65.9 | +70.7 | +70.7 | +70.7 | — | +53.1 | +70.7 | +70.7 | +70.7 | — |
+| P1 0.45 mA | +59.1 | +59.1 | +59.1 | +59.1 | — | +50.3 | +52.0 | +52.0 | +52.0 | — |
+| P1 0.6 mA | +50.4 | +50.4 | +50.4 | +50.4 | — | +45.1 | +45.1 | +45.1 | +45.1 | — |
+| T 0.1 mA | +64.6 | +64.6 | +64.6 | +64.6 | — | +62.2 | +62.2 | +62.2 | +62.2 | — |
+| T 0.25 mA | +65.4 | +65.4 | +65.4 | +65.4 | — | +58.0 | +58.0 | +58.0 | +58.0 | — |
+| T 0.3 mA | +64.0 | +64.0 | +64.0 | +64.0 | — | +56.4 | +56.4 | +56.4 | +56.4 | — |
+| T 0.35 mA | +62.3 | +62.3 | +62.3 | +62.3 | — | +54.8 | +54.8 | +54.8 | +54.8 | — |
+| T 0.375 mA (unsupported) | — | +61.4 | +61.4 | +61.4 | +61.4 | — | +53.9 | +53.9 | +53.9 | +53.9 |
+| T 0.4 mA (unsupported) | — | +60.5 | +60.5 | +60.5 | — | — | +52.9 | +52.9 | +52.9 | — |
+| T 0.45 mA (unsupported) | +58.3 | +58.3 | +58.3 | +58.3 | — | +50.7 | +50.7 | +50.7 | +50.7 | — |
+| T 0.5 mA (unsupported) | — | +55.3 | +55.9 | +55.9 | — | — | +45.2 | +48.3 | +48.3 | — |
+| T 0.55 mA (unsupported) | — | -17.4 | +50.2 | +51.0 | — | — | -24.5 | +40.9 | +53.9 | — |
+| T 0.6 mA (unsupported) | -56.1 | -29.2 | +18.2 | +47.3 | — | -64.8 | -36.2 | +12.8 | +43.3 | — |
+| P2 0.1 mA (unsupported) | — | +24.1 | +24.1 | +24.1 | — | — | +18.6 | +18.6 | +18.6 | — |
+| P2 0.25 mA (unsupported) | — | +19.6 | +19.6 | +19.6 | — | — | +12.6 | +12.6 | +12.6 | — |
+| P2 0.45 mA (unsupported) | — | +18.0 | +18.0 | +18.0 | — | — | +10.4 | +10.4 | +10.4 | — |
+| P2 0.6 mA (unsupported) | — | +18.5 | +18.5 | +18.5 | — | — | +10.9 | +10.9 | +10.9 | — |
+
+**8 V**: the smallest margin over the 29 grid tones, dB (negative = fails)
+
+| case | 48 kHz 4x | 48 kHz 8x | 48 kHz 16x | 48 kHz 32x | 48 kHz 64x | 44.1 kHz 4x | 44.1 kHz 8x | 44.1 kHz 16x | 44.1 kHz 32x | 44.1 kHz 64x |
+|---|---|---|---|---|---|---|---|---|---|---|
+| P1 0.1 mA | -45.7 | -7.9 | +44.7 | +44.7 | — | -52.9 | -11.8 | +37.0 | +37.0 | — |
+| P1 0.25 mA | -43.6 | -14.8 | +44.8 | +44.8 | — | -56.4 | -15.7 | +37.5 | +37.5 | — |
+| P1 0.45 mA | -47.1 | -18.7 | +41.7 | +41.7 | — | -58.1 | -12.7 | +40.8 | +42.9 | — |
+| P1 0.6 mA | -49.4 | -21.1 | +34.3 | +34.3 | — | -60.3 | -21.3 | +34.3 | +34.3 | — |
+| T 0.1 mA | -2.2 | +54.8 | +54.8 | +54.8 | — | -14.9 | +47.2 | +47.2 | +47.2 | — |
+| T 0.25 mA | -12.0 | +50.5 | +50.5 | +50.5 | — | -16.0 | +42.9 | +42.9 | +42.9 | — |
+| T 0.3 mA | -14.3 | +49.0 | +49.0 | +49.0 | — | -17.0 | +41.4 | +41.4 | +41.4 | — |
+| T 0.35 mA | -51.9 | -22.5 | +34.3 | +49.5 | — | -57.3 | -20.3 | +25.7 | +42.0 | — |
+| T 0.375 mA (unsupported) | — | -40.9 | +3.7 | +45.5 | +45.5 | — | -35.2 | -6.7 | +47.4 | +47.4 |
+| T 0.4 mA (unsupported) | — | -45.1 | -12.4 | +35.7 | +44.2 | — | -50.2 | -15.3 | +27.6 | +47.1 |
+| T 0.45 mA (unsupported) | -66.9 | -51.9 | -23.3 | +13.0 | +36.6 | -71.2 | -44.5 | -25.2 | +7.1 | +36.6 |
+| T 0.5 mA (unsupported) | — | -53.7 | -28.6 | +3.2 | +29.9 | — | -57.4 | -29.5 | -3.6 | +29.9 |
+| T 0.55 mA (unsupported) | — | -55.5 | -32.7 | -5.3 | +25.5 | — | -59.0 | -32.5 | -11.4 | +25.5 |
+| T 0.6 mA (unsupported) | -69.2 | -60.8 | -30.5 | -12.1 | +22.3 | -76.6 | -57.3 | -36.6 | -13.4 | +22.3 |
+| P2 0.1 mA (unsupported) | — | -44.5 | +1.6 | +1.6 | +1.6 | — | -45.6 | +1.5 | +1.5 | +1.5 |
+| P2 0.25 mA (unsupported) | — | -62.6 | -14.7 | -14.7 | -14.7 | — | -64.4 | -15.2 | -15.2 | -15.2 |
+| P2 0.45 mA (unsupported) | — | -55.2 | -4.2 | -4.2 | -4.2 | — | -50.8 | -4.3 | -4.3 | -4.3 |
+| P2 0.6 mA (unsupported) | — | -52.7 | +0.6 | +0.6 | +0.6 | — | -53.2 | +0.6 | +0.6 | +0.6 |
+
+The lowest measured factor at which every grid tone passes (— : none measured passes):
+
+| case | 48 kHz, 2 V | 48 kHz, 8 V | 44.1 kHz, 2 V | 44.1 kHz, 8 V |
+|---|---|---|---|---|
+| P1 0.1 mA | 4× | 16× | 4× | 16× |
+| P1 0.25 mA | 4× | 16× | 4× | 16× |
+| P1 0.45 mA | 4× | 16× | 4× | 16× |
+| P1 0.6 mA | 4× | 16× | 4× | 16× |
+| T 0.1 mA | 4× | 8× | 4× | 8× |
+| T 0.25 mA | 4× | 8× | 4× | 8× |
+| T 0.3 mA | 4× | 8× | 4× | 8× |
+| T 0.35 mA | 4× | 16× | 4× | 16× |
+| T 0.375 mA | 8× | 16× | 8× | 32× |
+| T 0.4 mA | 8× | 32× | 8× | 32× |
+| T 0.45 mA | 4× | 32× | 4× | 32× |
+| T 0.5 mA | 8× | 32× | 8× | 64× |
+| T 0.55 mA | 16× | 64× | 16× | 64× |
+| T 0.6 mA | 16× | 64× | 16× | 64× |
+| P2 0.1 mA | 8× | 16× | 8× | 16× |
+| P2 0.25 mA | 8× | — | 8× | — |
+| P2 0.45 mA | 8× | — | 8× | — |
+| P2 0.6 mA | 8× | 16× | 8× | 16× |
+
+### The worst supported point per quality
+| rate | factor | drive | worst supported point | margin dB | product Hz | level dBFS | limit dBFS | source | SPL headroom dB |
+|---|---|---|---|---|---|---|---|---|---|
+| 48 kHz | 8x | 2 V | P1 0.6 mA, 3037 Hz, filter off | +50.4 | 3038 | -170.0 | -119.7 | resampler | +50.4 |
+| 48 kHz | 8x | 8 V | T 0.35 mA, 19037 Hz, filter off | -22.5 | 3260 | -97.5 | -120.0 | internal | -22.5 |
+| 48 kHz | 16x | 2 V | P1 0.6 mA, 19997 Hz, filter 4k | +30.1 | 20 | -130.1 | -100.0 | other | +40.5 |
+| 48 kHz | 16x | 8 V | T 0.35 mA, 19637 Hz, filter 4k | +13.0 | 2157 | -128.9 | -116.0 | internal | +13.0 |
+| 48 kHz | 32x | 2 V | P1 0.6 mA, 19997 Hz, filter 4k | +30.1 | 20 | -130.1 | -100.0 | other | +40.5 |
+| 48 kHz | 32x | 8 V | P1 0.1 mA, 19997 Hz, filter 4k | +24.0 | 20 | -124.0 | -100.0 | other | +32.5 |
+| 44.1 kHz | 8x | 2 V | P1 0.6 mA, 19997 Hz, filter off | +45.1 | 4106 | -163.0 | -117.9 | resampler | +45.1 |
+| 44.1 kHz | 8x | 8 V | P1 0.6 mA, 19437 Hz, filter off | -21.3 | 2934 | -98.1 | -119.4 | internal | -21.3 |
+| 44.1 kHz | 16x | 2 V | P1 0.6 mA, 19997 Hz, filter 4k | +26.4 | 4106 | -144.4 | -117.9 | resampler | +26.4 |
+| 44.1 kHz | 16x | 8 V | T 0.35 mA, 19997 Hz, filter 4k | +9.8 | 5705 | -123.1 | -113.2 | internal | +9.8 |
+| 44.1 kHz | 32x | 2 V | P1 0.6 mA, 19997 Hz, filter 4k | +26.5 | 4106 | -144.4 | -117.9 | resampler | +26.5 |
+| 44.1 kHz | 32x | 8 V | P1 0.1 mA, 19997 Hz, filter 4k | +18.5 | 4106 | -136.4 | -117.9 | resampler | +18.5 |
+
+### Post-filter positions (in scope; the worst supported case per rate, factor, drive and position, dB)
+| rate | factor | drive | filter off | filter 4k | filter 7k |
+|---|---|---|---|---|---|
+| 48 kHz | 16x | 2 V | +50.4 (P1 0.6 mA, 3037 Hz) | +30.1 (P1 0.6 mA, 19997 Hz) | +38.2 (P1 0.6 mA, 19997 Hz) |
+| 48 kHz | 16x | 8 V | +34.3 (P1 0.6 mA, 3037 Hz) | +13.0 (T 0.35 mA, 19637 Hz) | +19.8 (T 0.35 mA, 19637 Hz) |
+| 48 kHz | 32x | 2 V | +50.4 (P1 0.6 mA, 3037 Hz) | +30.1 (P1 0.6 mA, 19997 Hz) | +38.2 (P1 0.6 mA, 19997 Hz) |
+| 48 kHz | 32x | 8 V | +34.3 (P1 0.6 mA, 3037 Hz) | +24.0 (P1 0.1 mA, 19997 Hz) | +30.1 (P1 0.6 mA, 18037 Hz) |
+| 44.1 kHz | 16x | 2 V | +45.1 (P1 0.6 mA, 19997 Hz) | +26.4 (P1 0.6 mA, 19997 Hz) | +31.7 (P1 0.6 mA, 19997 Hz) |
+| 44.1 kHz | 16x | 8 V | +25.7 (T 0.35 mA, 19997 Hz) | +9.8 (T 0.35 mA, 19997 Hz) | +13.9 (T 0.35 mA, 19997 Hz) |
+| 44.1 kHz | 32x | 2 V | +45.1 (P1 0.6 mA, 19997 Hz) | +26.5 (P1 0.6 mA, 19997 Hz) | +31.7 (P1 0.6 mA, 19997 Hz) |
+| 44.1 kHz | 32x | 8 V | +34.3 (P1 0.6 mA, 3037 Hz) | +18.5 (P1 0.1 mA, 19997 Hz) | +23.7 (P1 0.1 mA, 19997 Hz) |
+
+The filter lowers the output peak (0 dBFS here) more than the low-frequency alias products at high input tones, so
+4k costs up to about 16 dB of margin against off; every supported in-scope point still passes at 16× and 32×.
+
+### Inputs above 20 kHz (out of scope, reported; #147)
+| rate | factor | drive | filter off | filter 4k | filter 7k |
+|---|---|---|---|---|---|
+| 48 kHz | 16x | 2 V | -79.3 (P1 0.6 mA, 23299 Hz → 1402 Hz, -33.7 dBFS) | -102.1 (P1 0.6 mA, 23299 Hz → 1402 Hz, -10.9 dBFS) | -96.6 (P1 0.6 mA, 23299 Hz → 1402 Hz, -16.4 dBFS) |
+| 48 kHz | 16x | 8 V | -83.3 (P1 0.1 mA, 23299 Hz → 1402 Hz, -29.7 dBFS) | -104.6 (T 0.35 mA, 23299 Hz → 1402 Hz, -8.3 dBFS) | -100.0 (P1 0.1 mA, 23299 Hz → 1402 Hz, -13.0 dBFS) |
+| 48 kHz | 32x | 2 V | -79.3 (P1 0.6 mA, 23299 Hz → 1402 Hz, -33.7 dBFS) | -102.0 (P1 0.6 mA, 23299 Hz → 1402 Hz, -10.9 dBFS) | -96.6 (P1 0.6 mA, 23299 Hz → 1402 Hz, -16.4 dBFS) |
+| 48 kHz | 32x | 8 V | -83.3 (P1 0.1 mA, 23299 Hz → 1402 Hz, -29.7 dBFS) | -104.6 (T 0.35 mA, 23299 Hz → 1402 Hz, -8.3 dBFS) | -100.0 (P1 0.1 mA, 23299 Hz → 1402 Hz, -13.0 dBFS) |
+| 44.1 kHz | 16x | 2 V | -77.5 (P1 0.6 mA, 21799 Hz → 502 Hz, -31.2 dBFS) | -99.7 (P1 0.6 mA, 21799 Hz → 502 Hz, -9.0 dBFS) | -94.8 (P1 0.6 mA, 21799 Hz → 502 Hz, -13.9 dBFS) |
+| 44.1 kHz | 16x | 8 V | -81.5 (P1 0.6 mA, 21799 Hz → 502 Hz, -27.3 dBFS) | -103.1 (P1 0.6 mA, 21799 Hz → 502 Hz, -5.6 dBFS) | -97.7 (T 0.35 mA, 21799 Hz → 502 Hz, -11.1 dBFS) |
+| 44.1 kHz | 32x | 2 V | -77.5 (P1 0.6 mA, 21799 Hz → 502 Hz, -31.2 dBFS) | -99.7 (P1 0.6 mA, 21799 Hz → 502 Hz, -9.0 dBFS) | -94.8 (P1 0.6 mA, 21799 Hz → 502 Hz, -13.9 dBFS) |
+| 44.1 kHz | 32x | 8 V | -81.5 (P1 0.6 mA, 21799 Hz → 502 Hz, -27.3 dBFS) | -103.1 (P1 0.6 mA, 21799 Hz → 502 Hz, -5.7 dBFS) | -97.7 (T 0.35 mA, 21799 Hz → 502 Hz, -11.1 dBFS) |
+
+Every worst supported point is either the k140 floor (resampler) or internal folding at least 9.8 dB under its limit.
+SPL headroom equals the margin there, so these points pass for any calibration up to 105 + margin dB SPL.
+
+### What fails, and why
+- **P1 at 8×, 8 V:** internal folding at every bias. The worst is 0.6 mA (the least cathode feedback): −21.1 / −21.3 dB at 48 / 44.1 kHz. The products near 3–4 kHz sit at about −97 to −98 dBFS, over the −100 dBFS floor as well.
+  16× passes all of it by ≥ +37.0 dB (on the k140 floor at 48 kHz; at 44.1 kHz P1 0.45 / 0.6 mA are still internal
+  folding, +40.8 / +37.0 dB).
+- **T above 0.35 mA at 8 V:** the g1 grid-current onset (the borrowed Dempwolf–Zölzer law, unvalidated, #112 / #131)
+  folds high-order products into the band, and the worst lands near 2–6 kHz, where the limit is −113 to −120 dBFS.
+  - The onset sharpens with bias, so the factor needed rises fast: 0.375 mA needs 32× at 44.1 kHz; 0.4–0.45 mA 32×;
+    0.5 mA 32× at 48 kHz and 64× at 44.1 kHz; 0.55–0.6 mA 64× (8 V margins +25.5 / +25.5 and +22.3 / +22.3 dB at 48 / 44.1 kHz). T 0.55–0.6 mA also fails at 2 V and 8× (−17.4 to −36.2 dB).
+  - At 2 V every T bias passes at 16× (≥ +12.8 dB, T 0.6 mA, 44.1 kHz).
+- **P2:** at 8 V the worst products are the resampler share at the band edge (a 19997 Hz tone, onto |2f − fs| = 8006 / 4106 Hz). They read the same at 16×, 32× and 64× (0.25 mA: −2.5 / −2.4 / −2.4 dB at 48 kHz, −9.7 / −9.6 / −9.6 dB at 44.1 kHz), so only a resampler with more stopband would move them. At 2 V, P2 passes at 8× and above.
+- **Inputs above 20 kHz:** 1088 of the 1248 points fail. Every point fails from 21.5 kHz up (48 kHz) and from
+  20.9 kHz up (44.1 kHz); only near 20.3 kHz do some pass. It is the interpolator's image, not folding, so 32× reads
+  the same as 16× (item 6 above and the table "Inputs above 20 kHz").
+
+### CPU (C++ core, one mono channel; µs per base-rate sample, ratio to 8×, % of real time at that rate)
+| rate | case | 4× | 8× | 16× | 32× | 64× |
+|---|---|---|---|---|---|---|
+| 48 kHz | P1 0.45 mA 2 V | 6.0 (0.59×, 29 %) | 10.0 (1.00×, 48 %) | 19.7 (1.96×, 94 %) | 34.5 (3.44×, 166 %) | 59.7 (5.95×, 287 %) |
+| 48 kHz | P1 0.45 mA 8 V | 7.4 (0.56×, 36 %) | 13.2 (1.00×, 63 %) | 21.7 (1.65×, 104 %) | 43.4 (3.29×, 209 %) | 67.9 (5.15×, 326 %) |
+| 48 kHz | T 0.5 mA 8 V | 7.9 (0.62×, 38 %) | 12.8 (1.00×, 61 %) | 22.9 (1.79×, 110 %) | 42.0 (3.28×, 202 %) | 69.1 (5.40×, 332 %) |
+| 44.1 kHz | P1 0.45 mA 2 V | 5.5 (0.48×, 24 %) | 11.4 (1.00×, 50 %) | 22.1 (1.93×, 97 %) | 41.4 (3.62×, 182 %) | 68.2 (5.97×, 301 %) |
+| 44.1 kHz | P1 0.45 mA 8 V | 7.6 (0.56×, 34 %) | 13.6 (1.00×, 60 %) | 23.0 (1.70×, 102 %) | 44.9 (3.31×, 198 %) | 72.5 (5.35×, 320 %) |
+| 44.1 kHz | T 0.5 mA 8 V | 8.2 (0.61×, 36 %) | 13.4 (1.00×, 59 %) | 22.7 (1.70×, 100 %) | 41.7 (3.12×, 184 %) | 70.7 (5.28×, 312 %) |
+
+On an unloaded machine all of these are lower; the ratios carry over. For scale, #136 (from PR #133) gives standard 8×
+on the CI x86-64 runner at 32–39 % of one core, mono. Scaled by the ratios above, that estimates 16× at about 53–76 %
+and 32× at about 100–141 % of one core per mono channel there. This is an estimate, not a measurement.
+
+### Accuracy at the new factors (`dk/validate.CRIT` unchanged)
+| factor | supported settings passing (all reference settings run) | worst small-signal chain, dB | worst H2–H5, dB | worst op, relative | Newton unconverged |
+|---|---|---|---|---|---|
+| 8× | 12 / 12 (22 run) | 1.2e-04 | 0.0034 | 2.8e-09 | 0 |
+| 16× | 12 / 12 (22 run) | 2.9e-05 | 0.0034 | 2.8e-09 | 0 |
+| 32× | 12 / 12 (22 run) | 7.1e-06 | 0.0034 | 2.8e-09 | 0 |
+| 64× | 12 / 12 (22 run) | 2.5e-06 | 0.0034 | 2.8e-09 | 0 |
+
+### Eco and ADAA (#136)
+This PR implements no ADAA and invents none: #136 owns it. From the tables above, at 8 V and the worst supported
+case, an eco setting would have to close these gaps:
+
+| factor | P1 (worst, 0.6 mA) | T 0.35 mA | T 0.1–0.3 mA (worst) | CPU relative to 16× |
+|---|---|---|---|---|
+| 8× | −21.1 / −21.3 dB | −22.5 / −20.3 dB | passes (≥ +41.4 dB) | 0.51–0.61 |
+| 4× | −49.4 / −60.3 dB | −51.9 / −57.3 dB | −14.3 / −17.0 dB | 0.24–0.38 |
+
+- An eco at 8× needs an ADAA that removes at least about 23 dB of the internal folding at 8 V, for P1 and T 0.35 mA,
+  at both rates. At 4× it needs about 61 dB.
+- #136 records an ideal-ADAA ceiling of up to about 47 dB at 8 V (PR #133, on the dBc metric). Whether a real stateful
+  ADAA reaches that is #136's measurement.
+- The criterion, the sweep (`inaudible_sweep.measure` takes any stage) and the guard here take an ADAA quality
+  unchanged.
+
+### #132 (T 0.3–0.6 mA)
+The T rows of the tables above are #132's acceptance measurement under this criterion: every bias from 0.3 to 0.6 mA,
+2 and 8 V, 44.1 and 48 kHz, at 8×, 16×, 32× and (8 V) 64×.
+- At 2 V every T bias passes at 16×.
+- At 8 V the supported range at 16× ends at 0.35 mA (item 2 above).
+- #132 stays open for the decision on the range.
+
+### The CI guard (`dk6as6/aliasing_guard.py`, jobs `aliasing (6as6, <quality>, <rate> Hz)`)
+- **Points:** per rate and offered quality, `aliasing_guard.derive()` takes from `inaudible.json`, for each drive:
+  - each mode's lowest-margin supported case;
+  - each mode's top supported bias;
+  - the lowest-margin tone(s) at each, on distinct 0.1 s bins (2 at standard, 1 at hq, for CI time).
+  - `test_dk6as6_aliasing_guard.py` re-derives them.
+- **Checks:** each point runs the Python stage in the 0.1 s CI window after 1.25 s.
+  - It must pass the criterion, with no tolerance.
+  - Its margin must not fall more than 1.5 dB below its committed baseline.
+- Every key sits at the 4k position, which is the worst for every supported case in scope.
+- In the 0.1 s window, the 4k filter's lower output peak and the unwindowed reading lift the start-up residue near
+  20 Hz (to −109 dBFS re that peak). At the 2 V keys and the P1 8 V keys this residue is the worst product: they read
+  up to about 15 dB under their 1 s margin, the lowest CI margin being +9.2 dB (P1 0.1 mA, 8 V). That is conservative,
+  but at those keys the ratchet watches the residue, not the alias products.
+- The tightest alias keys (T 0.35 mA at 8 V, +9.5 to +14.5 dB) read the same alias products as the 1 s grid, to within
+  0.4 dB (table).
+
+| rate | quality | key | tone Hz | CI-window margin dB | worst product Hz | 1 s grid margin dB |
+|---|---|---|---|---|---|---|
+| 48 kHz | standard | P1 0.1 mA, 8 V, filter 4k | 19997 | +9.19 | 20 | +23.94 |
+| 48 kHz | standard | P1 0.1 mA, 8 V, filter 4k | 19977 | +9.20 | 20 | +23.96 |
+| 48 kHz | standard | P1 0.6 mA, 2 V, filter 4k | 19997 | +15.09 | 20 | +30.06 |
+| 48 kHz | standard | P1 0.6 mA, 2 V, filter 4k | 19977 | +15.09 | 20 | +30.08 |
+| 48 kHz | standard | P1 0.6 mA, 8 V, filter 4k | 19637 | +10.31 | 20 | +24.76 |
+| 48 kHz | standard | P1 0.6 mA, 8 V, filter 4k | 19997 | +10.03 | 20 | +25.11 |
+| 48 kHz | standard | T 0.35 mA, 2 V, filter 4k | 19997 | +30.62 | 20 | +45.95 |
+| 48 kHz | standard | T 0.35 mA, 2 V, filter 4k | 19977 | +30.63 | 20 | +45.96 |
+| 48 kHz | standard | T 0.35 mA, 8 V, filter 4k | 19637 | +13.25 | 2040 | +12.95 |
+| 48 kHz | standard | T 0.35 mA, 8 V, filter 4k | 19237 | +14.43 | 1600 | +14.76 |
+| 48 kHz | hq | P1 0.1 mA, 8 V, filter 4k | 19997 | +9.20 | 20 | +23.95 |
+| 48 kHz | hq | P1 0.6 mA, 2 V, filter 4k | 19997 | +15.10 | 20 | +30.07 |
+| 48 kHz | hq | P1 0.6 mA, 8 V, filter 4k | 19997 | +10.04 | 20 | +25.12 |
+| 48 kHz | hq | T 0.3 mA, 8 V, filter 4k | 19997 | +16.94 | 20 | +32.15 |
+| 48 kHz | hq | T 0.35 mA, 2 V, filter 4k | 19997 | +30.63 | 20 | +45.96 |
+| 48 kHz | hq | T 0.35 mA, 8 V, filter 4k | 19837 | +30.40 | 20 | +32.47 |
+| 44.1 kHz | standard | P1 0.6 mA, 2 V, filter 4k | 19997 | +15.07 | 20 | +26.45 |
+| 44.1 kHz | standard | P1 0.6 mA, 2 V, filter 4k | 19987 | +15.07 | 20 | +27.31 |
+| 44.1 kHz | standard | P1 0.6 mA, 8 V, filter 4k | 19637 | +10.30 | 20 | +17.95 |
+| 44.1 kHz | standard | T 0.35 mA, 2 V, filter 4k | 19997 | +30.64 | 20 | +36.25 |
+| 44.1 kHz | standard | T 0.35 mA, 2 V, filter 4k | 19987 | +30.65 | 20 | +37.12 |
+| 44.1 kHz | standard | T 0.35 mA, 8 V, filter 4k | 19997 | +9.53 | 5600 | +9.82 |
+| 44.1 kHz | standard | T 0.35 mA, 8 V, filter 4k | 19987 | +10.46 | 5950 | +10.73 |
+| 44.1 kHz | hq | P1 0.1 mA, 8 V, filter 4k | 19997 | +9.20 | 20 | +18.46 |
+| 44.1 kHz | hq | P1 0.6 mA, 2 V, filter 4k | 19997 | +15.08 | 20 | +26.47 |
+| 44.1 kHz | hq | P1 0.6 mA, 8 V, filter 4k | 19997 | +10.03 | 20 | +25.12 |
+| 44.1 kHz | hq | T 0.3 mA, 8 V, filter 4k | 19997 | +16.94 | 20 | +22.87 |
+| 44.1 kHz | hq | T 0.35 mA, 2 V, filter 4k | 19997 | +30.66 | 20 | +36.27 |
+| 44.1 kHz | hq | T 0.35 mA, 8 V, filter 4k | 19997 | +23.53 | 4100 | +23.55 |
+
+- **Tests:** `test_dk6as6_aliasing_guard.py` runs no stage. It checks:
+  - every offered quality passes on the whole supported envelope (every case, drive, rate and tone of the screen, and
+    every Python point);
+  - Python reads the screen to `PARITY_DB` (0.01 dB);
+  - the keys and tones are derived as above;
+  - the baselines cover the keys and pass;
+  - the comparison fails on a criterion failure, a ratchet regression, a missing point and a Newton failure.
+
+### k140 on the Python stage, and the records made before this rework
+- `stage.FIR = "k140"` is the default (#134, PR #133; this rework started from the same table and API).
+- Every record made before this rework is at standard 8× / hq 16×, judged against T to 0.5 mA. The aliasing,
+  envelope, grid and bounds records (`aliasing*.json`, `aliasing_quality.json`, `resampler_study.json`,
+  `envelope*.json`, `grid*.json`, `grid_bounds.json`, `modes.json`, `bias_sweep.json`) use the shipped FIR. The
+  validation records `results*.json` use k140, re-run in #134.
+  - `stage.record_stage` (with `QUALITY_RECORDS` and the helpers' own `FIR`) builds that stage for the helpers that
+    reproduce those records.
+  - `stage.SUPPORTED_MA_RECORDS` / `supported_records` give the envelope they were judged against.
+  - None of them is re-run here.
+- #104's C++ core keeps those factors and that envelope until it follows this rework. Its harnesses
+  (`cpp/validate_cpp_6as6.py`, `cpp/aliasing_6as6.py`) read `QUALITY_RECORDS` and `supported_records`.
+- The live envelope tests (`test_dk6as6_envelope.py`, `envelope.excursion(..., offered=True)`) and the live validation
+  tests re-check the offered stage, at 16× / 32× with k140, at the ends of the new envelope.
+- #113's dBc guard, as #134 left it, is frozen as `aliasing_guard_dbc.py` with its baselines and
+  `aliasing_guard_k140.json`, because `cpp/aliasing_6as6.py guardgrid` is built on its keys.
 
 ## #51 vs #55 valve fit: harmonic profile (informational; `python -m dk6as6.compare_fits` → `fit_comparison.json`)
 Same circuit, method, quality (standard 8×) and target current (0.45 mA, so Rk is solved per fit: 9.8729 kΩ for #55,

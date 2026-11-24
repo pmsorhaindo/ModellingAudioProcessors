@@ -19,7 +19,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from analysis import harmonics, thd, db_rel  # noqa: E402 -- after the sys.path setup
 from dk.validate import aligned  # noqa: E402 -- after the sys.path setup
-from dk6as6.stage import Stage, QUALITY, knob_bias, bias_point  # noqa: E402 -- after the sys.path setup
+from dk6as6.stage import record_stage, QUALITY_RECORDS as QUALITY, knob_bias, bias_point  # noqa: E402 -- the records
 from dk6as6 import linear, validate  # noqa: E402 -- after the sys.path setup
 
 FS = 48000.0
@@ -39,7 +39,7 @@ def tone(st, a):
 
 
 def point(bias):
-    st = Stage(FS, bias=bias, grid_hardness=GRID_HARDNESS)
+    st = record_stage(FS, bias=bias, grid_hardness=GRID_HARDNESS)
     g = abs(linear.analog_response(st, [1000.0])[0])
     a = OUT_PEAK_V / g
     h = tone(st, a)
@@ -54,8 +54,9 @@ def point(bias):
 def knob(k):
     b = knob_bias(k)
     newton = {}
+    validate.FIR = "shipped"            # bias_sweep.json: the pre-#113-rework records (shipped FIR, 8x / 16x)
     for q in QUALITY:
-        its = list(validate.sines(q, bias=b)[2].values()) + [validate.burst(q, bias=b)[1]]
+        its = list(validate.sines(QUALITY[q], bias=b)[2].values()) + [validate.burst(QUALITY[q], bias=b)[1]]
         newton[q] = dict(samples=sum(s["samples"] for s in its), nonconverged=sum(s["nonconverged"] for s in its),
                          max_iterations=max(s["max"] for s in its))
     p = point(b)

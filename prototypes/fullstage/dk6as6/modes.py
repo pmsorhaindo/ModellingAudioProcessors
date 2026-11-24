@@ -25,7 +25,7 @@ from analysis import harmonics, thd, db_rel  # noqa: E402 -- after the sys.path 
 from spice.run_refs import AMPS  # noqa: E402 -- after the sys.path setup
 from dk.validate import aligned  # noqa: E402 -- after the sys.path setup
 from dk6as6.circuit import MODES, VALUES  # noqa: E402 -- after the sys.path setup
-from dk6as6.stage import Stage  # noqa: E402 -- after the sys.path setup
+from dk6as6.stage import record_stage  # noqa: E402 -- after the sys.path setup (modes.json: pre-#113-rework records)
 from dk6as6 import linear  # noqa: E402 -- after the sys.path setup
 
 FS = 48000.0
@@ -41,7 +41,7 @@ FIT_RANGE = dict(vg1k=(-5.0, 0.0), vg2k=(60.0, 140.0), vg3k=(-9.0, 12.0), vak=(2
 
 
 def dc(mode, bias):
-    st = Stage(FS, bias=bias, mode=mode, experimental=True, grid_hardness=GRID_HARDNESS)
+    st = record_stage(FS, bias=bias, mode=mode, experimental=True, grid_hardness=GRID_HARDNESS)
     h, h20 = linear.analog_response(st, [1000.0, 20000.0])
     d = st.dc
     return dict(mode=mode, bias_ma=bias, rk=st.rk, va=d["nodes"]["a"], vk=d["nodes"]["k"],
@@ -67,7 +67,7 @@ def outside(sw):
 
 
 def tone(mode, bias, drive):
-    st = Stage(FS, bias=bias, mode=mode, experimental=True, grid_hardness=GRID_HARDNESS)
+    st = record_stage(FS, bias=bias, mode=mode, experimental=True, grid_hardness=GRID_HARDNESS)
     t = np.arange(int(T * FS) + st.latency_samples) / FS
     r = aligned(st, drive * np.sin(2 * np.pi * 1000 * t), record=("out", "a", "k", "vgk"))
     h = harmonics(r["out"], FS, 1000.0, 100)
