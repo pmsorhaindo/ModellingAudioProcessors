@@ -1654,3 +1654,183 @@ nominal stage only (`aliasing_guard.GRID_HARDNESS`, shape RSD-1), so none of thi
   3.8 mV *earlier* than RSD-1 at 20 µA, later at 1 µA and 10 µA). A 6AS6 that conducts 0.2–0.3 V earlier (the 6Ж2П
   hint) lies well outside that spread. That is #131b. T-mode aliasing with these bounds is #132. The positive-g1
   measurement stays parked in #131. **Every grid-current result stays labelled "estimated, unvalidated."**
+
+## Feasibility of a fuller Holters stateful ADAA (#153)
+
+**Conclusion.** The published full-map method is applicable by numerical integration, as
+demonstrated in #136. Applying the journal's parallel form port by port preserves the
+coupled solve, and dimension reduction leaves a three-coordinate implicit map. Neither
+reformulation provides a distinct eco candidate for the 8 V gate at T 0.5 mA. The
+assessment below uses the existing circuit and nominal RSD-1 grid law, which is estimated
+and unvalidated against a real 6AS6.
+
+### What the two papers allow
+
+- Holters's DAFx-19 paper (Birmingham, UK, 2–6 September 2019), §3, assumes a scalar
+  argument for the nonlinear terms. The diode examples treat the **solution** of the
+  delay-free loop as the function to antialias. Equations (9)–(12) average the linear
+  terms too, and recalculate the system at two-thirds of its running rate to compensate
+  the extra half-sample of feedback delay. [Conference paper](https://www.dafx.de/paper-archive/2019/DAFx2019_paper_4.pdf)
+- The extended article, *Applied Sciences* 2020, 10(1), 20 (published 18 December 2019),
+  §§2–4, permits parallel functions of different linear projections of state and input.
+  Its efficiency argument requires independently evaluable functions of scalar or
+  low-dimensional arguments. For a vector argument the integral in (2) is along the
+  segment between consecutive input vectors. Section 2 describes tabulating either
+  the endpoint pairs or the antiderivative along each line. Equations (12)–(13)
+  explicitly allow reusing the same solved function for state and output.
+  [Journal article](https://doi.org/10.3390/app10010020)
+- #136 already used that shared-function case. With the DC offsets implicit, it
+  integrated the **joint** current solution `i(p)` along the segment in
+  `p = p_dc + Gx + Hu`, using the result in both `C i` and `F i`. It applied the
+  same kernel to the linear contributions and retimed the DK coefficients. It used
+  the box of Holters (2), (16)–(19) and the triangle of Parker et al., §3.
+  [#136 implementation and results at 1499f67](https://github.com/pmsorhaindo/ModellingAudioProcessors/blob/1499f6755dd1a97f880d116017c48acd23993a53/prototypes/fullstage/dk6as6/RESULTS.md#state-space-antiderivative-antialiasing-136),
+  [Parker, Zavalishin and Le Bivic, DAFx-16](https://www.dafx.de/paper-archive/2016/dafxpapers/20-DAFx-16_paper_41-PN.pdf)
+
+### What can be split in this circuit
+
+The DK loop is `v = p - K i`, `i = (Ip, Ig2, Ig1)`, with the three currents
+evaluated at the **same solved** port voltages. In [pentode.py](pentode.py), the
+grid law is scalar in the solved `Vg1k`, but `Vg1k` also depends on `Ip` and
+`Ig2` through the grid row of `K`. The valve law makes the coupling mutual.
+`Ip = (Ik - Ig1) f` and `Ig2 = (Ik - Ig1)(1 - f)`, with a voltage-dependent
+plate share `f`. Subtracting a scalar grid term from an independently solved
+plate/screen map would therefore change both the voltage solve and the current
+partition. Feeding back the solved `Vg1k` as a scalar Holters argument would
+violate (8)–(9), which use linear combinations of previous state and present input.
+
+Counting three output currents as three parallel functions still gives each
+function the same implicit solve. Integrating each current separately and summing
+its fixed matrix weights gives exactly the same result as integrating the whole
+vector before applying `C` or `F`. With the same kernel, rates and quadrature,
+that rearrangement cannot improve the #136 alias margins or remove any Newton
+solve. Integrating only the output as in journal (15) leaves aliases already
+generated in the state update. The grid-only experiment is tracked in
+[#154](https://github.com/pmsorhaindo/ModellingAudioProcessors/issues/154).
+
+There is an exact coordinate reduction. The fourth voltage coordinate is
+redundant in [circuit.py](circuit.py). `Vg3k` is zero in P1, equals `Vg2k` in T,
+and equals `Vg2k - EC2` in experimental P2. These wiring constraints carry over
+to `p`. With the ideal supplies held fixed, the three remaining controlling
+voltage incidence rows lie in the span of the capacitor incidence rows. In P1
+the g3 capacitor to the stiff screen supplies the cathode direction. In T the
+g3 capacitor supplies the screen-to-cathode direction. In P2 it supplies the
+cathode-to-ground direction. The other two directions come from g1-to-cathode
+and plate-to-cathode. The inverse conductance on the free nodes is positive
+definite, so these three independent rows give rank three for the DK map from
+capacitor histories into the controlling voltages. Applying the rank factoring
+of Holters and Zölzer, §II, to this affine input reduces the vector from four
+coordinates to three. If the circuit equation is written in the paper's
+`q = q0 + Qp + Fq z` form using `q = (v, i)` and `z = i`, the current
+block of `Fq` is the identity. Hence eliminating directions along `Fq` cannot
+remove any direction of the independent `p` coordinates, whose current block
+is zero. [Holters and Zölzer, EUSIPCO 2016, §II](https://www.eurasip.org/Proceedings/Eusipco/Eusipco2016/papers/1570255150.pdf)
+
+A numerical check on the stock 8× circuit at 8 V, T 0.5 mA, 19,037 Hz
+confirms that all three reduced coordinates matter in the conducting region.
+For the device Jacobian `J = di/dv` and the basis `Q` that duplicates the
+screen coordinate onto g3 in T, the implicit derivative is
+`di/dp_reduced = (I + JK)^-1 JQ`. At peak grid voltage in the final 10 ms
+of a 60 ms render its smallest singular value was 1.70 / 1.73 µA/V
+(44.1 / 48 kHz). This full rank precludes factoring the joint current map through a
+single lower-dimensional argument in these neighborhoods. The solved grid current's
+screen-coordinate sensitivity was
+−0.312 / −0.319 µA/V, with the other reduced coordinates held fixed.
+The grid gradients near `Vg1k = -0.2 V` and at peak grid voltage are
+nonparallel at both rates, which rules out a single fixed linear projection
+for the solved grid branch at these points. Both traces had zero solver misses
+and zero samples outside the valve law. This is a local dependence check on the
+existing model.
+
+The affine reduction commutes with straight-line interpolation. It leaves the
+integral and hence the exact filter output unchanged. The proposed tabulations
+would still need six endpoint coordinates or five coordinates for a
+line-parameterized antiderivative, per matrix set. An exact table would save
+integration work without changing the failed converged result. Parker et al.,
+§2.1, point to higher-order **input reconstruction** to suppress interpolation
+images, but derive the method using linear segments. Their §6 integrator
+fusion addresses a different feedback structure. The Lagrange method cited by
+Holters uses scalar input values as interpolation nodes (Bilbao et al., WASPAA
+2017, §§3–4). The papers supply no corresponding multivariate reconstruction
+and feedback update for this coupled DK stage. There is no additional aliasing
+prototype or C++ port from #153. [Parker et al., DAFx-16](https://www.dafx.de/paper-archive/2016/dafxpapers/20-DAFx-16_paper_41-PN.pdf),
+[Bilbao, Esqueda and Välimäki, WASPAA 2017](https://aaltodoc.aalto.fi/bitstreams/ac1aa7ee-731c-43e3-b763-723ddda08246/download)
+
+### Recorded alias, CPU and accuracy evidence
+
+The table uses the 29 #146 tones at 8 V and T 0.5 mA with the post-filter off.
+The existing test scores in-band non-harmonic DFT bins after 1.25 s settling.
+The limit at each bin is the tighter of −100 dBFS and 10 dB below the hearing
+threshold. Positive margin passes. Each rate column gives worst / median
+strict margin. The candidate allowance column adds 3 dB to the strict worst
+case across the two rates. This is a hypothetical relaxation, including of the
+absolute limit where it dominates.
+
+| Configuration | 44.1 kHz (dB) | 48 kHz (dB) | Worst with +3 dB (dB) | T cycles / host sample | T cost vs 8× / 16× |
+|---|---:|---:|---:|---:|---:|
+| OS 8× | −57.38 / −38.01 | −53.73 / −37.60 | −54.38 | 25,500 | 1.00× / 0.57× |
+| OS 16× | −29.50 / −15.33 | −28.64 / −12.88 | −26.50 | 44,725 | 1.75× / 1.00× |
+| ADAA1 + 8×, four nodes | −27.41 / −13.01 | −32.87 / −11.17 | −29.87 | 98,384 | 3.86× / 2.20× |
+| ADAA2 + 8×, four nodes | −28.75 / −13.72 | −29.15 / −10.37 | −26.15 | 100,404 | 3.94× / 2.24× |
+
+These are #136's recorded measurements. CPU is from the matched #20 / #67
+harness, Apple M1, 48 kHz, mono, 64-sample blocks, 8 V peak, k140. The
+separate lightly loaded control-only run took 41.8% / 74.2% of one core in T
+at 8× / 16× and 42.5% / 75.8% in P1 0.45 mA. In the matched P1 benchmark,
+the four-node box cost 3.93× / 2.24× and the triangle 3.94× / 2.24× vs
+8× / 16×. [#136 JSON at 1499f67](https://github.com/pmsorhaindo/ModellingAudioProcessors/blob/1499f6755dd1a97f880d116017c48acd23993a53/prototypes/fullstage/dk6as6/adaa_results.json)
+
+At 48 kHz the 3,260 Hz product on the 19,037 Hz probe sets the triangle's
+−29.15 dB margin. Its level is −90.815 dBFS against a −119.967 dBFS limit.
+At both 16 and 32 integration nodes the product is −90.570 dBFS (−29.40 dB
+margin), which rules out inadequate quadrature as the cause of the failure on
+this probe. The −3.03 dB result in #136 belongs to P1 0.6 mA, 44.1 kHz. At
+T 0.5 mA the 8× box and triangle also exceeded the ±0.1 dB small-signal
+ngspice chain criterion at both rates (errors −0.156 / −0.133 dB and
+−0.203 / −0.172 dB respectively at 20 kHz).
+[#136 results and validation](https://github.com/pmsorhaindo/ModellingAudioProcessors/blob/1499f6755dd1a97f880d116017c48acd23993a53/prototypes/fullstage/dk6as6/RESULTS.md#state-space-antiderivative-antialiasing-136)
+
+The prior measurements include lower oversampling factors, all 29 tones at the
+P1 and T upper endpoints for the two four-node 8× kernels, and three probes at
+each of 12 sampled P1 and T biases. T includes 0.35, 0.375, 0.4, 0.45 and
+0.5 mA. That coverage rejects the tested configurations. It does not constitute
+a full sweep of every tone at every bias. The nominal supported ranges remain
+P1 0.1–0.6 mA and T 0.1–0.5 mA. PR #151 documents sensitivity to the borrowed
+grid-current fit and PR #150 documents rate-switch transients. Those are
+separate tests of other paths toward the #146 decision.
+[Grid-current bounds](https://github.com/pmsorhaindo/ModellingAudioProcessors/pull/151),
+[Rate-switch study](https://github.com/pmsorhaindo/ModellingAudioProcessors/pull/150)
+
+<details>
+<summary>Reproduce the implicit-map dependence check</summary>
+
+Run from `prototypes/fullstage` with its Python requirements installed.
+
+```sh
+python - <<'PY'
+import numpy as np
+from dk6as6.pentode import currents_grid
+from dk6as6.stage import Stage
+
+basis = np.eye(3)[[0, 1, 1, 2]]
+for fs in (44100, 48000):
+    stage = Stage(fs, mode="T", bias=0.5)
+    time = np.arange(round(0.06 * fs)) / fs
+    ports = stage.process(8 * np.sin(2 * np.pi * 19037 * time),
+                          record=("vgk", "vg2k", "vak"))["_internal"]
+    names = ("vgk", "vg2k", "vg2k", "vak")
+    voltages = np.column_stack([ports[name][-stage.fs // 100:] for name in names])
+    grid = voltages[:, 0]
+    gradients = []
+    for index in (np.argmin(abs(grid + 0.2)), np.argmax(grid)):
+        v = voltages[index]
+        J = np.asarray(currents_grid(*v, stage.par, stage.grid)[3])
+        derivative = 1e6 * np.linalg.solve(np.eye(3) + J @ stage.m["K"], J @ basis)
+        gradients.append(derivative[2])
+        print(fs, v[0], np.linalg.svd(derivative, compute_uv=False), derivative[2])
+    print("gradient rank", np.linalg.matrix_rank(gradients),
+          "solver misses", stage.nonconv, "out of law", stage.out_of_law)
+PY
+```
+
+</details>
