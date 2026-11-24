@@ -237,7 +237,11 @@ def run(jobs, path, workers):
 # the key's worst). Tones run worst-first, in the order of the nominal (RSD-1) margins at the same key where those
 # exist (PR #146's records), so a failing key usually stops at its first tone. Stages (stage_plan):
 #   16x and 8 V at every bias; 32x where 16x failed; 64x where 32x failed (filter off and 4k);
-#   8x and 8 V where 16x passed (the eco question, #136); 2 V at 16x at T 0.35 / 0.45 / 0.5 mA.
+#   8x and 8 V where 16x passed (the eco question, #136); 2 V at 16x at T 0.35 / 0.45 / 0.5 mA;
+#   PR #151 review: "fill", every 32x / 64x key of the decision table not yet measured (so no cell of it is inferred
+#   from a lower factor); "fine", 16x at FINE_BIASES (between 0.3 and 0.35 mA, where the bounds start to move);
+#   "2v4k", 2 V at 16x with the 4k filter at T 0.35 / 0.45 / 0.5 mA.
+FINE_BIASES = (0.31, 0.32, 0.33, 0.34)        # mA, 16x only (PR #151 review: the move below 0.35 mA)
 
 def tone_order(cpp, shape, fs, os_, lpf, bias, drive):
     """GRID_HZ worst-first by the nominal margins at this key (else at the nearest factor / bias measured)."""
@@ -304,20 +308,16 @@ def staged(keys, path=JSONL["cpp"], workers=None):
                       f"{r['margin_db']:+.1f} dB at {r['tone']} Hz", flush=True)
 
 
-def _close(recs, *k):
-    """A key that passed (all tones) by less than INFER_MARGIN_DB: the next factor is screened too, not inferred."""
-    rr = [r for r in recs if (r["shape"], int(r["fs"]), int(r["os"]), r.get("lpf", "off"), float(r["bias_ma"]),
-                              float(r["drive"])) == k]
-    return key_status(recs, *k) == "pass" and min(r["margin_db"] for r in rr) < INFER_MARGIN_DB
-
-
 def stage_plan(stage, shapes=SHAPES, rates=RATES, path=JSONL["cpp"], records=None):
     recs = load(path) if records is None else records
-    st = lambda *k: "fail" if key_status(recs, *k) == "fail" or _close(recs, *k) else key_status(recs, *k)  # noqa: E731
+    st = lambda *k: key_status(recs, *k)  # noqa: E731
     keys = []
     for sh in shapes:
         for fs in rates:
             for lp in ("off", "4k"):
+                if stage == "fine":
+                    keys += [(sh, fs, 16, lp, b, 8.0) for b in FINE_BIASES]
+                    continue
                 for b in BIASES:
                     if stage == "16":
                         keys.append((sh, fs, 16, lp, b, 8.0))
@@ -329,7 +329,24 @@ def stage_plan(stage, shapes=SHAPES, rates=RATES, path=JSONL["cpp"], records=Non
                         keys.append((sh, fs, 8, lp, b, 8.0))
                     elif stage == "2v" and lp == "off" and b in (0.35, 0.45, 0.5):
                         keys.append((sh, fs, 16, lp, b, 2.0))
+                    elif stage == "2v4k" and lp == "4k" and b in (0.35, 0.45, 0.5):
+                        keys.append((sh, fs, 16, lp, b, 2.0))
+                    elif stage == "fill":
+                        keys += [(sh, fs, f, lp, b, 8.0) for f in (32, 64)]
     return keys
+
+
+# --- off-grid counterexamples (PR #151 review) ---------------------------------------------------------------------
+# The regions are statements on the sampled biases and GRID_HZ tones. The review measured, with this study's signals
+# and criterion, a failure for RSD-2 at T 0.349 mA (below the 0.35 mA grid point) with an off-grid 19693 Hz tone, and
+# at 0.3499 mA with the grid's 19637 Hz tone, where the nominal passes both: recorded here on both engines.
+COUNTEREXAMPLES = tuple(dict(shape=s, fs=44100, os_=16, bias=b, drive=8.0, tone=t, lpf="4k")
+                        for b, t in ((0.349, 19693), (0.3499, 19637)) for s in ("RSD-1", "RSD-2"))
+JSONL["counter"] = os.path.join(SCRATCH, "grid_bounds_inaudible_counter.jsonl")
+
+
+def run_counterexamples(path=JSONL["counter"], workers=None):
+    run([dict(j, engine=e) for j in COUNTEREXAMPLES for e in ("cpp", "python")], path, workers)
 
 
 # --- the nominal (RSD-1) records of PR #146 -----------------------------------------------------------------------
@@ -402,8 +419,8 @@ def complete(x):
 
 
 def min_factor(idx, shape, fs, bias, drive, lpf="off", factors=FACTORS):
-    """(the lowest factor at which every grid tone passes, measured or inferred; whether the factor below it was
-    measured and failed). (None, None): no factor passes."""
+    """(the lowest factor at which every grid tone passes, measured; whether the factor below it was measured and
+    failed). (None, None): no factor passes."""
     fs_ = sorted(factors)
     for i, f in enumerate(fs_):
         if passes(idx, shape, fs, f, drive, lpf, bias) is not None:
@@ -412,22 +429,11 @@ def min_factor(idx, shape, fs, bias, drive, lpf="off", factors=FACTORS):
     return None, None
 
 
-# A higher factor is screened only where the lower one failed (staged). A key not measured at a factor counts as
-# passing there if it passed, all tones, at a lower factor by at least INFER_MARGIN_DB: in PR #146's 5,188 paired
-# 16x / 32x points no 32x margin is more than 0.043 dB below its 16x margin (per key, T: at most 0.008 dB).
-INFER_MARGIN_DB = 1.0
-
-
 def passes(idx, shape, fs, os_, drive, lpf, b):
-    """"measured" / "inferred" (above) if the key passes at this factor, else None."""
+    """"measured" if the key was measured at this factor and passed all GRID_HZ tones, else None. Nothing is inferred
+    from another factor (PR #151 review: the "fill" stage measures every key of the decision table)."""
     x = idx.get((shape, fs, os_, lpf, b, drive))
-    if x is not None:
-        return "measured" if complete(x) and x["passed"] else None
-    for f in sorted(FACTORS):
-        y = idx.get((shape, fs, f, lpf, b, drive))
-        if f < os_ and complete(y) and y["passed"] and y["worst"]["margin_db"] >= INFER_MARGIN_DB:
-            return "inferred"
-    return None
+    return "measured" if complete(x) and x["passed"] else None
 
 
 def holds_to(idx, shape, fs, os_, drive, lpf="off", biases=BIASES):
@@ -490,12 +496,14 @@ def collect(out=OUT_JSON):
                   floor_dbfs=IN.FLOOR_DBFS, under_threshold_db=IN.UNDER_THRESHOLD_DB, spl_fs_db=IN.SPL_FS_DB,
                   threshold=IN.CITATION, calibration=IN.CALIBRATION, settle_s=SETTLE_S, window_s=WINDOW_S,
                   grid_hz=list(GRID_HZ), fir=FIR, mode=MODE, biases=list(BIASES), factors=list(FACTORS),
-                  lpfs=list(LPFS), infer_margin_db=INFER_MARGIN_DB, pr146_head=PR146_HEAD,
+                  lpfs=list(LPFS), fine_biases=list(FINE_BIASES), pr146_head=PR146_HEAD,
                   shapes={s: dict(table1=pentode.GRID_SHAPES[s], grid=pentode.grid(shape=s)) for s in SHAPES},
                   source="Dempwolf & Zoelzer, DAFx-11, Table 1, scaled as pentode.grid (#112 / PR #128)",
                   cpp_engine=cpp_engine_note())
+    counter = [compact(r) for r in load(JSONL["counter"])]
     json.dump(dict(method=method, summary_cpp=summarise(cpp), summary_python=summarise(py), parity=pairs,
-                   records_cpp=cpp, records_python=py), open(out, "w"), separators=(",", ":"))
+                   counterexamples=counter, records_cpp=cpp, records_python=py), open(out, "w"),
+              separators=(",", ":"))
     print(f"{len(cpp)} cpp, {len(py)} python records, {len(pairs)} parity pairs -> {out}")
 
 
@@ -509,6 +517,10 @@ def _cell(x):
         return f"{m:+.1f}"
     # a fail-fast key: its worst measured tone fails, so its worst over all tones is at most this
     return f"≤ {m:+.1f}" if not x["passed"] else f"{m:+.1f} ({x['tones']} tones, undecided)"
+
+
+def passed_all(x):
+    return complete(x) and x["passed"]
 
 
 def region(idx, fs, os_, lpf, drive=8.0, shapes=SHAPES):
@@ -555,18 +567,48 @@ def tables(path=OUT_JSON):
                 c = " / ".join("none" if v is None else f"{v:g}" for v in per.values())
                 L.append(f"| {fs / 1000:g} kHz | {f}× | {lp} | {c} | {'none' if allb is None else f'{allb:g} mA'} |")
     L.append("")
-    two = [x for x in d["summary_cpp"] if x["drive"] == 2.0 and x["lpf"] == "off"]
+    fine = (0.3,) + FINE_BIASES + (0.35,)
+    L.append("| 16×, 8 V: rate | post-filter | shape | " + " | ".join(f"{b:g}" for b in fine) + " mA |")
+    L.append("|---" * (3 + len(fine)) + "|")
+    for fs in RATES:
+        for lp in ("off", "4k"):
+            for sh in SHAPES:
+                L.append(f"| {fs / 1000:g} kHz | {lp} | {sh} | " + " | ".join(
+                    _cell(idx.get((sh, fs, 16, lp, b, 8.0))) for b in fine) + " |")
+    L.append("")
+    L.append("| 16×, 8 V: rate | post-filter | holds to over the refined grid (mA): " + " / ".join(SHAPES)
+             + " | under every shape |")
+    L.append("|---|---|---|---|")
+    grid = tuple(sorted(BIASES + FINE_BIASES))
+    for fs in RATES:
+        for lp in ("off", "4k"):
+            per = {s: holds_to(idx, s, fs, 16, 8.0, lp, grid) for s in SHAPES}
+            allb = None if any(v is None for v in per.values()) else min(per.values())
+            L.append(f"| {fs / 1000:g} kHz | {lp} | " + " / ".join(f"{v:g}" for v in per.values())
+                     + f" | {allb:g} mA |")
+    L.append("")
+    two = [x for x in d["summary_cpp"] if x["drive"] == 2.0]
     if two:
-        L.append("| rate | factor | shape | worst 2 V margin over 0.1-0.5 mA (dB) |")
-        L.append("|---|---|---|---|")
+        L.append("| rate | factor | post-filter | shape | worst 2 V margin (dB), biases |")
+        L.append("|---|---|---|---|---|")
         for fs in RATES:
             for f in FACTORS:
-                for sh in SHAPES:
-                    xs = [x for x in two if (x["shape"], x["fs"], x["os"]) == (sh, fs, f)]
-                    if xs:
-                        w = min(xs, key=lambda x: x["worst"]["margin_db"])
-                        L.append(f"| {fs / 1000:g} kHz | {f}× | {sh} | {w['worst']['margin_db']:+.1f} at "
-                                 f"{w['bias_ma']:g} mA ({len(xs)} biases, all pass: {all(x['passed'] for x in xs)}) |")
+                for lp in ("off", "4k"):
+                    for sh in SHAPES:
+                        xs = [x for x in two if (x["shape"], x["fs"], x["os"], x["lpf"]) == (sh, fs, f, lp)]
+                        if xs:
+                            w = min(xs, key=lambda x: x["worst"]["margin_db"])
+                            L.append(f"| {fs / 1000:g} kHz | {f}× | {lp} | {sh} | {w['worst']['margin_db']:+.1f} at "
+                                     f"{w['bias_ma']:g} mA ({len(xs)} biases; all pass: "
+                                     f"{all(passed_all(x) for x in xs)}) |")
+        L.append("")
+    if d.get("counterexamples"):
+        L.append("| engine | shape | rate | factor | post-filter | bias | tone | margin (dB) | worst product |")
+        L.append("|---|---|---|---|---|---|---|---|---|")
+        for r in sorted(d["counterexamples"], key=lambda r: (r["bias_ma"], r["shape"], r["engine"])):
+            L.append(f"| {r['engine']} | {r['shape']} | {r['fs'] / 1000:g} kHz | {r['os']}× | {r['lpf']} | "
+                     f"{r['bias_ma']:g} | {r['tone']} | {r['margin_db']:+.2f} | {r['worst_hz']:.0f} Hz "
+                     f"({r.get('worst_source', '')}) |")
         L.append("")
     if d["parity"]:
         L.append("| shape | rate | factor | post-filter | bias | tone | python | C++ | diff (dB) |")
@@ -580,8 +622,8 @@ def tables(path=OUT_JSON):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=("run", "stage", "confirm", "collect", "tables", "build", "import146"))
-    ap.add_argument("--stage", choices=("16", "32", "64", "8", "2v"))
+    ap.add_argument("cmd", choices=("run", "stage", "confirm", "collect", "tables", "build", "import146", "counter"))
+    ap.add_argument("--stage", choices=("16", "32", "64", "8", "2v", "fill", "fine", "2v4k"))
     ap.add_argument("--shapes", nargs="*", default=list(SHAPES))
     ap.add_argument("--factors", nargs="*", type=int, default=list(FACTORS))
     ap.add_argument("--rates", nargs="*", type=int, default=list(RATES))
@@ -601,6 +643,8 @@ if __name__ == "__main__":
         js = confirm_points([compact(r) for r in load(JSONL["cpp"])])
         print(len(js), "python points")
         run(js, JSONL["python"], a.workers)
+    elif a.cmd == "counter":
+        run_counterexamples(workers=a.workers)
     elif a.cmd == "import146":
         import_pr146()
     elif a.cmd == "collect":
