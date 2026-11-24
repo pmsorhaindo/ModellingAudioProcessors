@@ -1661,9 +1661,9 @@ nominal stage only (`aliasing_guard.GRID_HARDNESS`, shape RSD-1), so none of thi
 **Question (Michael, 23 Nov 2026).** Draft PR #146 (the #113 rework) proposes capping T with grid current at
 0.35 mA, because with the nominal RSD-1 constants T above 0.35 mA fails #113's inaudibility criterion at 16×. Before
 that decision: which part of T's supported 0.1–0.5 mA still holds under **every published bound** on the borrowed
-grid law, at 44.1 and 48 kHz, and how much do the #128 burst, blocking, recovery, THD and aliasing results move? The
-T-mode cap stays at 0.5 mA meanwhile. **RSD-1 stays the nominal (shipped) constants. Nothing here changes the stage,
-the C++ core, the plugin or CI's guard.**
+grid law, at 44.1 and 48 kHz, and how much do the #128 burst, blocking, recovery, THD and aliasing results move, at
+8 V? The T-mode cap stays at 0.5 mA meanwhile. **RSD-1 stays the nominal (shipped) constants. Nothing here changes
+the stage, the C++ core, the plugin or CI's guard.**
 
 **Bounds.** Only published fits of the same form, scaled as #112 / PR #128 scaled RSD-1 (`pentode.grid(shape=...)`,
 the section above): Dempwolf & Zölzer, DAFx-11, Table 1, **RSD-2 and EHX-1**. No other fit of this form was found
@@ -1679,24 +1679,30 @@ Terhardt's threshold of hearing, read from the unwindowed DFT (0 dBFS = the outp
 an assumption). Each point is an 8 V (or 2 V) sine on a coherent bin near one of #146's 29 grid tones, 1.25 s settle,
 1 s window, k140 resampler. A margin ≥ 0 dB passes, and a setting passes only if all 29 tones do.
 
+**Every statement below is about the sampled points.** Biases: 0.1, 0.25, 0.3, 0.35, 0.375, 0.4, 0.45, 0.5 mA, and at 16×
+also 0.31–0.34 mA (PR #151 review). Tones: #146's 29. A pass at two sampled biases or tones does not prove a pass
+between them. The review found two failures between grid points, recorded below.
+
 **Method** (`python -m dk6as6.grid_bounds_inaudible`, → `grid_bounds_inaudible.json`):
 - **Engine.** The C++ 6AS6 core (main's `cpp/dk6as6_core.h`) through `test_core_6as6 cli`, built from patched
   *copies* (`SCREEN_PATCH`): `MAX_OS` 64 and `later_[5]` as #146's screen, and `grid()`'s Table 1 column replaced by the
   shape's. The committed core is untouched.
   - *RSD-1 build:* reproduces #146's committed C++ records exactly (3 of 3 points to 1e-4 dB). #146's nominal T
-    records at 0.1–0.5 mA, filter off and 4k, are therefore reused (tagged `source: PR #146 1c0a7f4`), and this study
-    adds the nominal points #146 did not run (4k at 0.375 / 0.4 / 0.5 mA).
+    records at 0.1–0.5 mA, filter off and 4k, are therefore reused (tagged `source: PR #146 1c0a7f4`); this study
+    runs the nominal points #146 did not.
   - *Bound builds:* match `Stage(grid_shape=bound)` to ≤ 1e-9 of the peak per sample and Rk to 1e-13 at both rates
     (`test_screen_runs_the_bound_as_the_python_stage`, live).
-- **Staged, fail-fast.** The machine was shared (load 100–290 on 8 cores), so the screen runs in stages:
-  - 16× at every bias; 32× where 16× failed or passed by less than 1 dB; 64× likewise from 32×; 8× where 16× passed.
-    2 V runs at 16× at 0.35 / 0.45 / 0.5 mA.
-  - A failing setting stops at its first failing tone (tones run worst-first in the nominal's order), so its cell is an
-    upper bound on its worst margin (`≤`).
-  - A bias not run at a factor counts as passing there if it passed all 29 tones at a lower factor by ≥ 1 dB
-    (`INFER_MARGIN_DB`). In #146's 5,188 paired 16× / 32× points, no 32× margin is more than 0.043 dB below its 16×
-    margin (per T setting at most 0.008 dB).
-- **Post-filter positions.** Off, and 4k (#146: the worst position for every T key). 7k is not screened.
+- **Every cell of the decision table is measured** (PR #151 review). The machine was shared (load 100–290 on 8 cores),
+  so the screen ran in stages:
+  - First 16× at every bias, then 32× / 64× where the factor below failed, and 8× where 16× passed.
+  - Then "fill": every remaining 32× and 64× setting of the table (102 settings), so no cell is inferred from
+    another factor. In the 127 settings that pass at both a factor and its double, the higher factor is never more
+    than 0.0006 dB worse.
+  - Then 16× at 0.31–0.34 mA ("fine"), and 2 V at 16× with the 4k filter ("2v4k").
+  - A failing setting stops at its first failing tone (tones run worst-first in the nominal's order), so its cell is
+    an upper bound on its worst margin (`≤`). A passing setting has all 29 tones.
+- **Post-filter positions.** Off, and 4k (#146: the worst position for every T key). 7k is not screened; nor is 8×
+  with the 4k filter.
 - **Python confirmation.** Every deciding point, i.e. the worst tone at the top bias that holds and at the first that
   fails, per bound, rate, factor (16×, 32×) and position, is re-run on the Python stage (table at the end).
 
@@ -1713,17 +1719,17 @@ an assumption). Each point is an 8 V (or 2 V) sine on a coherent bin near one of
 | 48 kHz | 16× | 4k | RSD-2 | +32.8 | +32.4 | +32.1 | +5.7 | ≤ -22.1 | ≤ -34.4 | ≤ -47.7 | ≤ -50.4 |
 | 48 kHz | 16× | 4k | EHX-1 | +32.8 | +32.4 | +32.1 | +18.8 | ≤ -14.7 | ≤ -34.6 | ≤ -46.2 | ≤ -50.4 |
 | 48 kHz | 32× | off | RSD-1 | +54.8 | +50.5 | +49.0 | +49.5 | +45.5 | +35.7 | +13.0 | +3.2 |
-| 48 kHz | 32× | off | RSD-2 | — | — | — | — | +42.8 | +22.3 | +6.0 | ≤ -5.7 |
-| 48 kHz | 32× | off | EHX-1 | — | — | — | — | — | +30.5 | +9.9 | ≤ -0.4 |
+| 48 kHz | 32× | off | RSD-2 | +54.8 | +50.5 | +49.0 | +48.8 | +42.8 | +22.3 | +6.0 | ≤ -5.7 |
+| 48 kHz | 32× | off | EHX-1 | +54.8 | +50.5 | +49.0 | +49.4 | +45.2 | +30.5 | +9.9 | ≤ -0.4 |
 | 48 kHz | 32× | 4k | RSD-1 | +32.8 | +32.4 | +32.2 | +32.5 | +25.5 | +15.4 | -7.3 | ≤ -17.1 |
-| 48 kHz | 32× | 4k | RSD-2 | — | — | — | — | +22.5 | +2.0 | ≤ -14.3 | ≤ -26.0 |
-| 48 kHz | 32× | 4k | EHX-1 | — | — | — | — | +25.2 | +10.2 | ≤ -10.4 | ≤ -20.7 |
-| 48 kHz | 64× | off | RSD-1 | — | — | — | — | +45.5 | +44.2 | +36.6 | +29.9 |
-| 48 kHz | 64× | off | RSD-2 | — | — | — | — | — | — | — | +30.2 |
-| 48 kHz | 64× | off | EHX-1 | — | — | — | — | — | — | — | +29.9 |
-| 48 kHz | 64× | 4k | RSD-1 | — | — | — | — | — | — | +24.3 | +20.0 |
-| 48 kHz | 64× | 4k | RSD-2 | — | — | — | — | — | — | +24.7 | +20.3 |
-| 48 kHz | 64× | 4k | EHX-1 | — | — | — | — | — | — | +24.4 | +20.0 |
+| 48 kHz | 32× | 4k | RSD-2 | +32.8 | +32.4 | +32.2 | +34.4 | +22.5 | +2.0 | ≤ -14.3 | ≤ -26.0 |
+| 48 kHz | 32× | 4k | EHX-1 | +32.8 | +32.4 | +32.2 | +32.6 | +25.2 | +10.2 | ≤ -10.4 | ≤ -20.7 |
+| 48 kHz | 64× | off | RSD-1 | +54.8 | +50.5 | +49.0 | +49.5 | +45.5 | +44.2 | +36.6 | +29.9 |
+| 48 kHz | 64× | off | RSD-2 | +54.8 | +50.5 | +49.0 | +48.8 | +45.1 | +44.1 | +37.0 | +30.2 |
+| 48 kHz | 64× | off | EHX-1 | +54.8 | +50.5 | +49.0 | +49.4 | +45.2 | +44.1 | +36.6 | +29.9 |
+| 48 kHz | 64× | 4k | RSD-1 | +32.8 | +32.4 | +32.2 | +32.5 | +25.5 | +24.5 | +24.3 | +20.0 |
+| 48 kHz | 64× | 4k | RSD-2 | +32.8 | +32.4 | +32.2 | +34.4 | +25.2 | +24.1 | +24.7 | +20.3 |
+| 48 kHz | 64× | 4k | EHX-1 | +32.8 | +32.4 | +32.2 | +32.6 | +25.2 | +24.2 | +24.4 | +20.0 |
 | 44.1 kHz | 8× | off | RSD-1 | +47.2 | +42.9 | +41.4 | -20.3 | -35.2 | -50.2 | -44.5 | -57.4 |
 | 44.1 kHz | 8× | off | RSD-2 | +47.2 | +42.9 | +41.4 | ≤ -23.2 | — | — | — | — |
 | 44.1 kHz | 8× | off | EHX-1 | +47.2 | +42.9 | +41.4 | ≤ -12.5 | — | — | — | — |
@@ -1734,19 +1740,19 @@ an assumption). Each point is an 8 V (or 2 V) sine on a coherent bin near one of
 | 44.1 kHz | 16× | 4k | RSD-2 | +28.6 | +24.4 | +22.9 | ≤ -0.4 | ≤ -27.2 | ≤ -33.3 | ≤ -46.8 | ≤ -49.5 |
 | 44.1 kHz | 16× | 4k | EHX-1 | +28.6 | +24.4 | +22.9 | +2.8 | ≤ -25.2 | ≤ -33.7 | ≤ -45.2 | ≤ -49.5 |
 | 44.1 kHz | 32× | off | RSD-1 | +47.2 | +42.9 | +41.4 | +42.0 | +47.4 | +27.6 | +7.1 | -3.6 |
-| 44.1 kHz | 32× | off | RSD-2 | — | — | — | — | +34.7 | +15.8 | +0.6 | ≤ -9.2 |
-| 44.1 kHz | 32× | off | EHX-1 | — | — | — | — | +42.2 | +22.9 | +4.6 | ≤ -6.1 |
+| 44.1 kHz | 32× | off | RSD-2 | +47.2 | +42.9 | +41.4 | +41.2 | +34.7 | +15.8 | +0.6 | ≤ -9.2 |
+| 44.1 kHz | 32× | off | EHX-1 | +47.2 | +42.9 | +41.4 | +41.9 | +42.2 | +22.9 | +4.6 | ≤ -6.1 |
 | 44.1 kHz | 32× | 4k | RSD-1 | +28.7 | +24.4 | +22.9 | +23.6 | +27.9 | +7.7 | -12.8 | ≤ -23.5 |
-| 44.1 kHz | 32× | 4k | RSD-2 | — | — | — | +22.8 | +14.9 | ≤ -4.0 | ≤ -19.3 | ≤ -29.0 |
-| 44.1 kHz | 32× | 4k | EHX-1 | — | — | — | — | +22.4 | +3.0 | ≤ -15.3 | ≤ -25.9 |
-| 44.1 kHz | 64× | off | RSD-1 | — | — | — | — | +47.4 | +47.1 | +36.6 | +29.9 |
-| 44.1 kHz | 64× | off | RSD-2 | — | — | — | — | — | — | +37.0 | +30.2 |
-| 44.1 kHz | 64× | off | EHX-1 | — | — | — | — | — | — | — | +29.9 |
-| 44.1 kHz | 64× | 4k | RSD-1 | — | — | — | — | — | — | +24.3 | +20.0 |
-| 44.1 kHz | 64× | 4k | RSD-2 | — | — | — | — | — | +28.2 | +24.7 | +16.0 |
-| 44.1 kHz | 64× | 4k | EHX-1 | — | — | — | — | — | — | +24.4 | +20.0 |
+| 44.1 kHz | 32× | 4k | RSD-2 | +28.7 | +24.4 | +22.9 | +22.8 | +14.9 | ≤ -4.0 | ≤ -19.3 | ≤ -29.0 |
+| 44.1 kHz | 32× | 4k | EHX-1 | +28.7 | +24.4 | +22.9 | +23.4 | +22.4 | +3.0 | ≤ -15.3 | ≤ -25.9 |
+| 44.1 kHz | 64× | off | RSD-1 | +47.3 | +42.9 | +41.4 | +42.0 | +47.4 | +47.1 | +36.6 | +29.9 |
+| 44.1 kHz | 64× | off | RSD-2 | +47.3 | +42.9 | +41.4 | +41.2 | +47.4 | +47.0 | +37.0 | +30.2 |
+| 44.1 kHz | 64× | off | EHX-1 | +47.3 | +42.9 | +41.4 | +41.9 | +47.6 | +47.1 | +36.6 | +29.9 |
+| 44.1 kHz | 64× | 4k | RSD-1 | +28.7 | +24.4 | +22.9 | +23.6 | +29.1 | +28.6 | +24.3 | +20.0 |
+| 44.1 kHz | 64× | 4k | RSD-2 | +28.7 | +24.4 | +22.9 | +22.8 | +29.0 | +28.2 | +24.7 | +16.0 |
+| 44.1 kHz | 64× | 4k | EHX-1 | +28.7 | +24.4 | +22.9 | +23.5 | +29.1 | +28.4 | +24.4 | +20.0 |
 
-### Which T region holds under every bound (8 V; every bias up to it passes, all 29 tones)
+### Which T region holds under every bound (8 V; every sampled bias up to it passes, all 29 tones; all measured)
 | rate | factor | post-filter | holds to (mA): RSD-1 / RSD-2 / EHX-1 | under every shape |
 |---|---|---|---|---|
 | 48 kHz | 8× | off | 0.3 / 0.3 / 0.3 | 0.3 mA |
@@ -1781,19 +1787,88 @@ The lowest passing factor per bias:
 | 44.1 kHz | 4k | RSD-2 | ≤ 16× / ≤ 16× / ≤ 16× / 32× / 32× / 64× / 64× / 64× |
 | 44.1 kHz | 4k | EHX-1 | ≤ 16× / ≤ 16× / ≤ 16× / ≤ 16× / 32× / 32× / 64× / 64× |
 
-**2 V** passes everywhere it was run (16×, 0.35 / 0.45 / 0.5 mA, both bounds and rates) by ≥ +48.2 dB (44.1 kHz) and
-≥ +55.8 dB (48 kHz). 8 V decides every region above.
+### Between 0.3 and 0.35 mA at 16× (PR #151 review)
+The bounds start to move the margins between 0.3 and 0.35 mA. At 0.31–0.34 mA every shape passes at both rates and in
+both positions; at 0.34 mA the bounds differ from the nominal by ≤ 2.7 dB (48 kHz, 4k). The drop happens just below
+0.35 mA. The review measured two counterexamples there with this study's signals and criterion, and they are
+recorded here on both engines (`counterexamples`): RSD-2 fails where the nominal passes.
+
+| 16×, 8 V: rate | post-filter | shape | 0.3 | 0.31 | 0.32 | 0.33 | 0.34 | 0.35 mA |
+|---|---|---|---|---|---|---|---|---|
+| 48 kHz | off | RSD-1 | +49.0 | +48.6 | +48.3 | +48.0 | +48.0 | +34.3 |
+| 48 kHz | off | RSD-2 | +49.0 | +48.6 | +48.3 | +47.9 | +47.7 | +27.1 |
+| 48 kHz | off | EHX-1 | +49.0 | +48.6 | +48.3 | +48.0 | +47.9 | +40.8 |
+| 48 kHz | 4k | RSD-1 | +32.1 | +32.1 | +32.0 | +32.2 | +35.4 | +13.0 |
+| 48 kHz | 4k | RSD-2 | +32.1 | +32.1 | +32.0 | +31.9 | +32.8 | +5.7 |
+| 48 kHz | 4k | EHX-1 | +32.1 | +32.1 | +32.0 | +32.1 | +34.6 | +18.8 |
+| 44.1 kHz | off | RSD-1 | +41.4 | +41.0 | +40.7 | +40.4 | +40.4 | +25.7 |
+| 44.1 kHz | off | RSD-2 | +41.4 | +41.0 | +40.7 | +40.3 | +40.1 | +19.9 |
+| 44.1 kHz | off | EHX-1 | +41.4 | +41.0 | +40.7 | +40.4 | +40.3 | +20.1 |
+| 44.1 kHz | 4k | RSD-1 | +22.9 | +22.5 | +22.2 | +21.9 | +21.9 | +9.8 |
+| 44.1 kHz | 4k | RSD-2 | +22.9 | +22.5 | +22.2 | +21.8 | +21.6 | ≤ -0.4 |
+| 44.1 kHz | 4k | EHX-1 | +22.9 | +22.5 | +22.2 | +21.8 | +21.8 | +2.8 |
+
+| engine | shape | rate | factor | post-filter | bias | tone | margin (dB) | worst product |
+|---|---|---|---|---|---|---|---|---|
+| cpp | RSD-1 | 44.1 kHz | 16× | 4k | 0.349 | 19693 | +4.63 | 3348 Hz (internal) |
+| python | RSD-1 | 44.1 kHz | 16× | 4k | 0.349 | 19693 | +4.63 | 3348 Hz (internal) |
+| cpp | RSD-2 | 44.1 kHz | 16× | 4k | 0.349 | 19693 | -0.41 | 3348 Hz (internal) |
+| python | RSD-2 | 44.1 kHz | 16× | 4k | 0.349 | 19693 | -0.41 | 3348 Hz (internal) |
+| cpp | RSD-1 | 44.1 kHz | 16× | 4k | 0.3499 | 19637 | +11.57 | 1332 Hz (internal) |
+| python | RSD-1 | 44.1 kHz | 16× | 4k | 0.3499 | 19637 | +11.57 | 1332 Hz (internal) |
+| cpp | RSD-2 | 44.1 kHz | 16× | 4k | 0.3499 | 19637 | -0.03 | 1332 Hz (internal) |
+| python | RSD-2 | 44.1 kHz | 16× | 4k | 0.3499 | 19637 | -0.03 | 1332 Hz (internal) |
+
+On the refined bias grid, 16× holds T under every shape to:
+
+| 16×, 8 V: rate | post-filter | holds to over the refined grid (mA): RSD-1 / RSD-2 / EHX-1 | under every shape |
+|---|---|---|---|
+| 48 kHz | off | 0.375 / 0.35 / 0.375 | 0.35 mA |
+| 48 kHz | 4k | 0.35 / 0.35 / 0.35 | 0.35 mA |
+| 44.1 kHz | off | 0.35 / 0.35 / 0.35 | 0.35 mA |
+| 44.1 kHz | 4k | 0.35 / 0.34 / 0.35 | 0.34 mA |
+
+So at 44.1 kHz with the 4k filter, 16× holds under every bound to **0.34 mA** on this grid, and fails by 0.349 mA
+(RSD-2, an off-grid tone).
+
+### 2 V
+Every 2 V setting run passes. **The smallest 2 V margin is +29.7 dB**: RSD-2 at 44.1 kHz, 16×, 4k, 0.5 mA. With the
+filter off the bounds pass by ≥ +48.2 dB (44.1 kHz) and ≥ +55.8 dB (48 kHz). 8 V decides every region above.
+
+| rate | factor | post-filter | shape | worst 2 V margin (dB), biases |
+|---|---|---|---|---|
+| 48 kHz | 8× | off | RSD-1 | +55.3 at 0.5 mA (8 biases; all pass: True) |
+| 48 kHz | 16× | off | RSD-1 | +55.9 at 0.5 mA (8 biases; all pass: True) |
+| 48 kHz | 16× | off | RSD-2 | +55.8 at 0.5 mA (3 biases; all pass: True) |
+| 48 kHz | 16× | off | EHX-1 | +55.8 at 0.5 mA (3 biases; all pass: True) |
+| 48 kHz | 16× | 4k | RSD-1 | +43.8 at 0.5 mA (6 biases; all pass: True) |
+| 48 kHz | 16× | 4k | RSD-2 | +43.7 at 0.5 mA (3 biases; all pass: True) |
+| 48 kHz | 16× | 4k | EHX-1 | +43.8 at 0.5 mA (3 biases; all pass: True) |
+| 48 kHz | 32× | off | RSD-1 | +55.9 at 0.5 mA (8 biases; all pass: True) |
+| 48 kHz | 32× | 4k | RSD-1 | +45.1 at 0.45 mA (5 biases; all pass: True) |
+| 48 kHz | 64× | off | RSD-1 | +61.4 at 0.375 mA (1 biases; all pass: True) |
+| 44.1 kHz | 8× | off | RSD-1 | +45.2 at 0.5 mA (8 biases; all pass: True) |
+| 44.1 kHz | 16× | off | RSD-1 | +48.3 at 0.5 mA (8 biases; all pass: True) |
+| 44.1 kHz | 16× | off | RSD-2 | +48.2 at 0.5 mA (3 biases; all pass: True) |
+| 44.1 kHz | 16× | off | EHX-1 | +48.2 at 0.5 mA (3 biases; all pass: True) |
+| 44.1 kHz | 16× | 4k | RSD-1 | +29.8 at 0.5 mA (6 biases; all pass: True) |
+| 44.1 kHz | 16× | 4k | RSD-2 | +29.7 at 0.5 mA (3 biases; all pass: True) |
+| 44.1 kHz | 16× | 4k | EHX-1 | +29.8 at 0.5 mA (3 biases; all pass: True) |
+| 44.1 kHz | 32× | off | RSD-1 | +48.3 at 0.5 mA (8 biases; all pass: True) |
+| 44.1 kHz | 32× | 4k | RSD-1 | +32.3 at 0.45 mA (5 biases; all pass: True) |
+| 44.1 kHz | 64× | off | RSD-1 | +53.9 at 0.375 mA (1 biases; all pass: True) |
 
 ### How much the aliasing results move
-- **0.1–0.3 mA: nothing.** Every bound reads the nominal's margin to ≤ 1e-4 dB at every factor and position measured.
-  At 8 V the grid does not conduct enough there to change the stage's output; the margins are the resampler's.
+- **At the sampled 0.1, 0.25 and 0.3 mA: nothing.** Every bound reads the nominal's margin to ≤ 1e-4 dB at every
+  factor and position measured. At 0.31–0.34 mA (16×): ≤ 2.7 dB. Just below 0.35 mA RSD-2 fails where the nominal
+  passes (above).
 - **0.35 mA and up: the bounds move the internal folding by up to 13.5 dB**, mostly downwards. Where both are
   measured in full, the largest shifts are:
   - RSD-2 at 32×: −13.5 dB (48 kHz, 0.4 mA, off and 4k); −13.0 / −12.6 dB at 44.1 kHz, 0.375 mA.
   - RSD-2 at 16×, 0.35 mA: −7.2 dB (48 kHz, off and 4k).
   - EHX-1 at 16×, 0.35 mA: −7.0 dB at 44.1 kHz with 4k, but +6.5 / +5.9 dB at 48 kHz (off / 4k). The shapes cross
     (above), so a bound is not "worse" everywhere.
-- **Where a bound fails a setting the nominal passes** (all from internal folding, all confirmed on the Python
+- **Where a bound fails a sampled setting the nominal passes** (all internal folding, all confirmed on the Python
   stage):
 
   | setting (8 V) | RSD-1 | bound |
@@ -1803,7 +1878,7 @@ The lowest passing factor per bias:
   | 44.1 kHz, 32×, 4k, 0.4 mA | +7.7 | RSD-2 −4.0 |
   | 48 kHz, 32×, off, 0.5 mA | +3.2 | RSD-2 −5.7, EHX-1 −0.4 |
 
-  No bound passes a setting the nominal fails.
+  No bound passes a sampled setting the nominal fails.
 - **The nominal's own 32× claim needs the post-filter qualifier.** PR #146's "32× would hold T to 0.45 mA, and
   0.5 mA at 48 kHz only" holds with the filter off. With the 4k filter, even RSD-1 holds only to 0.4 mA at 32×
   (0.45 mA: −7.3 dB at 48 kHz, −12.8 dB at 44.1 kHz; #146's own records).
@@ -1814,8 +1889,9 @@ The lowest passing factor per bias:
 ### Python confirmation of every deciding point (`parity` in `grid_bounds_inaudible.json`)
 32 points: per bound, rate, factor (16×, 32×) and post-filter position, the worst tone at the top bias that holds
 and at the first that fails, re-run on the Python stage (`Stage(grid_shape=bound)`). Every one gives the C++ margin
-to 0.0000 dB (4 decimals) and the same worst product, with Rk equal to 1e-13. No verdict changes. The 64×
-points (all ≥ +16.0 dB) are screen-only.
+to 0.0000 dB (4 decimals) and the same worst product, with Rk equal to 1e-13. No verdict changes. The 64× points
+(measured minimum +16.0 dB) and the 0.31–0.34 mA points are screen-only. The two counterexamples are on both engines
+(above), and agree to 0.01 dB.
 
 | shape | rate | factor | post-filter | bias | tone | python | C++ | diff (dB) |
 |---|---|---|---|---|---|---|---|---|
@@ -1852,7 +1928,70 @@ points (all ≥ +16.0 dB) are screen-only.
 | RSD-2 | 48 kHz | 32× | off | 0.45 | 19987 | +6.03 | +6.03 | +0.0000 |
 | RSD-2 | 48 kHz | 32× | off | 0.5 | 19987 | -5.68 | -5.68 | +0.0000 |
 
-### Burst, blocking, recovery and THD over 0.1–0.5 mA, 48 and 44.1 kHz (DK standard 8×, against each shape's own ngspice reference)
+### Burst, blocking and recovery at 8 V, 48 and 44.1 kHz (PR #151 review; DK standard / hq against each shape's own 8 V ngspice reference)
+#128's burst is 4 V (below); the issue asks for these checks at 8 V, and the stimulus matters (the review:
+RSD-2 at 0.35 mA, 44.1 kHz, shifts by −0.68 V at 4 V and −1.44 V at 8 V). So each shape has an 8 V burst reference
+at T 0.1–0.5 mA: `python spice6as6/run_refs.py --burst8 <model>/T:<bias>` → `reference_<model>_T_<bias>mA_burst8V.json`
+(`run_refs.run_burst`). These are the same netlist, Rk, ngspice 41 and `SOLVER` as the main references, with only the
+burst amplitude changed (1 kHz, 10–30 ms, 120 ms), plus the op point, which matches the main reference to 1e-9. The DK
+side is `validate.burst(amp=8)` and `validate.burst_compare` / `burst_ok`, unchanged (`dk/validate.CRIT`: shift 0.5 %,
+trajectory 0.5 %, tail τ 1 %), with the op point against the reference: `python -m dk6as6.grid_bounds_burst --burst8`
+→ `results_grid_bounds_T_burst8V.json`. **Every compared case passes every criterion at both rates, standard and hq**:
+shift ≤ 0.14 %, trajectory ≤ 0.11 %, tail τ ≤ 0.45 % of the reference's (largest over every case).
+
+**Pending: EHX-1 at 0.35 mA.** Its 8 V ngspice reference was still running at this commit (the 4 V one took 3 h 52 min; this one is past 4 h, re-run with a 10 h cap). Its rows are the DK stage alone, marked "DK only (reference pending)": recorded, not compared, never counted as a pass. They are re-run against the reference when it lands.
+
+**48 kHz, 8 V burst**
+
+| T, bias | shape | rest | shift | at 30 / 35 / 50 / 118.5 ms | tail τ | residual at 35 / 118.5 ms, mV | vs ngspice (std / hq) |
+|---|---|---|---|---|---|---|---|
+| 0.1 mA | RSD-1 | -8.0168 | -0.680 | -8.697 / -8.016 / -8.016 / -8.016 | 116.1 ms | 1.03 / 0.50 | passed / passed |
+| 0.1 mA | RSD-2 | -8.0168 | -0.680 | -8.697 / -8.016 / -8.016 / -8.016 | 116.1 ms | 1.03 / 0.50 | passed / passed |
+| 0.1 mA | EHX-1 | -8.0168 | -0.680 | -8.697 / -8.016 / -8.016 / -8.016 | 116.1 ms | 1.03 / 0.50 | passed / passed |
+| 0.25 mA | RSD-1 | -5.3748 | -1.128 | -6.503 / -5.372 / -5.372 / -5.373 | 115.4 ms | 2.75 / 1.34 | passed / passed |
+| 0.25 mA | RSD-2 | -5.3748 | -1.128 | -6.503 / -5.372 / -5.372 / -5.373 | 115.4 ms | 2.75 / 1.34 | passed / passed |
+| 0.25 mA | EHX-1 | -5.3748 | -1.128 | -6.503 / -5.372 / -5.372 / -5.373 | 115.4 ms | 2.75 / 1.34 | passed / passed |
+| 0.35 mA | RSD-1 | -3.9416 | -1.449 | -5.390 / -3.947 / -3.947 / -3.944 | 107.3 ms | -5.81 / -2.67 | passed / passed |
+| 0.35 mA | RSD-2 | -3.9416 | -1.443 | -5.384 / -3.942 / -3.942 / -3.942 | 68.4 ms | -0.25 / -0.07 | passed / passed |
+| 0.35 mA | EHX-1 | -3.9416 | -1.447 | -5.389 / -3.946 / -3.945 / -3.944 | 106.6 ms | -4.41 / -2.02 | DK only (reference pending) / DK only (reference pending) |
+| 0.45 mA | RSD-1 | -2.6527 | -2.665 | -5.318 / -3.452 / -3.346 / -3.017 | 106.3 ms | -799.17 / -364.37 | passed / passed |
+| 0.45 mA | RSD-2 | -2.6527 | -2.644 | -5.297 / -3.433 / -3.330 / -3.009 | 106.3 ms | -780.67 / -356.01 | passed / passed |
+| 0.45 mA | EHX-1 | -2.6527 | -2.668 | -5.320 / -3.454 / -3.348 / -3.018 | 106.3 ms | -801.09 / -365.24 | passed / passed |
+| 0.5 mA | RSD-1 | -2.0543 | -3.446 | -5.500 / -3.413 / -3.230 / -2.666 | 104.6 ms | -1358.66 / -611.56 | passed / passed |
+| 0.5 mA | RSD-2 | -2.0543 | -3.425 | -5.479 / -3.394 / -3.214 / -2.658 | 104.6 ms | -1340.15 / -603.32 | passed / passed |
+| 0.5 mA | EHX-1 | -2.0543 | -3.450 | -5.504 / -3.416 / -3.233 / -2.667 | 104.6 ms | -1361.90 / -613.00 | passed / passed |
+
+**44.1 kHz, 8 V burst**
+
+| T, bias | shape | rest | shift | at 30 / 35 / 50 / 118.5 ms | tail τ | residual at 35 / 118.5 ms, mV | vs ngspice (std / hq) |
+|---|---|---|---|---|---|---|---|
+| 0.1 mA | RSD-1 | -8.0168 | -0.679 | -8.696 / -8.016 / -8.016 / -8.016 | 116.1 ms | 1.03 / 0.50 | passed / passed |
+| 0.1 mA | RSD-2 | -8.0168 | -0.679 | -8.696 / -8.016 / -8.016 / -8.016 | 116.1 ms | 1.03 / 0.50 | passed / passed |
+| 0.1 mA | EHX-1 | -8.0168 | -0.679 | -8.696 / -8.016 / -8.016 / -8.016 | 116.1 ms | 1.03 / 0.50 | passed / passed |
+| 0.25 mA | RSD-1 | -5.3748 | -1.128 | -6.502 / -5.372 / -5.372 / -5.373 | 115.4 ms | 2.75 / 1.34 | passed / passed |
+| 0.25 mA | RSD-2 | -5.3748 | -1.128 | -6.502 / -5.372 / -5.372 / -5.373 | 115.4 ms | 2.75 / 1.34 | passed / passed |
+| 0.25 mA | EHX-1 | -5.3748 | -1.128 | -6.502 / -5.372 / -5.372 / -5.373 | 115.4 ms | 2.75 / 1.34 | passed / passed |
+| 0.35 mA | RSD-1 | -3.9416 | -1.448 | -5.390 / -3.947 / -3.947 / -3.944 | 107.3 ms | -5.81 / -2.67 | passed / passed |
+| 0.35 mA | RSD-2 | -3.9416 | -1.442 | -5.383 / -3.942 / -3.942 / -3.942 | 68.5 ms | -0.25 / -0.07 | passed / passed |
+| 0.35 mA | EHX-1 | -3.9416 | -1.446 | -5.388 / -3.946 / -3.945 / -3.944 | 106.6 ms | -4.41 / -2.02 | DK only (reference pending) / DK only (reference pending) |
+| 0.45 mA | RSD-1 | -2.6527 | -2.664 | -5.317 / -3.452 / -3.346 / -3.017 | 106.3 ms | -799.16 / -364.37 | passed / passed |
+| 0.45 mA | RSD-2 | -2.6527 | -2.643 | -5.296 / -3.433 / -3.330 / -3.009 | 106.3 ms | -780.67 / -356.00 | passed / passed |
+| 0.45 mA | EHX-1 | -2.6527 | -2.666 | -5.319 / -3.454 / -3.348 / -3.018 | 106.3 ms | -801.08 / -365.24 | passed / passed |
+| 0.5 mA | RSD-1 | -2.0543 | -3.444 | -5.499 / -3.413 / -3.230 / -2.666 | 104.6 ms | -1358.65 / -611.55 | passed / passed |
+| 0.5 mA | RSD-2 | -2.0543 | -3.424 | -5.478 / -3.394 / -3.214 / -2.658 | 104.6 ms | -1340.13 / -603.31 | passed / passed |
+| 0.5 mA | EHX-1 | -2.0543 | -3.448 | -5.502 / -3.416 / -3.233 / -2.667 | 104.6 ms | -1361.88 / -612.99 | passed / passed |
+
+**What moves at 8 V.**
+- **0.1–0.25 mA:** no blocking (Vgk 1.0–2.8 mV *above* rest at 35 ms, the coupling-cap tail), identical across shapes.
+- **0.35 mA:** the onset. The nominal blocks by 5.8 mV at 35 ms (2.7 mV at 118.5 ms; tail τ 107 ms), EHX-1 by
+  4.4 mV (DK only, reference pending), but RSD-2 barely blocks (0.25 mV). Its tail is near zero, so its fitted τ (68 ms) describes a residual about a twentieth the
+  size; ngspice agrees with it to 0.45 %.
+- **0.45–0.5 mA: real blocking**, 0.78–1.36 V at 35 ms. The bounds move the peak shift by ≤ 21 mV (≤ 0.8 %), the
+  residual by ≤ 19 mV (≤ 2.4 %) and the tail τ by < 0.1 ms, against the nominal (RSD-2 blocks least,
+  as at 4 V).
+- **44.1 vs 48 kHz:** the same to ≤ 1 mV and 0.1 ms in every column.
+
+### Burst (4 V, #128's), blocking, recovery and THD over 0.1–0.5 mA, 48 and 44.1 kHz (DK standard 8×, against each shape's own ngspice reference)
 New same-model ngspice references for each bound at T 0.1 / 0.25 / 0.35 mA (`run_refs.BOUND_BIASES["T"]` is now
 the nominal's `GRID_BIASES["T"]`, 0.1–0.6 mA). They were made with the same ngspice 41 and `spice/run_refs.SOLVER`
 as #131a's; re-running #131a's RSD-2 T 0.45 mA reference with this toolchain reproduced the committed JSON in every
@@ -1860,8 +1999,8 @@ number. 48 kHz: `python -m dk6as6.validate --bounds` → `results_grid_{rsd2,ehx
 entries reproduce exactly). 44.1 kHz: `python -m dk6as6.grid_bounds_burst` → `results_grid_bounds_T_44100.json`
 (`validate.run`, unchanged, at 44.1 kHz, the same references, signals and `dk/validate.CRIT`).
 **Every case passes every criterion** at both rates, standard and hq (experimental settings, recorded, not counted as
-supported passes).
-EHX-1's T 0.35 mA reference took 3 h 52 min for its burst (the others 10–30 min; inside `run_refs.NGSPICE_TIMEOUT_S`, 4 h).
+supported passes). The THD table includes the 8 V sine (1 kHz, 0.5 s). EHX-1's T 0.35 mA reference took 3 h 52 min
+for its burst (the others 10–30 min; inside `run_refs.NGSPICE_TIMEOUT_S`, 4 h).
 
 **48 kHz** (`python -m dk6as6.grid_bounds tables`, burst part):
 
@@ -1938,38 +2077,41 @@ residual blocking and THD agree to the digits shown, apart from a few harmonics 
 | 0.5 mA | RSD-2 | -2.0543 | -1.162 | -3.216 / -2.272 / -2.243 / -2.153 | 105.9 ms | passed / passed |
 | 0.5 mA | EHX-1 | -2.0543 | -1.181 | -3.235 / -2.290 / -2.259 / -2.161 | 105.8 ms | passed / passed |
 
-**What moves.**
+**What moves (4 V burst, THD).**
 - **0.1–0.35 mA: the 4 V burst does not block.** After the burst Vgk sits 0.35–1.24 mV *above* rest at 35 ms: the
   coupling-cap tail, not grid blocking. The bounds read the nominal to the digits shown in every burst column.
 - **THD at 0.1–0.35 mA** is the nominal's to 4 significant figures, except 8 V at 0.35 mA: 5.991 % (RSD-1) against
-  6.038 % (RSD-2) and 6.001 % (EHX-1), with H4 −55.2 against −52.0 / −54.4 dBc. That is where the 8 V tone starts to reach the grid onset.
+  6.038 % (RSD-2) and 6.001 % (EHX-1), with H4 −55.2 against −52.0 / −54.4 dBc. That is where the 8 V tone starts to
+  reach the grid onset.
 - **0.45–0.5 mA** move as #131a reported: the peak shift and the tail τ by ≤ 2 %, the residual blocking by up to
   19.6 mV (0.5 mA, RSD-2, 8.25 %), and 8 V THD by ≤ 0.05 points.
 
 ### What this means for the #146 decision (estimated, unvalidated)
-- **Which T region holds under all bounds** (8 V decides; 2 V passes everywhere by ≥ +48 dB):
+- **Which T region holds under all bounds** (sampled biases and tones; every cell measured; 8 V decides, every 2 V
+  setting passes, minimum +29.7 dB):
 
   | factor | filter off, 48 / 44.1 kHz | 4k filter, 48 / 44.1 kHz |
   |---|---|---|
   | 8× | 0.3 / 0.3 mA | not run |
-  | 16× | 0.35 / 0.35 mA | 0.35 / **0.3** mA |
+  | 16× | 0.35 / 0.35 mA | 0.35 / **0.34** mA (0.3 on the main grid) |
   | 32× | 0.45 / 0.45 mA | **0.4 / 0.375** mA |
   | 64× | **0.5 / 0.5 mA** | **0.5 / 0.5 mA** |
 
-- **Only 64× holds the whole supported 0.1–0.5 mA under every bound, at both rates and both post-filter positions**
-  (smallest margin +16.0 dB, RSD-2 at 44.1 kHz, 4k, 0.5 mA). That includes the 0.35–0.5 mA region Michael wants to
-  keep. #146 measured the same for the nominal.
+- **Only 64× holds the whole supported 0.1–0.5 mA under every bound**, at both rates and both post-filter positions,
+  on every sampled bias and tone (all 96 settings measured; minimum +16.0 dB, RSD-2 at 44.1 kHz, 4k, 0.5 mA). That
+  includes the 0.35–0.5 mA region Michael wants to keep. #146 measured the same for the nominal.
 - **#146's proposed cap (16×, T to 0.35 mA) does not hold under every bound**: with the 4k post-filter at 44.1 kHz,
-  RSD-2 fails T 0.35 mA by 0.4 dB. Under all bounds, 16× holds T to 0.3 mA in every position at both rates, and to
-  0.35 mA with the filter off.
+  RSD-2 fails T 0.35 mA by 0.4 dB, and 0.349 mA by 0.4 dB with an off-grid tone. On the sampled grid, 16× holds every
+  bound to 0.34 mA in every position at both rates, and to 0.35 mA with the filter off.
 - **32× (#146's hq) holds 0.45 mA only with the filter off.** With the 4k filter it holds 0.4 mA (48 kHz) and
   0.375 mA (44.1 kHz) under all bounds. With the filter off, 0.5 mA fails at 32× under every bound and rate, except
   the nominal at 48 kHz (+3.2 dB).
-- **Fit sensitivity.** Below 0.35 mA the borrowed law does not matter. From 0.35 mA up the margins move by up to
-  13.5 dB between published fits, so any cap or factor chosen near a boundary there rests on which 12AX7 the law
-  borrows. The fits are not a 6AS6 measurement and need not span one (#131a's caveats above). The real-tube
-  measurement stays the deferred follow-up on #131.
+- **Fit sensitivity.** At the sampled 0.1–0.3 mA the borrowed law does not matter (aliasing ≤ 1e-4 dB; the 4 V and
+  8 V bursts at 0.1 / 0.25 mA and THD at 0.1 / 0.25 mA identical). From about 0.34 mA up, aliasing margins move by up to 13.5 dB between published fits, and
+  the 8 V blocking by up to 19 mV (2.4 %), with its onset at 0.35 mA fit-dependent. So any cap or factor chosen near
+  a boundary there rests on which 12AX7 the law borrows. The fits are not a 6AS6 measurement and need not span one
+  (#131a's caveats above). The real-tube measurement stays the deferred follow-up on #131.
 - **Not covered:** the 7k post-filter position (#146: 4k is the worst for every T key); P1 / P2 (no bound references;
-  P1 draws no grid current); inputs above 20 kHz (#147); 8× with the 4k filter. Nothing here changes the shipped
-  constants, the stage, the C++ core, CI's guard or `stage.SUPPORTED_MA`. **Every grid-current number here stays
-  labelled "estimated, unvalidated."**
+  P1 draws no grid current); inputs above 20 kHz (#147); 8× with the 4k filter; tones and biases between the sampled
+  ones. Nothing here changes the shipped constants, the stage, the C++ core, CI's guard or `stage.SUPPORTED_MA`.
+  **Every grid-current number here stays labelled "estimated, unvalidated."**

@@ -70,26 +70,35 @@ def _burst8(a):
     shape, bias, quality, fs = a
     V.FS = fs
     model = MODELS[shape]
-    ref = json.load(open(R.burst_ref_file(model, bias, MODE, BURST8_AMP)))
     m, its = V.burst(quality, model=model, bias=bias, mode=MODE, amp=BURST8_AMP)
     st = V.stage(model, bias=bias, quality=quality, mode=MODE)
     op = V.op_record(st)
+    out = dict(shape=shape, model=model, bias_ma=bias, quality=quality, fs_base=fs, burst_amp_v=BURST8_AMP,
+               oversampling=st.os, rk=st.rk, grid=st.grid, op=op, burst=m, iterations=its,
+               supported=bool(st.supported))
+    fn = R.burst_ref_file(model, bias, MODE, BURST8_AMP)
+    if not os.path.exists(fn):          # DK only until its reference exists: nothing compared, never a pass
+        return dict(out, reference_pending=True, vs=None, op_rel=None,
+                    passed=dict(op=None, burst=None, newton=its["converged"]))
+    ref = json.load(open(fn))
     cmp = V.burst_compare(m, ref["burst"])
     op_rel = {k: abs(op[k] / ref["op"][k] - 1) for k in ("ia", "ig2", "ik", "vgk")}
     passed = dict(op=all(v < V.CRIT["op_rel"] for v in op_rel.values()),
                   burst=None if cmp.get("spice_exp_capped") else V.burst_ok(cmp), newton=its["converged"])
-    return dict(shape=shape, model=model, bias_ma=bias, quality=quality, fs_base=fs, burst_amp_v=BURST8_AMP,
-                oversampling=st.os, rk=st.rk, grid=st.grid, op=op, op_rel=op_rel, burst=m, vs=cmp,
-                iterations=its, passed=passed, supported=bool(st.supported))
+    return dict(out, op_rel=op_rel, vs=cmp, passed=passed)
 
 
 def burst8_main(workers=None, out=BURST8_JSON, shapes=tuple(MODELS), biases=BIASES):
-    """Run every (rate, shape, bias, quality) whose 8 V reference exists and is not yet in `out`; merge into `out`."""
+    """Run every (rate, shape, bias, quality) not yet in `out`, and re-run a DK-only ("reference_pending") entry once
+    its 8 V reference exists; merge into `out`. A case whose reference is still missing is recorded DK-only."""
     rec = json.load(open(out)) if os.path.exists(out) else dict(label=LABEL, mode=MODE, burst_amp_v=BURST8_AMP,
                                                                  models=MODELS, criteria=V.CRIT, results={})
-    have = lambda s, b, q, fs: q in rec["results"].get(f"{int(fs)}", {}).get(s, {}).get(f"{b:g}", {})  # noqa: E731
+    def done(s, b, q, fs):
+        r = rec["results"].get(f"{int(fs)}", {}).get(s, {}).get(f"{b:g}", {}).get(q)
+        return r is not None and not (r.get("reference_pending")
+                                      and os.path.exists(R.burst_ref_file(MODELS[s], b, MODE, BURST8_AMP)))
     js = [(s, b, q, fs) for fs in BURST8_RATES for b in biases for s in shapes for q in QUALITY
-          if os.path.exists(R.burst_ref_file(MODELS[s], b, MODE, BURST8_AMP)) and not have(s, b, q, fs)]
+          if not done(s, b, q, fs)]
     with ProcessPoolExecutor(workers) as ex:
         res = list(ex.map(_burst8, js))
     for (s, b, q, fs), r in zip(js, res):
@@ -116,7 +125,8 @@ def burst8_tables(path=BURST8_JSON):
                 row = GR._burst_row(rb["standard"]["burst"])
                 traj = " / ".join(f"{row[f'vgk_{ms:g}ms']:.3f}" for ms in GR.TRAJ_MS)
                 res = " / ".join(f"{1e3 * (row[f'vgk_{ms:g}ms'] - row['rest_vgk']):.2f}" for ms in (35.0, 118.5))
-                st = " / ".join(V.status(rb[q]) for q in QUALITY if q in rb)
+                st = " / ".join("DK only (reference pending)" if rb[q].get("reference_pending") else V.status(rb[q])
+                                for q in QUALITY if q in rb)
                 L.append(f"| {b:g} mA | {s} | {row['rest_vgk']:.4f} | {row['shift_v']:.3f} | {traj} | "
                          f"{1e3 * row['tail_tau_s']:.1f} ms | {res} | {st} |")
         L.append("")

@@ -130,7 +130,7 @@ def test_record_method_and_labels(rec):
     for s in G.SHAPES:
         assert m["shapes"][s]["grid"] == P.grid(shape=s)
     for r in rec["records_cpp"]:
-        assert r["shape"] in G.SHAPES and r["bias_ma"] in G.BIASES
+        assert r["shape"] in G.SHAPES and r["bias_ma"] in G.BIASES + G.FINE_BIASES
         if "source" in r:                                # only the nominal records imported from PR #146
             assert r["shape"] == "RSD-1" and r["source"] == f"PR #146 {G.PR146_HEAD[:7]}"
     assert all(r["shape"] in P.GRID_BOUNDS for r in rec["records_python"])
@@ -154,12 +154,26 @@ def test_python_confirms_the_screen(rec):
 
 
 def test_stages_are_decided(rec):
-    """Every key the staged screen plans at 8 V (16x everywhere, 32x where 16x failed, 64x where 32x failed) is
-    decided: all 29 tones pass, or a measured tone fails."""
+    """Every key the staged screen plans is decided (all 29 tones pass, or a measured tone fails), including PR #151
+    review's "fill" (every 32x / 64x key of the decision table), "fine" (16x at 0.31-0.34 mA) and "2v4k"."""
     recs = rec["records_cpp"]
-    for stage in ("16", "32", "64"):
+    for stage in ("16", "32", "64", "8", "2v", "fill", "fine", "2v4k"):
         for k in G.stage_plan(stage, records=recs):
             assert G.key_status(recs, *k) is not None, (stage, k)
+
+
+def test_decision_table_is_measured_not_inferred(idx):
+    """PR #151 review: every cell of the decision table (16x / 32x / 64x, filter off and 4k, both rates, every shape
+    and bias, 8 V) is a measured key, and passes() never credits a factor it was not measured at."""
+    for sh in G.SHAPES:
+        for fs in G.RATES:
+            for f in (16, 32, 64):
+                for lp in ("off", "4k"):
+                    for b in G.BIASES:
+                        x = idx.get((sh, fs, f, lp, b, 8.0))
+                        assert x is not None and (G.complete(x) or not x["passed"]), (sh, fs, f, lp, b)
+    assert G.passes({}, "RSD-2", 44100, 64, 8.0, "off", 0.1) is None
+    assert not hasattr(G, "INFER_MARGIN_DB")
 
 
 # What RESULTS.md states: the highest T bias (mA) that holds (every bias up to it passes, all tones, 8 V) per rate,
@@ -186,16 +200,62 @@ def test_region_under_every_bound_is_what_results_states(idx):
     assert all(v < 0.5 for (fs, f, lp), v in HOLDS_UNDER_ALL.items() if f < 64)
 
 
-def test_bounds_do_not_move_t_below_0p35(idx):
-    """At 0.1-0.3 mA the grid does not conduct enough to matter: every bound reads the nominal's margin to 1e-3 dB
-    wherever both are measured in full (8 V)."""
+def test_bounds_do_not_move_t_at_the_sampled_0p1_to_0p3(idx):
+    """At the sampled 0.1 / 0.25 / 0.3 mA (only those; see the counterexamples below 0.35 mA) every bound reads the
+    nominal's margin to 1e-3 dB wherever both are measured in full (8 V)."""
     n = 0
     for (sh, fs, f, lp, b, d), x in idx.items():
-        if sh != "RSD-1" and b <= 0.3 and G.complete(x):
+        if sh != "RSD-1" and b in (0.1, 0.25, 0.3) and G.complete(x):
             y = idx[("RSD-1", fs, f, lp, b, d)]
             assert abs(x["worst"]["margin_db"] - y["worst"]["margin_db"]) < 1e-3
             n += 1
     assert n >= 24
+
+
+def test_counterexamples_below_0p35_are_recorded(rec):
+    """PR #151 review: just below the 0.35 mA grid point (0.349 mA, off-grid 19693 Hz; 0.3499 mA, grid 19637 Hz;
+    44.1 kHz, 16x, 4k, 8 V) RSD-2 fails where the nominal passes, on both engines, which agree to 0.01 dB."""
+    ce = rec["counterexamples"]
+    assert len(ce) == 2 * len(G.COUNTEREXAMPLES)
+    by = {(r["engine"], r["shape"], r["bias_ma"], r["tone"]): r for r in ce}
+    for b, t in ((0.349, 19693), (0.3499, 19637)):
+        for e in ("cpp", "python"):
+            assert by[(e, "RSD-1", b, t)]["passed"] and not by[(e, "RSD-2", b, t)]["passed"], (e, b, t)
+        for s in ("RSD-1", "RSD-2"):
+            assert abs(by[("cpp", s, b, t)]["margin_db"] - by[("python", s, b, t)]["margin_db"]) <= 0.01
+
+
+def test_fine_biases_locate_where_the_bounds_start_to_move(idx):
+    """16x at 0.31-0.34 mA is measured for every shape, rate and position (stage "fine"), and every one passes, so on
+    the refined grid 16x holds T to 0.34 mA under every shape at 44.1 kHz with 4k (RSD-2 fails 0.35 mA), and to
+    0.35 mA elsewhere; the bounds move these margins by at most 2.7 dB (48 kHz, 4k, 0.34 mA)."""
+    grid = tuple(sorted(G.BIASES + G.FINE_BIASES))
+    want = {(48000, "off"): 0.35, (48000, "4k"): 0.35, (44100, "off"): 0.35, (44100, "4k"): 0.34}
+    for (fs, lp), w in want.items():
+        assert min(G.holds_to(idx, s, fs, 16, 8.0, lp, grid) for s in G.SHAPES) == w, (fs, lp)
+    m = lambda s, fs, lp, b: idx[(s, fs, 16, lp, b, 8.0)]["worst"]["margin_db"]  # noqa: E731
+    moves = [abs(m(s, fs, lp, b) - m("RSD-1", fs, lp, b))
+             for s in P.GRID_BOUNDS for fs in G.RATES for lp in ("off", "4k") for b in G.FINE_BIASES]
+    assert max(moves) < 2.7
+    for sh in G.SHAPES:
+        for fs in G.RATES:
+            for lp in ("off", "4k"):
+                for b in G.FINE_BIASES:
+                    x = idx.get((sh, fs, 16, lp, b, 8.0))
+                    assert x is not None and (G.complete(x) or not x["passed"]), (sh, fs, lp, b)
+
+
+def test_every_2v_case_passes_and_the_stated_minimum(idx):
+    """Every recorded 2 V key passes (all tones). The smallest 2 V margin is with the 4k filter (RSD-2, 44.1 kHz, 16x,
+    0.5 mA, stage "2v4k"); RESULTS.md and the PR body quote it, not the bounds' filter-off minimum (PR #151 review)."""
+    two = {k: x for k, x in idx.items() if k[5] == 2.0}
+    assert two and all(G.complete(x) and x["passed"] for x in two.values())
+    k, x = min(two.items(), key=lambda kv: kv[1]["worst"]["margin_db"])
+    assert x["worst"]["margin_db"] == pytest.approx(TWO_V_MIN_DB, abs=0.01), k
+    assert k[3] == "4k"
+
+
+TWO_V_MIN_DB = 29.72      # dB, from the committed records (below the review's +32.24 dB, the nominal 4k at 0.45 mA)
 
 
 # --- burst / blocking / recovery / THD at 44.1 kHz ---------------------------------------------------------------
@@ -220,3 +280,51 @@ def test_bound_references_cover_0p1_to_0p5():
         for b in R.BOUND_BIASES["T"]:
             ref = V.ref(m, b, "T")
             assert ref["generator"]["grid"] == R.grid_of(m) and ref["generator"]["ngspice"] == "ngspice-41"
+
+
+# --- the 8 V burst (PR #151 review: the issue's checks "at 8 V") --------------------------------------------------
+# Cases whose 8 V ngspice reference was still running when this was committed (EHX-1 0.35 mA: its 4 V burst took
+# 3 h 52 min; the 8 V one is past 4 h): recorded DK only, "reference_pending", never a pass. Remove when it lands.
+PENDING8 = {("dualg_ehx1", 0.35)}
+
+@pytest.mark.parametrize("model", ["dualg", *R.GRID_SHAPE])
+def test_burst8_references(model):
+    """Each shape's 8 V burst reference (run_refs.run_burst) at every T bias of GB.BIASES: the 8 V burst of the same
+    netlist and solver, generated with the shape's grid law, and its op point is the main reference's to 1e-9."""
+    for b in GB.BIASES:
+        if (model, b) in PENDING8 and not os.path.exists(R.burst_ref_file(model, b, "T", 8.0)):
+            continue
+        ref = json.load(open(R.burst_ref_file(model, b, "T", 8.0)))
+        g = ref["generator"]
+        assert ref["burst_amp_v"] == 8.0 and g["burst"]["amp"] == 8.0 and g["ngspice"] == "ngspice-41"
+        # Rk to 1e-12: the nominal T references were solved in an earlier run (last-ulp differences, 2e-15)
+        assert g["grid"] == R.grid_of(model) and g["rk"] == pytest.approx(V.ref(model, b, "T")["generator"]["rk"],
+                                                                          rel=1e-12)
+        main = V.ref(model, b, "T")["op"]
+        for k in ("ia", "ig2", "ik", "vgk"):
+            assert ref["op"][k] == pytest.approx(main[k], rel=1e-9), (model, b, k)
+
+
+def test_burst8_records_at_both_rates():
+    """The 8 V burst record: both rates, every shape and bias, both qualities, each run at 8 V against its own 8 V
+    reference, and every criterion (op, burst shift / trajectory / tail tau, Newton) passes or reads None only where
+    ngspice's exp() cap makes the reference a different law (validate.py)."""
+    rec = json.load(open(GB.BURST8_JSON))
+    assert rec["label"] == G.LABEL and rec["burst_amp_v"] == 8.0 and rec["mode"] == "T"
+    assert set(rec["results"]) == {"48000", "44100"}
+    for fs, d in rec["results"].items():
+        assert set(d) == set(G.SHAPES)
+        for s, sb in d.items():
+            assert set(sb) == {f"{b:g}" for b in GB.BIASES}
+            for b, rb in sb.items():
+                assert set(rb) == {"standard", "hq"}
+                for q, r in rb.items():
+                    assert r["burst_amp_v"] == 8.0 and r["fs_base"] == float(fs) and r["shape"] == s
+                    assert r["grid"] == R.grid_of(GB.MODELS[s]) and r["quality"] == q
+                    if r.get("reference_pending"):
+                        assert (GB.MODELS[s], float(b)) in PENDING8, (fs, s, b, q)
+                        assert r["vs"] is None and V.status(r) == "inconclusive" and r["passed"]["newton"] is True
+                        continue
+                    capped = r["vs"].get("spice_exp_capped", False)
+                    assert r["passed"]["op"] is True and r["passed"]["newton"] is True
+                    assert r["passed"]["burst"] is (None if capped else True), (fs, s, b, q, r["vs"])
