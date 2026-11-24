@@ -1657,12 +1657,14 @@ nominal stage only (`aliasing_guard.GRID_HARDNESS`, shape RSD-1), so none of thi
 
 ## Feasibility of a fuller Holters stateful ADAA (#153)
 
-**Conclusion.** The published full-map method is applicable by numerical integration, as
-demonstrated in #136. Applying the journal's parallel form port by port preserves the
-coupled solve, and dimension reduction leaves a three-coordinate implicit map. Neither
-reformulation provides a distinct eco candidate for the 8 V gate at T 0.5 mA. The
-assessment below uses the existing circuit and nominal RSD-1 grid law, which is estimated
-and unvalidated against a real 6AS6.
+**Not viable for eco through T 0.5 mA at 8 V with the published formulations examined.**
+The parallel split preserves the coupled solve. The reduction to three coordinates
+preserves the integral, and tabulation of that integral only changes its cost.
+Output-only ADAA leaves the state's aliasing largely untreated. The four-node 8×
+kernels from #136 passed the three focused probes at T 0.30 mA at both rates but
+failed probes across the sampled 0.35–0.5 mA range. The 0.30 mA result applies to
+the tested tones. The assessment uses the existing circuit and nominal RSD-1 grid
+law, which is estimated and unvalidated against a real 6AS6.
 
 ### What the two papers allow
 
@@ -1678,7 +1680,8 @@ and unvalidated against a real 6AS6.
   segment between consecutive input vectors. Section 2 describes tabulating either
   the endpoint pairs or the antiderivative along each line. Equations (12)–(13)
   explicitly allow reusing the same solved function for state and output.
-  [Journal article](https://doi.org/10.3390/app10010020)
+  [Journal article](https://doi.org/10.3390/app10010020),
+  [author's university PDF](https://www.hsu-hh.de/ant/wp-content/uploads/sites/699/2020/10/applsci-10-00020-v2.pdf)
 - #136 already used that shared-function case. With the DC offsets implicit, it
   integrated the **joint** current solution `i(p)` along the segment in
   `p = p_dc + Gx + Hu`, using the result in both `C i` and `F i`. It applied the
@@ -1734,19 +1737,23 @@ screen coordinate onto g3 in T, the implicit derivative is
 of a 60 ms render its smallest singular value was 1.70 / 1.73 µA/V
 (44.1 / 48 kHz). This full rank precludes factoring the joint current map through a
 single lower-dimensional argument in these neighborhoods. The solved grid current's
-screen-coordinate sensitivity was
-−0.312 / −0.319 µA/V, with the other reduced coordinates held fixed.
-The grid gradients near `Vg1k = -0.2 V` and at peak grid voltage are
-nonparallel at both rates, which rules out a single fixed linear projection
-for the solved grid branch at these points. Both traces had zero solver misses
-and zero samples outside the valve law. This is a local dependence check on the
-existing model.
+screen-coordinate sensitivity was −0.312 / −0.319 µA/V, with the other reduced
+coordinates held fixed. The gradient near `Vg1k = -0.2 V` and the one at peak grid
+voltage are nearly parallel. The angle between them is 4.9 × 10⁻⁵ rad at 44.1 kHz
+and 1.1 × 10⁻⁵ rad at 48 kHz. This two-point comparison measures local alignment.
+The accuracy of approximating the solved grid current by a single fixed projection
+over the trajectory remains untested. Both traces had zero solver misses and zero
+samples outside the valve law.
 
 The affine reduction commutes with straight-line interpolation. It leaves the
 integral and hence the exact filter output unchanged. The proposed tabulations
 would still need six endpoint coordinates or five coordinates for a
-line-parameterized antiderivative, per matrix set. An exact table would save
-integration work without changing the failed converged result. Parker et al.,
+line-parameterized antiderivative, per matrix set. At T 0.5 mA, the recorded
+ADAA2 + 8× result is close to oversampling alone at 16×, which also misses the
+strict gate by about 29 dB at each rate. Even a zero-cost exact lookup would
+retain the converged aliasing of the same integral, including the 29.40 dB
+shortfall on the decisive 48 kHz probe. A CPU gain at that alias level would
+still leave the configuration outside the gate. Parker et al.,
 §2.1, point to higher-order **input reconstruction** to suppress interpolation
 images, but derive the method using linear segments. Their §6 integrator
 fusion addresses a different feedback structure. The Lagrange method cited by
@@ -1774,7 +1781,9 @@ absolute limit where it dominates.
 | ADAA2 + 8×, four nodes | −28.75 / −13.72 | −29.15 / −10.37 | −26.15 | 100,404 | 3.94× / 2.24× |
 
 These are #136's recorded measurements. CPU is from the matched #20 / #67
-harness, Apple M1, 48 kHz, mono, 64-sample blocks, 8 V peak, k140. The
+harness, Apple M1, 48 kHz, mono, 64-sample blocks, 8 V peak, k140. The matched
+run used per-process cycle counts on a heavily loaded host. Its one-minute
+load average rose from 65.9 to 129.9 during the run. The
 separate lightly loaded control-only run took 41.8% / 74.2% of one core in T
 at 8× / 16× and 42.5% / 75.8% in P1 0.45 mA. In the matched P1 benchmark,
 the four-node box cost 3.93× / 2.24× and the triangle 3.94× / 2.24× vs
@@ -1828,7 +1837,9 @@ for fs in (44100, 48000):
         derivative = 1e6 * np.linalg.solve(np.eye(3) + J @ stage.m["K"], J @ basis)
         gradients.append(derivative[2])
         print(fs, v[0], np.linalg.svd(derivative, compute_uv=False), derivative[2])
-    print("gradient rank", np.linalg.matrix_rank(gradients),
+    near_onset, peak = gradients
+    angle = np.arctan2(np.linalg.norm(np.cross(near_onset, peak)), near_onset @ peak)
+    print("gradient angle (rad)", angle,
           "solver misses", stage.nonconv, "out of law", stage.out_of_law)
 PY
 ```
