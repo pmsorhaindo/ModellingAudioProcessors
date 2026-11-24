@@ -77,8 +77,9 @@ BIASES = {"dual": (0.1, 0.25, 0.45, 0.6), "r51": (0.45,), "dualg": (0.1, 0.25, 0
 MODE_BIASES = {"P1": BIASES["dual"], "T": (0.1, 0.25, 0.35, 0.45, 0.6), "P2": (0.1, 0.25, 0.45, 0.6)}
 # dualg (#112): T at its references' currents and wherever its envelope is tested (stage.SUPPORTED_MA)
 GRID_BIASES = {"P1": BIASES["dualg"], "T": (0.1, 0.25, 0.35, 0.45, 0.5, 0.6)}   # T 0.5: the top of its envelope
-# the #131 bounds: T where the grid current moves the nominal results (0.45 mA up; dk6as6/RESULTS.md)
-BOUND_BIASES = {"T": (0.45, 0.5, 0.6)}
+# the #131 bounds: T at the nominal dualg T references' currents (GRID_BIASES["T"]): 0.45 mA up where the grid current
+# moves the nominal results (#131a, PR #139), 0.1-0.35 mA added for the bounds-only report over 0.1-0.5 mA (#131)
+BOUND_BIASES = {"T": GRID_BIASES["T"]}
 SUBCKT = {"dual": "6AS6_DUAL", "r51": "6AS6_R51", "dualg": "6AS6_DUALG", "dualg_rsd2": "6AS6_DUALG_RSD2",
           "dualg_ehx1": "6AS6_DUALG_EHX1"}
 
