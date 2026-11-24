@@ -24,9 +24,11 @@ def _volts(p, K, i0, i1):
     return [p[r] - K[r][0] * i0 - K[r][1] * i1 for r in range(4)]
 
 
-def _resid(p, K, i0, i1, par, jac=True):
+def _resid(p, K, i0, i1, par, jac=True, law=None):
     v = _volts(p, K, i0, i1)
-    if jac:
+    if law is not None:
+        ip, ig2, J = law(v)
+    elif jac:
         ip, ig2, J = currents(v[0], v[1], v[2], v[3], par)
     else:
         (ip, ig2), J = currents_only(v[0], v[1], v[2], v[3], par), None
@@ -35,10 +37,11 @@ def _resid(p, K, i0, i1, par, jac=True):
     return r0, r1, fv, v, J
 
 
-def solve(p, K, i0, i1, par=DUAL_CONTROL, max_it=MAX_IT, tol_v=TOL_V, tol_f=TOL_F):
+def solve(p, K, i0, i1, par=DUAL_CONTROL, max_it=MAX_IT, tol_v=TOL_V, tol_f=TOL_F, *, law=None):
     """Return (v, Ip, Ig2, iterations, converged): v = p - K i at the last current iterate i, v = [Vg1k, Vg2k, Vg3k,
-    Vak], and Ip, Ig2 = the valve law at v (they differ from i by the residual R, as dk/solver.py returns i(v))."""
-    r0, r1, fv, v, J = _resid(p, K, i0, i1, par)
+    Vak], and Ip, Ig2 = the valve law at v (they differ from i by the residual R, as dk/solver.py returns i(v)).
+    An offline caller may substitute a two-port law (arguments and output as currents())."""
+    r0, r1, fv, v, J = _resid(p, K, i0, i1, par, law=law)
     fb, best = fv, (v, i0 - r0, i1 - r1)
     for it in range(1, max_it + 1):
         # dR/di = I + J K
@@ -50,14 +53,15 @@ def solve(p, K, i0, i1, par=DUAL_CONTROL, max_it=MAX_IT, tol_v=TOL_V, tol_f=TOL_
         s0 = -(d * r0 - b * r1) / det
         s1 = -(-c * r0 + a * r1) / det
         lam = 1.0
-        g0, g1, gv, gvolt, gJ = _resid(p, K, i0 + s0, i1 + s1, par)
+        g0, g1, gv, gvolt, gJ = _resid(p, K, i0 + s0, i1 + s1, par, law=law)
         if not (gv < fv or fv < tol_f):
             for _ in range(LS_MAX - 1):
                 lam *= 0.5
-                g0, g1, gv, gvolt, _ = _resid(p, K, i0 + lam * s0, i1 + lam * s1, par, jac=False)
+                g0, g1, gv, gvolt, gJ = _resid(p, K, i0 + lam * s0, i1 + lam * s1, par, jac=False, law=law)
                 if gv < fv:
                     break
-            gJ = currents(*gvolt, par)[2]
+            if law is None:
+                gJ = currents(*gvolt, par)[2]
         dv = max(abs(K[r][0] * lam * s0 + K[r][1] * lam * s1) for r in range(4))
         i0, i1 = i0 + lam * s0, i1 + lam * s1
         r0, r1, fv, v, J = g0, g1, gv, gvolt, gJ
