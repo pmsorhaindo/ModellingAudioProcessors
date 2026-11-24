@@ -42,7 +42,7 @@ def load_line(resistance, gg, xi, cg):
         v = brentq(residual, min(TABLE_MIN, x) - 1, x, xtol=1e-14)
         return pentode.grid_current(v, g)[0]
 
-    values = np.array([current(x) for x in q])
+    values = np.array([current(x) if resistance else pentode.grid_current(x, g)[0] for x in q])
     values[0] = 0.0  # below -4 V the borrowed fits are below 1e-25 A
     curve = CubicSpline(q, values, bc_type=((1, 0.0), "not-a-knot"))
     f1 = curve.antiderivative()
@@ -190,33 +190,45 @@ class Stage(OrdinaryStage):
         jac = [dip, [dipk[j] - dip[j] for j in range(4)]]
         return v, ip, ipk - ip, ig, jac
 
-    def _split(self, p, start):
+    def _split(self, p, start, previous):
         def law(q):
-            v, ip, screen, ig, jac = self._port_law(q)
+            _, ip, screen, _, jac = self._port_law(q)
             return ip, screen, jac
 
-        q, ip, screen, iterations, ok = solve(p, self.K, *start[:2], self.par, *self.newton, law=law)
+        best = None
+        total = 0
+        for attempt, initial in enumerate((start, previous, self.i_dc)):
+            q, ip, screen, iterations, ok = solve(p, self.K, *initial[:2], self.par, *self.newton, law=law)
+            total += iterations
+            residual = max(abs(p[j] - self.K[j][0]*ip - self.K[j][1]*screen - q[j]) for j in range(4))
+            if best is None or residual < best[0] or ok:
+                best = residual, q, ip, screen
+            if ok:
+                break
+        self.restarted += attempt > 0
+        _, q, ip, screen = best
         # Reconstruct the actual voltages and commit history only after Newton.
         vgk, ig, _ = self.filter.load(q[0], self.K[0][2], self.instant)
         self.filter.advance(vgk)
         v = [vgk, *(q[j] - self.K[j][2]*ig for j in range(1, 4))]
-        return v, [ip, screen, ig], iterations, ok
+        return v, [ip, screen, ig], total, ok
 
     def process_internal(self, vin, record=("out",)):
         # The original DK and post-filter matrices run at their original
         # rate. Only the grid branch has history; the other stamps use v[n].
         m = self.m
-        rec = {name: np.empty(len(vin)) for name in record}
-        nodes = {name: m["out_names"].index(name) for name in record if name in m["out_names"]}
+        rec = {name: np.empty(len(vin)) for name in ("out", *record)}
+        nodes = {name: m["out_names"].index(name) for name in rec if name in m["out_names"]}
         iters = np.empty(len(vin), dtype=np.int16)
         x, i, prev = self.x, self.i, self.i_prev
+        bad = outside = 0
         for n, u in enumerate(vin):
             p = (m["G"] @ x + m["H"][:, 0]*u + self.p_dc).tolist()
             start = [2*a - b for a, b in zip(i, prev)]
-            v, nxt, iters[n], ok = self._split(p, start)
+            v, nxt, iters[n], ok = self._split(p, start, i)
             prev, i = i, nxt
-            self.nonconv += not ok
-            self.out_of_law += v[3] < 0 or i[0] + i[1] < 0
+            bad += not ok
+            outside += v[3] < 0 or i[0] + i[1] < 0
             di = i - self.i_dc
             if nodes:
                 out = m["D"] @ x + m["E"][:, 0]*u + m["F"] @ di + self.y_dc
@@ -228,6 +240,12 @@ class Stage(OrdinaryStage):
             x = m["A"] @ x + m["B"][:, 0]*u + m["C"] @ di
         self.x, self.i, self.i_prev = x, i, prev
         self.iters.append(iters)
-        if "out" in rec:
-            rec["out"] = self.lpf.process(rec["out"])
+        self.nonconv += bad
+        self.out_of_law += outside
+        self.nonconv_block, self.out_of_law_block = bad, outside
+        out = self.lpf.process(rec["out"])
+        if "out" in record:
+            rec["out"] = out
+        else:
+            del rec["out"]
         return rec
