@@ -155,11 +155,11 @@ constexpr int first_fir_taps(double fs, const FirDesign& d) {
 constexpr bool halfband_taps_ok(int nt) { return nt >= 3 && nt % 4 == 3; }
 constexpr int first_fir_taps(double fs) { return first_fir_taps(fs, SHIPPED_FIR); }
 struct FirGeometry { int stages = 0, pad = 0, latency_samples = 0, up_delay_internal = 0; };
+template <int MaxOs = MAX_OS>
 constexpr FirGeometry fir_geometry(int os, double fs, const FirDesign& des = SHIPPED_FIR) {
-    if (!(fs > 0.0 && fs < INFINITY) || os < 2 || os > MAX_OS) return {};
+    if (!(fs > 0.0 && fs < INFINITY) || os < 2 || os > MaxOs || (os & (os - 1))) return {};
     int n = 0;
-    while ((1 << n) < os) ++n;
-    if ((1 << n) != os) return {};
+    for (int k = os; k > 1; k /= 2) ++n;
     // the tap counts are checked, and the delay summed in 64 bits, before any int arithmetic on them: an invalid or
     // absurdly long design gives no geometry (stages 0), so prepare() rejects it instead of overflowing
     long long dl = 0;
@@ -1110,10 +1110,12 @@ template <int N, class T> struct FirHalfBand {
  * instantiation, e.g. K140_FIRST_MAX_TAPS / K140_LATER_TAPS), no allocation or virtual dispatch; prepare designs
  * coefficients off the audio thread and returns false for a design that does not fit.
  * up starts at zero; the first down after reset primes the decimator from its first sample (the DC point). */
-template <class T, int FIRST_N = FIR_MAX_TAPS, int LATER_N = FIR_LATER_TAPS> class ResamplerT {
+template <class T, int FIRST_N = FIR_MAX_TAPS, int LATER_N = FIR_LATER_TAPS, int MaxOs = MAX_OS> class ResamplerT {
+    static constexpr int stages = fir_geometry<MaxOs>(MaxOs, 48000.0).stages;
+    static_assert(stages >= 1, "resampler storage must cover a power of two of at least 2");
 public:
     bool prepare(int os, double fs_base, const FirDesign& des = SHIPPED_FIR) {
-        const auto g = fir_geometry(os, fs_base, des);
+        const auto g = fir_geometry<MaxOs>(os, fs_base, des);
         if (!g.stages) return false;
         const int n0 = first_fir_taps(fs_base, des);
         if (n0 > FIRST_N || (g.stages > 1 && des.later_taps > LATER_N)) return false;   // geometry checked 4m + 3
@@ -1121,7 +1123,7 @@ public:
         first_.prepare(n0, des.first_beta);
         for (int i = 1; i < nst_; ++i) later_[i-1].prepare(des.later_taps, des.later_beta);
         pad_ = g.pad; latency_ = g.latency_samples; up_delay_ = g.up_delay_internal;
-        double pd[MAX_OS + 1] = {};
+        double pd[MaxOs + 1] = {};
         pd[pad_] = 1.0;
         delay_.set(pd, pad_ + 1);
         reset();
@@ -1148,7 +1150,7 @@ public:
         return s;
     }
     void up(T x, T* y) {
-        T a[MAX_OS], b[MAX_OS];
+        T a[MaxOs], b[MaxOs];
         a[0] = x;
         int len = 1;
         T* cur = a; T* nxt = b;
@@ -1160,7 +1162,7 @@ public:
         std::memcpy(y, cur, sizeof(T) * os_);
     }
     T down(const T* y) {
-        T a[MAX_OS], b[MAX_OS];
+        T a[MaxOs], b[MaxOs];
         if (!primed_) {
             T c = delay_.prime(y[0]);
             for (int i = nst_ - 1; i >= 0; --i) c = i == 0 ? first_.prime(c) : later_[i-1].prime(c);
@@ -1179,8 +1181,8 @@ public:
 private:
     int os_ = 0, nst_ = 0, pad_ = 0, latency_ = 0, up_delay_ = 0;
     FirHalfBand<FIRST_N, T> first_;
-    FirHalfBand<LATER_N, T> later_[3];
-    Fir<MAX_OS + 1, T> delay_;
+    FirHalfBand<LATER_N, T> later_[stages > 1 ? stages - 1 : 1];
+    Fir<MaxOs + 1, T> delay_;
     bool primed_ = false;
 };
 using Resampler = ResamplerT<double>;

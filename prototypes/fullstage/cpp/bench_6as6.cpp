@@ -25,6 +25,13 @@
 
 using namespace dk6as6;
 
+// The #148 research run extends the same benchmark without changing the default configurations.
+#ifdef DK6AS6_BENCH_EXTENDED_RATES
+using BenchCore = StageT<64>;
+#else
+using BenchCore = Stage;
+#endif
+
 struct BenchQuality {
     std::string name;
     Quality rate;
@@ -59,7 +66,7 @@ public:
         return stage_.stats();
     }
 private:
-    dk6as6::Stage stage_;
+    BenchCore stage_;
 #ifdef DK6AS6_BENCH_ADAA
     research::Screen screen_;
     bool adaa_ = false;
@@ -157,6 +164,10 @@ int main(int argc, char** argv) {
     if (n == 0 || reps < 1) { std::fprintf(stderr, "need --seconds >= %g and --reps >= 1\n", 512 / FS); return 2; }
 
     std::vector<BenchQuality> qs = {{"standard", STANDARD}, {"hq", HQ}};
+#ifdef DK6AS6_BENCH_EXTENDED_RATES
+    qs.push_back({"research32", {32, 0.0}});
+    qs.push_back({"research64", {64, 0.0}});
+#endif
 #ifdef DK6AS6_BENCH_ADAA
     qs.push_back({"os2", {2, 0.0}});
     qs.push_back({"os4", {4, 0.0}});
@@ -246,7 +257,7 @@ int main(int argc, char** argv) {
     std::printf("\"counters\": \"%s\", ", have_counters ? COUNTER_SOURCE : "unavailable");
 #endif
     std::printf("\"compiler\": \"%s\", \"sizeof_stage\": %zu, \"fma\": %s}, \"results\": [", __VERSION__,
-                sizeof(dk6as6::Stage), dkcore::simd::FMA ? "true" : "false");
+                sizeof(BenchCore), dkcore::simd::FMA ? "true" : "false");
     for (std::size_t i = 0; i < cfg.size(); ++i) {
         Config& c = cfg[i];
         all_det = all_det && c.deterministic;

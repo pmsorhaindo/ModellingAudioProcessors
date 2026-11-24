@@ -1,0 +1,293 @@
+{
+  "compiler": "Apple clang version 17.0.0 (clang-1700.6.3.2)",
+  "flags": "-O2",
+  "block_max": 64,
+  "records": [
+    {
+      "fs": 44100,
+      "scenario": "automation",
+      "total_samples": 41895,
+      "methods": {
+        "fixed16": {
+          "ns_per_sample": 22664.94808449696,
+          "overlap_ns_per_sample": null,
+          "overlap_samples": 0,
+          "reps": [
+            {
+              "single_ns": 949548000.0,
+              "dual_ns": 0.0,
+              "dual_samples": 0,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            },
+            {
+              "single_ns": 986030000.0,
+              "dual_ns": 0.0,
+              "dual_samples": 0,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            },
+            {
+              "single_ns": 944514000.0,
+              "dual_ns": 0.0,
+              "dual_samples": 0,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            }
+          ]
+        },
+        "fixed32": {
+          "ns_per_sample": 46100.0119345984,
+          "overlap_ns_per_sample": null,
+          "overlap_samples": 0,
+          "reps": [
+            {
+              "single_ns": 1931360000.0,
+              "dual_ns": 0.0,
+              "dual_samples": 0,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            },
+            {
+              "single_ns": 1891630000.0,
+              "dual_ns": 0.0,
+              "dual_samples": 0,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            },
+            {
+              "single_ns": 1932290000.0,
+              "dual_ns": 0.0,
+              "dual_samples": 0,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            }
+          ]
+        },
+        "fade": {
+          "ns_per_sample": 40134.45518558301,
+          "overlap_ns_per_sample": 70047.16399506782,
+          "overlap_samples": 12976,
+          "reps": [
+            {
+              "single_ns": 772501000.0,
+              "dual_ns": 908932000.0,
+              "dual_samples": 12976,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            },
+            {
+              "single_ns": 772642000.0,
+              "dual_ns": 911712000.0,
+              "dual_samples": 12976,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            },
+            {
+              "single_ns": 756419000.0,
+              "dual_ns": 896194000.0,
+              "dual_samples": 12976,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            }
+          ]
+        },
+        "handoff": {
+          "ns_per_sample": 35310.68146556868,
+          "overlap_ns_per_sample": 70002.47395833333,
+          "overlap_samples": 7680,
+          "reps": [
+            {
+              "single_ns": 959345000.0,
+              "dual_ns": 537619000.0,
+              "dual_samples": 7680,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            },
+            {
+              "single_ns": 954258000.0,
+              "dual_ns": 519143000.0,
+              "dual_samples": 7680,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            },
+            {
+              "single_ns": 940102000.0,
+              "dual_ns": 539239000.0,
+              "dual_samples": 7680,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "fs": 48000,
+      "scenario": "automation",
+      "total_samples": 45600,
+      "methods": {
+        "fixed16": {
+          "ns_per_sample": 23368.640350877195,
+          "overlap_ns_per_sample": null,
+          "overlap_samples": 0,
+          "reps": [
+            {
+              "single_ns": 1073050000.0,
+              "dual_ns": 0.0,
+              "dual_samples": 0,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            },
+            {
+              "single_ns": 1065610000.0,
+              "dual_ns": 0.0,
+              "dual_samples": 0,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            },
+            {
+              "single_ns": 1057980000.0,
+              "dual_ns": 0.0,
+              "dual_samples": 0,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            }
+          ]
+        },
+        "fixed32": {
+          "ns_per_sample": 45494.95614035088,
+          "overlap_ns_per_sample": null,
+          "overlap_samples": 0,
+          "reps": [
+            {
+              "single_ns": 2082230000.0,
+              "dual_ns": 0.0,
+              "dual_samples": 0,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            },
+            {
+              "single_ns": 2074570000.0,
+              "dual_ns": 0.0,
+              "dual_samples": 0,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            },
+            {
+              "single_ns": 2056600000.0,
+              "dual_ns": 0.0,
+              "dual_samples": 0,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            }
+          ]
+        },
+        "fade": {
+          "ns_per_sample": 40571.995614035084,
+          "overlap_ns_per_sample": 71367.63038548753,
+          "overlap_samples": 14112,
+          "reps": [
+            {
+              "single_ns": 862694000.0,
+              "dual_ns": 1012810000.0,
+              "dual_samples": 14112,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            },
+            {
+              "single_ns": 839834000.0,
+              "dual_ns": 959408000.0,
+              "dual_samples": 14112,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            },
+            {
+              "single_ns": 842943000.0,
+              "dual_ns": 1007140000.0,
+              "dual_samples": 14112,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            }
+          ]
+        },
+        "handoff": {
+          "ns_per_sample": 35214.320175438595,
+          "overlap_ns_per_sample": 68329.26245210729,
+          "overlap_samples": 8352,
+          "reps": [
+            {
+              "single_ns": 1035230000.0,
+              "dual_ns": 570543000.0,
+              "dual_samples": 8352,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            },
+            {
+              "single_ns": 1049590000.0,
+              "dual_ns": 587221000.0,
+              "dual_samples": 8352,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            },
+            {
+              "single_ns": 1019050000.0,
+              "dual_ns": 570686000.0,
+              "dual_samples": 8352,
+              "nonconverged": 0,
+              "out_of_law": 0,
+              "allocations": 0,
+              "recoveries": 0
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
