@@ -2306,3 +2306,201 @@ PY
 ```
 
 </details>
+
+## State-space antiderivative antialiasing (#136)
+
+**Recommendation for #146:** leave ADAA out of eco, standard and hq on the evidence below.
+The experiment leaves the T envelope at 0.5 mA. The host-rate quality settings are still
+8× standard and 16× hq. This result informs the oversampling decision in #146 and the
+separate rate-switch measurements in #148.
+
+### Implementation
+
+The Python prototype leaves the fitted device law and circuit values in place. At each
+internal-rate step the DK matrices produce the four-vector `p = p_dc + Gx + Hu`. The nonlinear
+map is the full implicit current solution `i(p)`, including grid current in the nominal
+configuration. The antialiased state update and output both take the weighted integral of
+`i(p)` along the straight segment from the preceding `p` to the current one. The same kernel
+averages the linear input and state terms. This is Holters’s state-space method, equations
+(2) and (16)–(19). [Holters, *Antiderivative Antialiasing for Stateful Systems*](https://doi.org/10.3390/app10010020)
+
+ADAA1 uses the unit-width box. ADAA2 uses the triangular kernel of Parker, Zavalishin and Le
+Bivic, §3, which is expressible with second antiderivatives. It retains one weighted half of
+the preceding interval. Integrated against a linear input, the two kernels give the FIRs
+`[1/2, 1/2]` and `[1/6, 2/3, 1/6]`. Their nominal extra output delays are ½ and 1 internal
+sample respectively. Following Holters’s feedback-delay compensation, the companion matrices
+are designed at the internal rate divided by 1.5 or 2 respectively. The feedback substitution
+preserves low-frequency timing and changes the high-frequency response. [Parker, Zavalishin and
+Le Bivic, *Reducing the Aliasing of Nonlinear Waveshaping Using Continuous-Time Convolution*](https://www.dafx.de/paper-archive/details/vem_XXF5qBbfiWOH2RVVAA)
+
+Gauss–Legendre quadrature evaluates the antiderivative integral in normalized sample time.
+The map has vector input and an implicit solve, so the prototype solves the full map at each
+quadrature node. The normalized parameterization handles coincident endpoints without
+division by a voltage difference. The measurements use updated DK state and actual audio
+renders. The native renderer uses the existing C++ solver and k140 resampler for offline
+screening and CPU measurements. Python parity tests check reset, streaming, linearized
+response, and the native renderer’s output and grid/screen voltages.
+
+### Aliasing
+
+The metric and test tones come from #146 at `1c0a7f4`. The tests use the k140 FIR and nominal
+RSD-1 grid-current shape, 1.25 s of settling and a 1 s coherent, unwindowed DFT. The measured
+output peak is full scale. At each non-harmonic bin from 20 Hz through 20 kHz, the limit is
+the tighter of −100 dBFS and 10 dB below the threshold of hearing at the bin, using 105 dB SPL
+for a full-scale sine. Positive margin passes. Folded lines that coincide with true harmonics
+share the same bin and cannot be resolved by this test. [PR #146, metric and calibration](https://github.com/pmsorhaindo/ModellingAudioProcessors/pull/146)
+
+The matched comparison uses 8 V, 44.1 and 48 kHz, filter off, P1 0.6 mA and T 0.35 and
+0.5 mA. Each row uses the same five probes (14,037, 17,037, 19,037, 19,937 and 19,997 Hz).
+The per-point alias level is its loudest non-harmonic bin. The per-point margin is its
+smallest margin to the limit at the product’s own frequency. They can occur at different
+frequencies. The evidence file records each deciding frequency and level.
+
+At four nodes, both 8× candidates passed the five P1 0.6 mA probes at both rates. T
+0.35 mA still missed by at least 5.5 dB. At T 0.5 mA the 48 kHz, 19,037 Hz probe is
+decisive. The 20th harmonic folds to 3,260 Hz at 8×. The four-node box and triangle leave
+it at −87.09 and −90.82 dBFS respectively, against a limit of −119.97 dBFS. The 32-node
+triangle reads −90.57 dBFS at the same bin. Across the two orders, two rates and two
+T 0.5 mA convergence probes (19,037 and 19,997 Hz), the margins at 16 and 32 nodes
+agree within 0.001 dB. The post-filters also fail on these hot probes. At 48 kHz and
+19,037 Hz, the four-node triangle misses the gate by 29.15 dB with the filter off,
+42.55 dB at 7k and 48.32 dB at 4k. Those figures are relative to each output’s peak.
+
+The four-node 8× triangle also ran at three upper-band probes (19,037, 19,937 and
+19,997 Hz) at every P1 and supported T bias on the #146 grid. Worst T margins at 44.1 /
+48 kHz, respectively, were −5.47 / −8.28 dB at 0.35 mA, −17.92 / −20.91 dB at 0.375 mA,
+−14.67 / −19.42 dB at 0.4 mA, −24.90 / −26.19 dB at 0.45 mA, and −23.44 / −29.15 dB
+at 0.5 mA. Both modes cleared these three probes at the lower tested currents.
+
+Both four-node 8× kernels also ran on all 29 in-band #146 tones at each of two edge biases
+and both rates. The oversampling-only rows use #146’s scored records for the same points.
+Entries give worst / median margin in dB, with the filter off.
+
+| Mode and bias | Rate | OS only 8× | OS only 16× | ADAA1 + 8×, four nodes | ADAA2 + 8×, four nodes |
+|---|---:|---:|---:|---:|---:|
+| P1 0.6 mA | 44.1 kHz | −21.26 / +3.04 | +34.29 / +43.12 | +0.43 / +32.58 | −3.03 / +34.29 |
+| P1 0.6 mA | 48 kHz | −21.10 / +8.01 | +34.29 / +48.70 | +7.97 / +34.28 | +4.79 / +35.75 |
+| T 0.5 mA | 44.1 kHz | −57.38 / −38.01 | −29.50 / −15.33 | −27.41 / −13.01 | −28.75 / −13.72 |
+| T 0.5 mA | 48 kHz | −53.73 / −37.60 | −28.64 / −12.88 | −32.87 / −11.17 | −29.15 / −10.37 |
+
+The 19,437 Hz probe at 44.1 kHz catches the triangle’s P1 failure. Its 2,934 Hz
+product is −116.36 dBFS and the hearing limit there is −119.39 dBFS. On T 0.5 mA the
+triangle improves the median against 16× at both rates, while the worst margins are
+within 0.75 dB of 16× and fail at both rates.
+
+### Same-model ngspice agreement
+
+The validation uses the repository’s 48 kHz reference protocol and existing
+`dk/validate.CRIT` tolerances. The stored `dual` (grid off) references cover P1,
+T and experimental P2 at 0.1, 0.25, 0.45 and 0.6 mA. The `dualg` references add
+nominal grid current for P1 through 0.45 mA and include T 0.35 and 0.5 mA. Fresh
+ngspice 41 operating-point and AC runs cover nominal-grid P1 0.6 mA and the four
+P2 reference biases. The transient comparisons at those five settings use their
+grid-off references. These are simulations of the existing fit and inferred circuit.
+The borrowed control-grid law is estimated and unvalidated against a 6AS6.
+
+The expected AC droop is present at both rates. At T 0.5 mA, 8×, chain error at
+20 kHz is −0.156 / −0.133 dB for ADAA1 and −0.203 / −0.172 dB for ADAA2
+(44.1 / 48 kHz). The gate is ±0.1 dB. Fresh nominal-grid ngspice for P1 0.6 mA gives
+−0.128 dB (box) and −0.166 dB (triangle) at 48 kHz. This is independent of the
+quadrature node count in the small-signal limit.
+
+### CPU and matched configurations
+
+The #20/#67 harness uses the same 2 s guitar phrase, warm-up, round-robin passes and
+block timing with the production controls and the offline ADAA renderer. This run
+uses Apple M1, Apple clang 17 `-O3`, 48 kHz, 8 V peak, mono, 64-sample blocks, and
+P1 0.45 mA / T 0.5 mA. The 8× and 16× controls ran alongside the ADAA rows for
+three timed passes. The 2× and 4× controls ran alongside their own 8× and 16×
+controls for five passes. Cycles per host sample are the medians from the harness’s
+process counters. The host was heavily loaded during these runs, with the benchmark
+on CPU for roughly one quarter to one third of wall time. The cycles and paired
+ratios are the CPU comparison here. The initial 11-pass control-only run read
+42.5% / 41.8% of a core at 8× and 75.8% / 74.2% at 16× (P1 / T, wall-time metric).
+
+The table combines the 30 matched alias probes per row and the maximum
+small-signal chain error and H2–H5 error over supported settings with full
+same-model ngspice references. At T 0.5 mA and 8 V, 1 kHz, the ngspice THD is
+13.2507%. The four-node box and triangle at 8× give 13.2488% and 13.2478%.
+The raw record includes THD at each reference drive and the tone-burst comparisons.
+
+| Configuration | Nodes | Loudest alias worst / median (dBFS) | Gate margin worst / median (dB) | Cycles per host sample P1 / T | Cost vs 8× P1 / T | Cost vs 16× P1 / T | ngspice max AC / harmonic error (dB) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| OS only 2× | — | −28.42 / −37.53 | −85.97 / −71.35 | 8.1k/7.8k | 0.31 / 0.30 | 0.17 / 0.17 | 0.005 / 0.004 |
+| OS only 4× | — | −44.92 / −61.41 | −74.80 / −52.36 | 14.3k/14.0k | 0.55 / 0.54 | 0.30 / 0.30 | <0.001 / 0.004 |
+| OS only 8× | — | −61.31 / −97.04 | −53.73 / −16.58 | 26.3k/25.5k | 1.00 / 1.00 | 0.57 / 0.57 | <0.001 / 0.004 |
+| OS only 16× | — | −82.42 / −148.72 | −28.64 / +39.55 | 46.2k/44.7k | 1.76 / 1.75 | 1.00 / 1.00 | <0.001 / 0.004 |
+| ADAA1 + 2× | 2 | −36.60 / −53.72 | −79.90 / −59.54 | 14.6k/14.7k | 0.55 / 0.58 | 0.32 / 0.33 | 2.220 / 0.091 |
+| ADAA1 + 2× | 4 | −43.14 / −58.57 | −69.37 / −53.41 | 27.5k/28.1k | 1.05 / 1.10 | 0.60 / 0.63 | 2.220 / 0.091 |
+| ADAA2 + 2× | 2 | −36.25 / −46.18 | −79.44 / −61.90 | 14.9k/14.7k | 0.57 / 0.58 | 0.32 / 0.33 | 3.159 / 0.128 |
+| ADAA2 + 2× | 4 | −40.12 / −51.87 | −69.65 / −58.69 | 27.4k/27.2k | 1.04 / 1.07 | 0.59 / 0.61 | 3.159 / 0.128 |
+| ADAA1 + 4× | 2 | −53.93 / −76.81 | −65.81 / −34.81 | 27.5k/27.6k | 1.05 / 1.08 | 0.60 / 0.62 | 0.514 / 0.023 |
+| ADAA1 + 4× | 4 | −62.37 / −77.93 | −57.37 / −33.38 | 54.2k/52.2k | 2.07 / 2.05 | 1.17 / 1.17 | 0.514 / 0.023 |
+| ADAA2 + 4× | 2 | −55.37 / −78.40 | −64.37 / −37.18 | 28.0k/27.6k | 1.07 / 1.08 | 0.61 / 0.62 | 0.671 / 0.033 |
+| ADAA2 + 4× | 4 | −59.04 / −77.60 | −52.34 / −32.28 | 53.7k/52.3k | 2.05 / 2.05 | 1.16 / 1.17 | 0.671 / 0.033 |
+| ADAA1 + 8× | 2 | −72.68 / −108.13 | −40.58 / −4.99 | 53.6k/52.7k | 2.04 / 2.07 | 1.16 / 1.18 | 0.133 / 0.006 |
+| ADAA1 + 8× | 4 | −85.64 / −111.46 | −32.87 / +0.31 | 103.3k/98.4k | 3.93 / 3.86 | 2.24 / 2.20 | 0.133 / 0.006 |
+| ADAA2 + 8× | 2 | −73.38 / −108.86 | −42.59 / −5.58 | 54.2k/53.9k | 2.06 / 2.12 | 1.17 / 1.21 | 0.172 / 0.008 |
+| ADAA2 + 8× | 4 | −86.21 / −111.41 | −29.15 / −1.35 | 103.4k/100.4k | 3.94 / 3.94 | 2.24 / 2.24 | 0.172 / 0.008 |
+
+The eight-node results below use the common 18-point subset of the matched grid
+(17,037, 19,937 and 19,997 Hz).
+
+| Configuration | Nodes | Points | Worst / median margin (dB) | Cost vs 16× P1 / T |
+|---|---:|---:|---:|---:|
+| ADAA1 + 8× | 8 | 18 | −28.83 / −4.41 | 4.12 / 4.10 |
+| ADAA2 + 8× | 8 | 18 | −23.82 / −4.24 | 4.12 / 4.21 |
+| OS only 16× | — | 18 | −28.64 / +38.18 | 1.00 / 1.00 |
+| OS only 8× | — | 18 | −53.73 / −16.58 | 0.57 / 0.57 |
+
+ADAA at 2× or 4× loses to oversampling alone on the worst margin at comparable
+CPU. With 8×, two nodes cost 1.16–1.21× the 16× control and have worse margins.
+Four nodes get close to the 16× control on the worst hot-T margin at 2.20–2.24×
+the cycles. Eight nodes cost 4.10–4.21× the cycles and still fail. Every tested
+order and factor also exceeds the 0.1 dB AC gate. These runs support keeping the
+candidate in the research code.
+
+On the full 48 kHz, T 0.5 mA, 19,037 Hz run, the Python four-node triangle and
+the offline native renderer identify the same 3,260 Hz product, with margins
+within 0.0001 dB and maximum host-rate waveform difference of 2 µV. Both solves
+complete with zero convergence misses and no out-of-law samples.
+
+### Measurement coverage
+
+The four-node screen adds three upper-band probes at all 12 P1 and supported T
+grid biases, both rates and all six ADAA order/factor combinations (432 points).
+The two 8× variants also cover the full 29-tone grid at P1 0.6 mA and T 0.5 mA.
+Supplementary runs include both low-pass positions at T 0.5 mA, the two edge biases
+at 2 V, and P2 at 8 V at its four experimental bias points. The two-node comparison
+uses the 30 matched probes in the table. Eight nodes at 2× and 4× were tested as
+quadrature diagnostics. Their worst margins were −70.23 and −57.54 dB for ADAA1,
+and −70.16 and −52.66 dB for ADAA2. The 16- and 32-node runs are integration checks
+on the deciding 8× probes.
+
+The sweep covers these sampled biases, drives, tones and positions. The
+convergence checks and failing products suffice to reject the tested candidates.
+An exhaustive sweep of every combination in #146 would extend the recorded coverage.
+
+### Reproduction
+
+From `prototypes/fullstage`:
+
+```sh
+adaa_work=$(mktemp -d)
+c++ -std=c++17 -O3 -ffp-contract=off -shared -fPIC dk6as6/adaa_screen.cpp -o "$adaa_work/adaa-screen.so"
+python -m dk6as6.adaa_measure --lib "$adaa_work/adaa-screen.so" \
+  --out "$adaa_work/focus.jsonl" --cases P1:0.6 T:0.35 T:0.5 --drives 8 \
+  --tones 14037 17037 19037 19937 19997
+python -m dk6as6.adaa_validate --lib "$adaa_work/adaa-screen.so" --out "$adaa_work/validation.jsonl"
+python -m cpp.bench --core 6as6 --flags '-O3 -DDK6AS6_BENCH_ADAA' --reps 3 \
+  --only P1_0.45mA_8V_b64_x1,T_0.5mA_8V_b64_x1 --out "$adaa_work/cpu.json"
+python -m pytest -q dk6as6/tests/test_dk6as6_adaa.py dk6as6/tests/test_dk6as6_inaudible.py
+```
+
+`adaa_measure` supports `--nodes`, `--rates`, `--lpfs` and `--resume`. Omitting
+`--tones` selects all 29 #146 probes below 20 kHz. The validation also accepts a
+`--reference-dir` for additional same-model reference JSON from `spice6as6.run_refs`.
+The benchmark restriction above includes diagnostic rows beyond the configurations
+timed in the evidence file.
+
+[Per-point evidence and benchmark records](adaa_results.json)

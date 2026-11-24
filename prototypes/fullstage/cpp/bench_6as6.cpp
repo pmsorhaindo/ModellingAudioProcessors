@@ -10,6 +10,7 @@
  * rows that change one thing from the default: T 0.5 mA (the top of T's envelope), P1 0.1 and 0.6 mA (the ends of the
  * range), no grid current, the 7k post-filter, and the shipped resampler. There is no SIMD 6AS6 kernel (README-6as6.md,
  * "CPU"), so there are no s2 / v2 rows.
+ * DK6AS6_BENCH_ADAA adds experimental rows from the offline #136 renderer.
  */
 #include "dk6as6_core.h"
 
@@ -18,19 +19,63 @@
 #include <cstdlib>
 
 #include "bench_common.h"   // FS, the signal, the counters, thread_cpu_ns, pct / median / jnum
+#ifdef DK6AS6_BENCH_ADAA
+#include "../dk6as6/adaa_screen.h"
+#endif
 
 using namespace dk6as6;
 
 // The #148 research run extends the same benchmark without changing the default configurations.
 #ifdef DK6AS6_BENCH_EXTENDED_RATES
-using BenchStage = StageT<64>;
+using BenchCore = StageT<64>;
 #else
-using BenchStage = Stage;
+using BenchCore = Stage;
 #endif
 
+struct BenchQuality {
+    std::string name;
+    Quality rate;
+    int order = 0, nodes = 0;
+};
+
+class BenchStage {
+public:
+    Status prepare(double fs, const BenchQuality& q, const Settings& s) {
+#ifdef DK6AS6_BENCH_ADAA
+        adaa_ = q.order != 0;
+        if (adaa_) return screen_.prepare(fs, q.rate, s, q.order, q.nodes);
+#endif
+        return stage_.prepare(fs, q.rate, s);
+    }
+    void reset() {
+#ifdef DK6AS6_BENCH_ADAA
+        if (adaa_) { screen_.reset(); return; }
+#endif
+        stage_.reset();
+    }
+    void process(const double* x, double* y, std::size_t n) {
+#ifdef DK6AS6_BENCH_ADAA
+        if (adaa_) { screen_.process(x, y, n); return; }
+#endif
+        stage_.process(x, y, n);
+    }
+    const Stats& stats() const {
+#ifdef DK6AS6_BENCH_ADAA
+        if (adaa_) return screen_.stats();
+#endif
+        return stage_.stats();
+    }
+private:
+    BenchCore stage_;
+#ifdef DK6AS6_BENCH_ADAA
+    research::Screen screen_;
+    bool adaa_ = false;
+#endif
+};
+
 struct Config {
-    std::string name, quality, variant;
-    Quality q;
+    std::string name, variant;
+    BenchQuality q;
     Settings set;
     double level;
     int block, inst;
@@ -118,12 +163,20 @@ int main(int argc, char** argv) {
     const std::size_t n = std::size_t(seconds * FS) / 512 * 512;
     if (n == 0 || reps < 1) { std::fprintf(stderr, "need --seconds >= %g and --reps >= 1\n", 512 / FS); return 2; }
 
-    const std::pair<const char*, Quality> qs[] = {
-        {"standard", STANDARD}, {"hq", HQ},
+    std::vector<BenchQuality> qs = {{"standard", STANDARD}, {"hq", HQ}};
 #ifdef DK6AS6_BENCH_EXTENDED_RATES
-        {"research32", {32, 0.0}}, {"research64", {64, 0.0}},
+    qs.push_back({"research32", {32, 0.0}});
+    qs.push_back({"research64", {64, 0.0}});
 #endif
-    };
+#ifdef DK6AS6_BENCH_ADAA
+    qs.push_back({"os2", {2, 0.0}});
+    qs.push_back({"os4", {4, 0.0}});
+    for (int nodes : {2, 4, 8})
+        for (int order : {1, 2})
+            for (int os : {2, 4, 8})
+                qs.push_back({"a" + std::to_string(order) + "x" + std::to_string(os) + "q" + std::to_string(nodes),
+                              {os, 0.0}, order, nodes});
+#endif
     const double levels[] = {0.5, 2.0, 8.0};
     // (name, settings): the default, and one change from it per variant
     std::vector<std::pair<std::string, Settings>> variants;
@@ -142,12 +195,12 @@ int main(int argc, char** argv) {
                     for (int inst : {1, 2}) {
                         if (v.first != "P1_0.45mA" && (blk != 64 || inst != 1)) continue;
                         char nm[96];
-                        std::snprintf(nm, sizeof nm, "%s_%s_%gV_b%d_x%d", q.first, v.first.c_str(), lv, blk, inst);
+                        std::snprintf(nm, sizeof nm, "%s_%s_%gV_b%d_x%d", q.name.c_str(), v.first.c_str(), lv, blk, inst);
                         bool keep = only.empty();
                         for (const auto& o : only) keep = keep || std::string(nm).find(o) != std::string::npos;
                         if (!keep) continue;
                         Config c;
-                        c.name = nm; c.quality = q.first; c.variant = v.first; c.q = q.second; c.set = v.second;
+                        c.name = nm; c.variant = v.first; c.q = q; c.set = v.second;
                         c.level = lv; c.block = blk; c.inst = inst;
                         cfg.push_back(std::move(c));
                     }
@@ -204,7 +257,7 @@ int main(int argc, char** argv) {
     std::printf("\"counters\": \"%s\", ", have_counters ? COUNTER_SOURCE : "unavailable");
 #endif
     std::printf("\"compiler\": \"%s\", \"sizeof_stage\": %zu, \"fma\": %s}, \"results\": [", __VERSION__,
-                sizeof(BenchStage), dkcore::simd::FMA ? "true" : "false");
+                sizeof(BenchCore), dkcore::simd::FMA ? "true" : "false");
     for (std::size_t i = 0; i < cfg.size(); ++i) {
         Config& c = cfg[i];
         all_det = all_det && c.deterministic;
@@ -213,7 +266,7 @@ int main(int argc, char** argv) {
         const double nan = std::nan("");
         std::printf("%s\n{\"name\": \"%s\", \"quality\": \"%s\", \"os\": %d, \"variant\": \"%s\", \"mode\": \"%s\", "
                     "\"bias_ma\": %g, \"grid_hardness\": %g, \"lpf\": %d, \"fir\": \"%s\", \"level_v\": %g, \"block\": %d, "
-                    "\"instances\": %d, ", i ? "," : "", c.name.c_str(), c.quality.c_str(), c.q.os, c.variant.c_str(),
+                    "\"instances\": %d, ", i ? "," : "", c.name.c_str(), c.q.name.c_str(), c.q.rate.os, c.variant.c_str(),
                     to_string(c.set.mode), c.set.bias_ma, c.set.grid_hardness, int(c.set.lpf),
                     c.set.fir.later_taps == dkcore::K140_FIR.later_taps ? "k140" : "shipped", c.level, c.block, c.inst);
         jnum("ns_per_sample", med, "%.1f"); std::printf(", ");
