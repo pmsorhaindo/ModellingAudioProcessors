@@ -57,9 +57,17 @@ def main(workers=None, fs=FS, out=JSON, shapes=tuple(MODELS)):
     return {s: {b: {q: V.status(r) for q, r in rb.items()} for b, rb in sb.items()} for s, sb in rec["results"].items()}
 
 
+def tables(path=JSON):
+    """The RESULTS.md burst / blocking / THD tables at 44.1 kHz (grid_bounds.burst_thd_tables' format)."""
+    from dk6as6 import grid_bounds
+    rec = json.load(open(path))
+    return "\n".join(grid_bounds.burst_thd_tables(rec["results"], BIASES))
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--workers", type=int, default=os.cpu_count())
     ap.add_argument("--shapes", nargs="*", default=list(MODELS))
+    ap.add_argument("--tables", action="store_true")
     a = ap.parse_args()
-    print(json.dumps(main(a.workers, shapes=tuple(a.shapes))))
+    print(tables() if a.tables else json.dumps(main(a.workers, shapes=tuple(a.shapes))))
