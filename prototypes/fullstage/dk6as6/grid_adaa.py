@@ -228,7 +228,7 @@ class Stage(OrdinaryStage):
             v, nxt, iters[n], ok = self._split(p, start, i)
             prev, i = i, nxt
             bad += not ok
-            outside += v[3] < 0 or i[0] + i[1] < 0
+            outside += int(v[3] < 0 or i[0] + i[1] < 0)
             di = i - self.i_dc
             if nodes:
                 out = m["D"] @ x + m["E"][:, 0]*u + m["F"] @ di + self.y_dc

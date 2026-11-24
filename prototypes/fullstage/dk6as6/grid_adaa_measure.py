@@ -133,7 +133,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--lib", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True)
-    p.add_argument("--configs", nargs="+", default=CONFIGS)
+    p.add_argument("--configs", nargs="+", choices=CONFIGS, default=CONFIGS)
     p.add_argument("--rates", type=int, nargs="+", choices=RATES, default=RATES)
     p.add_argument("--cases", nargs="+", metavar="MODE:mA")
     p.add_argument("--tones", type=int, nargs="+", default=TONES)
