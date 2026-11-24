@@ -84,7 +84,11 @@ jobs:
     # types so marking a draft ready starts these jobs.
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false)
     runs-on: macos-15
-    timeout-minutes: 20
+    # 30, not 20 (PR #151): the 6as6 envelope shard was cancelled at the 20 min cap (20m21s, run 45386062646) with
+    # its tests unchanged from main. The same shard takes ~11.5 min on Linux (main after #131a, and that run) and
+    # 6-7 min on earlier ready-PR macOS runs (#139, #133), so macOS runner time varies by ~3x. 30 min is above 2x the
+    # Linux envelope time and above the 20m21s that was hit; it also gives the validation shard (12m37s) headroom.
+    timeout-minutes: 30
     # Sharded as the Linux fullstage job (#127: the single job had reached 14.4 of 20 min); no test is dropped.
     strategy:
       fail-fast: false
