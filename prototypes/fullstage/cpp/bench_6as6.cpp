@@ -10,6 +10,7 @@
  * rows that change one thing from the default: T 0.5 mA (the top of T's envelope), P1 0.1 and 0.6 mA (the ends of the
  * range), no grid current, the 7k post-filter, and the shipped resampler. There is no SIMD 6AS6 kernel (README-6as6.md,
  * "CPU"), so there are no s2 / v2 rows.
+ * DK6AS6_BENCH_ADAA adds experimental rows from the offline #136 renderer.
  */
 #include "dk6as6_core.h"
 
@@ -157,6 +158,8 @@ int main(int argc, char** argv) {
 
     std::vector<BenchQuality> qs = {{"standard", STANDARD}, {"hq", HQ}};
 #ifdef DK6AS6_BENCH_ADAA
+    qs.push_back({"os2", {2, 0.0}});
+    qs.push_back({"os4", {4, 0.0}});
     for (int nodes : {2, 4, 8})
         for (int order : {1, 2})
             for (int os : {2, 4, 8})

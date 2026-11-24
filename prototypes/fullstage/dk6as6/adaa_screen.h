@@ -4,6 +4,9 @@
 #ifndef DK6AS6_ADAA_SCREEN_H
 #define DK6AS6_ADAA_SCREEN_H
 
+#include <algorithm>
+#include <utility>
+
 #include "../cpp/dk6as6_core.h"
 
 namespace dk6as6::research {
