@@ -1936,10 +1936,10 @@ at T 0.1–0.5 mA: `python spice6as6/run_refs.py --burst8 <model>/T:<bias>` → 
 burst amplitude changed (1 kHz, 10–30 ms, 120 ms), plus the op point, which matches the main reference to 1e-9. The DK
 side is `validate.burst(amp=8)` and `validate.burst_compare` / `burst_ok`, unchanged (`dk/validate.CRIT`: shift 0.5 %,
 trajectory 0.5 %, tail τ 1 %), with the op point against the reference: `python -m dk6as6.grid_bounds_burst --burst8`
-→ `results_grid_bounds_T_burst8V.json`. **Every compared case passes every criterion at both rates, standard and hq**:
-shift ≤ 0.14 %, trajectory ≤ 0.11 %, tail τ ≤ 0.45 % of the reference's (largest over every case).
-
-**Pending: EHX-1 at 0.35 mA.** Its 8 V ngspice reference was still running at this commit (the 4 V one took 3 h 52 min; this one is past 4 h, re-run with a 10 h cap). Its rows are the DK stage alone, marked "DK only (reference pending)": recorded, not compared, never counted as a pass. They are re-run against the reference when it lands.
+→ `results_grid_bounds_T_burst8V.json`. **Every case passes every criterion at both rates, standard and hq**:
+shift ≤ 0.14 %, trajectory ≤ 0.11 %, tail τ ≤ 0.45 % of the reference's (largest over every case). EHX-1's 0.35 mA 8 V reference took 3 h 54 min (a
+first attempt hit `run_refs.NGSPICE_TIMEOUT_S`, 4 h, and was re-run with `NGSPICE_TIMEOUT_S=36000`; the other 14 took
+15–17 min, all 15 started together).
 
 **48 kHz, 8 V burst**
 
@@ -1953,7 +1953,7 @@ shift ≤ 0.14 %, trajectory ≤ 0.11 %, tail τ ≤ 0.45 % of the reference's (
 | 0.25 mA | EHX-1 | -5.3748 | -1.128 | -6.503 / -5.372 / -5.372 / -5.373 | 115.4 ms | 2.75 / 1.34 | passed / passed |
 | 0.35 mA | RSD-1 | -3.9416 | -1.449 | -5.390 / -3.947 / -3.947 / -3.944 | 107.3 ms | -5.81 / -2.67 | passed / passed |
 | 0.35 mA | RSD-2 | -3.9416 | -1.443 | -5.384 / -3.942 / -3.942 / -3.942 | 68.4 ms | -0.25 / -0.07 | passed / passed |
-| 0.35 mA | EHX-1 | -3.9416 | -1.447 | -5.389 / -3.946 / -3.945 / -3.944 | 106.6 ms | -4.41 / -2.02 | DK only (reference pending) / DK only (reference pending) |
+| 0.35 mA | EHX-1 | -3.9416 | -1.447 | -5.389 / -3.946 / -3.945 / -3.944 | 106.6 ms | -4.41 / -2.02 | passed / passed |
 | 0.45 mA | RSD-1 | -2.6527 | -2.665 | -5.318 / -3.452 / -3.346 / -3.017 | 106.3 ms | -799.17 / -364.37 | passed / passed |
 | 0.45 mA | RSD-2 | -2.6527 | -2.644 | -5.297 / -3.433 / -3.330 / -3.009 | 106.3 ms | -780.67 / -356.01 | passed / passed |
 | 0.45 mA | EHX-1 | -2.6527 | -2.668 | -5.320 / -3.454 / -3.348 / -3.018 | 106.3 ms | -801.09 / -365.24 | passed / passed |
@@ -1973,7 +1973,7 @@ shift ≤ 0.14 %, trajectory ≤ 0.11 %, tail τ ≤ 0.45 % of the reference's (
 | 0.25 mA | EHX-1 | -5.3748 | -1.128 | -6.502 / -5.372 / -5.372 / -5.373 | 115.4 ms | 2.75 / 1.34 | passed / passed |
 | 0.35 mA | RSD-1 | -3.9416 | -1.448 | -5.390 / -3.947 / -3.947 / -3.944 | 107.3 ms | -5.81 / -2.67 | passed / passed |
 | 0.35 mA | RSD-2 | -3.9416 | -1.442 | -5.383 / -3.942 / -3.942 / -3.942 | 68.5 ms | -0.25 / -0.07 | passed / passed |
-| 0.35 mA | EHX-1 | -3.9416 | -1.446 | -5.388 / -3.946 / -3.945 / -3.944 | 106.6 ms | -4.41 / -2.02 | DK only (reference pending) / DK only (reference pending) |
+| 0.35 mA | EHX-1 | -3.9416 | -1.446 | -5.388 / -3.946 / -3.945 / -3.944 | 106.6 ms | -4.41 / -2.02 | passed / passed |
 | 0.45 mA | RSD-1 | -2.6527 | -2.664 | -5.317 / -3.452 / -3.346 / -3.017 | 106.3 ms | -799.16 / -364.37 | passed / passed |
 | 0.45 mA | RSD-2 | -2.6527 | -2.643 | -5.296 / -3.433 / -3.330 / -3.009 | 106.3 ms | -780.67 / -356.00 | passed / passed |
 | 0.45 mA | EHX-1 | -2.6527 | -2.666 | -5.319 / -3.454 / -3.348 / -3.018 | 106.3 ms | -801.08 / -365.24 | passed / passed |
@@ -1984,7 +1984,7 @@ shift ≤ 0.14 %, trajectory ≤ 0.11 %, tail τ ≤ 0.45 % of the reference's (
 **What moves at 8 V.**
 - **0.1–0.25 mA:** no blocking (Vgk 1.0–2.8 mV *above* rest at 35 ms, the coupling-cap tail), identical across shapes.
 - **0.35 mA:** the onset. The nominal blocks by 5.8 mV at 35 ms (2.7 mV at 118.5 ms; tail τ 107 ms), EHX-1 by
-  4.4 mV (DK only, reference pending), but RSD-2 barely blocks (0.25 mV). Its tail is near zero, so its fitted τ (68 ms) describes a residual about a twentieth the
+  4.4 mV, but RSD-2 barely blocks (0.25 mV). Its tail is near zero, so its fitted τ (68 ms) describes a residual about a twentieth the
   size; ngspice agrees with it to 0.45 %.
 - **0.45–0.5 mA: real blocking**, 0.78–1.36 V at 35 ms. The bounds move the peak shift by ≤ 21 mV (≤ 0.8 %), the
   residual by ≤ 19 mV (≤ 2.4 %) and the tail τ by < 0.1 ms, against the nominal (RSD-2 blocks least,

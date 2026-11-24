@@ -283,17 +283,12 @@ def test_bound_references_cover_0p1_to_0p5():
 
 
 # --- the 8 V burst (PR #151 review: the issue's checks "at 8 V") --------------------------------------------------
-# Cases whose 8 V ngspice reference was still running when this was committed (EHX-1 0.35 mA: its 4 V burst took
-# 3 h 52 min; the 8 V one is past 4 h): recorded DK only, "reference_pending", never a pass. Remove when it lands.
-PENDING8 = {("dualg_ehx1", 0.35)}
 
 @pytest.mark.parametrize("model", ["dualg", *R.GRID_SHAPE])
 def test_burst8_references(model):
     """Each shape's 8 V burst reference (run_refs.run_burst) at every T bias of GB.BIASES: the 8 V burst of the same
     netlist and solver, generated with the shape's grid law, and its op point is the main reference's to 1e-9."""
     for b in GB.BIASES:
-        if (model, b) in PENDING8 and not os.path.exists(R.burst_ref_file(model, b, "T", 8.0)):
-            continue
         ref = json.load(open(R.burst_ref_file(model, b, "T", 8.0)))
         g = ref["generator"]
         assert ref["burst_amp_v"] == 8.0 and g["burst"]["amp"] == 8.0 and g["ngspice"] == "ngspice-41"
@@ -321,10 +316,7 @@ def test_burst8_records_at_both_rates():
                 for q, r in rb.items():
                     assert r["burst_amp_v"] == 8.0 and r["fs_base"] == float(fs) and r["shape"] == s
                     assert r["grid"] == R.grid_of(GB.MODELS[s]) and r["quality"] == q
-                    if r.get("reference_pending"):
-                        assert (GB.MODELS[s], float(b)) in PENDING8, (fs, s, b, q)
-                        assert r["vs"] is None and V.status(r) == "inconclusive" and r["passed"]["newton"] is True
-                        continue
+                    assert not r.get("reference_pending"), (fs, s, b, q)     # every case compared
                     capped = r["vs"].get("spice_exp_capped", False)
                     assert r["passed"]["op"] is True and r["passed"]["newton"] is True
                     assert r["passed"]["burst"] is (None if capped else True), (fs, s, b, q, r["vs"])

@@ -16372,12 +16372,39 @@
        }
       },
       "supported": false,
-      "reference_pending": true,
-      "vs": null,
-      "op_rel": null,
+      "op_rel": {
+       "ia": 1.1499154961569502e-09,
+       "ig2": 2.7584029504978957e-09,
+       "ik": 2.220446049250313e-16,
+       "vgk": 1.4956675897792593e-09
+      },
+      "vs": {
+       "min_rel": 0.0006495985159363782,
+       "traj_rel": 7.259073834453291e-05,
+       "tau_tested": true,
+       "tau_rel": 9.226780355309216e-06,
+       "tail_tau_s": {
+        "dk": 0.10663490072041497,
+        "ref": 0.10663391683268593
+       },
+       "cross_tau_s": {
+        "dk": NaN,
+        "ref": NaN
+       },
+       "cross_tau_rel": null,
+       "padded_tau_s": {
+        "dk": 0.08900130208333333,
+        "ref": 0.089001
+       },
+       "t_min_diff_ms": 0.0,
+       "ref": {
+        "rest": -3.9416187323040437,
+        "min": -5.389843681241588
+       }
+      },
       "passed": {
-       "op": null,
-       "burst": null,
+       "op": true,
+       "burst": true,
        "newton": true
       }
      },
@@ -16909,12 +16936,39 @@
        }
       },
       "supported": false,
-      "reference_pending": true,
-      "vs": null,
-      "op_rel": null,
+      "op_rel": {
+       "ia": 1.1499154961569502e-09,
+       "ig2": 2.7584029504978957e-09,
+       "ik": 2.220446049250313e-16,
+       "vgk": 1.4956675897792593e-09
+      },
+      "vs": {
+       "min_rel": 0.000654166486276142,
+       "traj_rel": 7.25597948919927e-05,
+       "tau_tested": true,
+       "tau_rel": 9.351573131644031e-06,
+       "tail_tau_s": {
+        "dk": 0.10663491402755751,
+        "ref": 0.10663391683268593
+       },
+       "cross_tau_s": {
+        "dk": NaN,
+        "ref": NaN
+       },
+       "cross_tau_rel": null,
+       "padded_tau_s": {
+        "dk": 0.08900260416666667,
+        "ref": 0.089001
+       },
+       "t_min_diff_ms": 0.0,
+       "ref": {
+        "rest": -3.9416187323040437,
+        "min": -5.389843681241588
+       }
+      },
       "passed": {
-       "op": null,
-       "burst": null,
+       "op": true,
+       "burst": true,
        "newton": true
       }
      }
@@ -33272,12 +33326,39 @@
        }
       },
       "supported": false,
-      "reference_pending": true,
-      "vs": null,
-      "op_rel": null,
+      "op_rel": {
+       "ia": 1.1499154961569502e-09,
+       "ig2": 2.7584029504978957e-09,
+       "ik": 2.220446049250313e-16,
+       "vgk": 1.4956675897792593e-09
+      },
+      "vs": {
+       "min_rel": 0.0013301929825653147,
+       "traj_rel": 0.00014189691477767752,
+       "tau_tested": true,
+       "tau_rel": 5.352272387249002e-05,
+       "tail_tau_s": {
+        "dk": 0.10663962417037201,
+        "ref": 0.10663391683268593
+       },
+       "cross_tau_s": {
+        "dk": NaN,
+        "ref": NaN
+       },
+       "cross_tau_rel": null,
+       "padded_tau_s": {
+        "dk": 0.08900085034013605,
+        "ref": 0.089001
+       },
+       "t_min_diff_ms": 0.001417233560091491,
+       "ref": {
+        "rest": -3.9416187323040437,
+        "min": -5.389843681241588
+       }
+      },
       "passed": {
-       "op": null,
-       "burst": null,
+       "op": true,
+       "burst": true,
        "newton": true
       }
      },
@@ -33809,12 +33890,39 @@
        }
       },
       "supported": false,
-      "reference_pending": true,
-      "vs": null,
-      "op_rel": null,
+      "op_rel": {
+       "ia": 1.1499154961569502e-09,
+       "ig2": 2.7584029504978957e-09,
+       "ik": 2.220446049250313e-16,
+       "vgk": 1.4956675897792593e-09
+      },
+      "vs": {
+       "min_rel": 0.0013214626986047806,
+       "traj_rel": 0.0002827219823710843,
+       "tau_tested": true,
+       "tau_rel": 5.311737217783552e-05,
+       "tail_tau_s": {
+        "dk": 0.1066395809461331,
+        "ref": 0.10663391683268593
+       },
+       "cross_tau_s": {
+        "dk": NaN,
+        "ref": NaN
+       },
+       "cross_tau_rel": null,
+       "padded_tau_s": {
+        "dk": 0.08899943310657596,
+        "ref": 0.089001
+       },
+       "t_min_diff_ms": 0.0,
+       "ref": {
+        "rest": -3.9416187323040437,
+        "min": -5.389843681241588
+       }
+      },
       "passed": {
-       "op": null,
-       "burst": null,
+       "op": true,
+       "burst": true,
        "newton": true
       }
      }
