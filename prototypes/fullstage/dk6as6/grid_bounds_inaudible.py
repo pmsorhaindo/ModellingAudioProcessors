@@ -17,10 +17,10 @@ an assumption). Signals, settle, window and the 29-tone grid are #146's (inaudib
 Engines, the same stage:
   python  dk6as6.stage.Stage(grid_shape=...) (the reference; experimental=True, the bounds have no supported envelope).
   cpp     the C++ 6AS6 core (cpp/dk6as6_core.h, main's) through test_core_6as6's `cli`, built by screen_build() from
-          patched COPIES of the headers: MAX_OS 16 -> 64 and ResamplerT's later_[3] -> later_[5] (as #146's screen,
-          for 32x / 64x), and grid()'s Table 1 column replaced by the shape's (SCREEN_PATCH). The committed core is
-          not changed; nothing here touches the plugin or the audio path. Every record names its engine and shape;
-          the deciding points are re-run on the python engine (confirm), and the conclusions rest on those.
+          patched COPIES of the headers: MAX_OS 16 -> 64 (ResamplerT sizes the 32x / 64x cascade from that capacity),
+          and grid()'s Table 1 column replaced by the shape's (SCREEN_PATCH). The committed core, plugin and audio
+          path are untouched. Every record names its engine and shape. The deciding points are re-run on the python
+          engine (confirm), and the conclusions rest on those.
 Run from prototypes/fullstage:
   python -m dk6as6.grid_bounds_inaudible run [--shapes ...] [--factors 16 32] [--lpfs off] [--workers N]
   python -m dk6as6.grid_bounds_inaudible confirm [--workers N]
@@ -71,9 +71,9 @@ TABLE1 = {"RSD-1": "DZ_12AX7_RSD1", "RSD-2": "DZ_12AX7_RSD2", "EHX-1": "DZ_12AX7
 
 # --- the C++ screening engine ------------------------------------------------------------------------------------
 
+# ResamplerT derives its FIR stage storage from MaxOs, which defaults to MAX_OS (#148).
 SCREEN_PATCH = (   # (file, exact old text, new text): each must occur exactly once in main's file
     ("dk_core.h", "inline constexpr int MAX_OS = 16;", "inline constexpr int MAX_OS = 64;"),
-    ("dk_core.h", "FirHalfBand<LATER_N, T> later_[3];", "FirHalfBand<LATER_N, T> later_[5];"),
     ("dk6as6_core.h", "    const auto& dz = dkcore::DZ_12AX7_RSD1;\n", "    const auto& dz = SCREEN_DZ;\n"),
 )
 
@@ -132,7 +132,8 @@ def screen_build(shape, out_dir=None, cxx=None):
 def cpp_engine_note():
     head = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     return (f"main's cpp/dk6as6_core.h, dk_core.h, test_core_6as6.cpp at {head[:7]} (cli), patched copies "
-            f"(grid_bounds_inaudible.SCREEN_PATCH: MAX_OS 64, later_[5], grid()'s Table 1 column per shape), -O2")
+            "(grid_bounds_inaudible.SCREEN_PATCH: MAX_OS 64 with derived FIR storage, "
+            "grid()'s Table 1 column per shape), -O2")
 
 
 # --- one point ---------------------------------------------------------------------------------------------------
