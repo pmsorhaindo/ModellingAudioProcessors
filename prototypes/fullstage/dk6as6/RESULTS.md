@@ -2504,3 +2504,338 @@ The benchmark restriction above includes diagnostic rows beyond the configuratio
 timed in the evidence file.
 
 [Per-point evidence and benchmark records](adaa_results.json)
+
+## Grid-current-only antiderivative antialiasing (#154)
+
+Keep the grid-only ADAA prototype in research. At T 0.5 mA, the best tested
+configuration, ADAA2 + 16×, misses the strict gate by **24.41 dB at 44.1 kHz**
+and **24.20 dB at 48 kHz**. It still misses by **21.41 / 21.20 dB** under a
+hypothetical 3 dB allowance. ADAA2 + 8× misses by **54.85 / 50.70 dB**.
+The supported T range remains 0.1–0.5 mA.
+
+### Grid branch and solver
+
+The frozen-history branch has one voltage input, $v=V_{gk}$, with the
+existing $I_{g1}=G_g[\operatorname{softplus}(C_g v)/C_g]^{\xi}$ law.
+RSD-1 is the nominal 12AX7 fit borrowed in #112 and scaled there by the
+6AS6 cathode-perveance ratio. It remains **estimated and unvalidated**
+for a physical 6AS6. The prototype splines the branch current on a
+1/256 V grid from −4 to +32 V and integrates the same spline twice. It
+treats the branch current below −4 V as zero (less than 10⁻²⁵ A for the
+three borrowed fits at −4 V). The instantaneous loaded-law table seeds
+the scalar root. The measurement records any upper-table excursion.
+
+ADAA1 is the first divided difference of the first antiderivative.
+ADAA2 is twice the second divided difference of the second
+antiderivative. These follow Parker, Zavalishin and Le Bivic §2 and
+Bilbao et al. §§II–III, equations (14) and (15). The latter is Bilbao’s
+three-input formula. The two-point near-equality case uses the
+midpoint expansion of equation (17) with its quadratic term. When
+the second difference’s outer denominator is ill-conditioned, the
+prototype uses the Genocchi–Hermite simplex integral over the three input
+voltages, including the coincident-input limits of equations (18)–(20).
+The derivative uses the weight of the current voltage in the same
+integral. [Julian D. Parker, Vadim Zavalishin and Efflam Le Bivic, DAFx-16](https://www.dafx.de/paper-archive/2016/dafxpapers/20-DAFx-16_paper_41-PN.pdf),
+[Stefan Bilbao, Fabián Esqueda, Julian D. Parker and Vesa Välimäki, IEEE Signal Processing Letters 24(7), 1049–1053](https://doi.org/10.1109/LSP.2017.2675541),
+[Carl de Boor, Divided Differences, equation (52)](https://pages.cs.wisc.edu/~deboor/sat/papers/2/2.pdf)
+
+The two-current Newton solve uses the usual DK port relation. Given trial
+plate and screen currents, form $q_r=p_r-K_{r0}I_p-K_{r1}I_{g2}$.
+Eliminate the grid-current unknown by solving the scalar load line
+$q_0=v+K_{02}I_{g1}^{AA}(v)$ with the accepted grid-voltage history held
+fixed. The branch slope returned to the solver is
+$dI_{g1}^{AA}/dq_0=g/(1+K_{02}g)$, where $g=dI_{g1}^{AA}/dv$.
+This keeps the grid feedback implicit while reducing the multivariate
+Newton system from three currents to two. The same grid current is
+stamped into the network and subtracted from the instantaneous
+cathode current before the ordinary plate/screen split, so
+$I_p+I_{g2}+I_{g1}=I_k$. The grid history advances once per completed sample.
+All DK matrices, plate and screen laws, and resampling operate at the
+ordinary oversampled rate. The branch memory can make
+$I_{g1}^{AA}>I_k$ when the instantaneous cathode current falls. The
+original model guard counts this condition, and the prototype
+retains the computed currents for measurement.
+
+The Python prototype has an order-zero control. On 1,200 internal
+samples at T 0.5 mA, 48 kHz, 8× and 19,037 Hz, it agrees with the
+ordinary solve within 1 nV at the output. The offline C++ renderer
+uses the same tables and core equations for long sweeps and timing.
+The shipping C++ core and plugin are unaffected.
+
+### Aliasing at 8 V
+
+Use the exact #146 criterion from #136. The k140 FIR runs with the
+post-filter off. The unwindowed 1 s DFT follows 1.25 s of settling,
+with the measured output peak as full scale. At each non-harmonic bin
+from 20 Hz to 20 kHz the gate is the tighter of −100 dBFS and 10 dB
+below the hearing threshold, assuming 105 dB SPL at full scale.
+An alias that overlaps a true harmonic shares its bin. The 29-tone
+grid runs from 1,037 through 19,997 Hz. The sampled P1 biases span
+0.1–0.6 mA and the sampled T biases span 0.1–0.5 mA. The documented
+supported envelope covers P1 and T. [PR #146, measurement method](https://github.com/pmsorhaindo/ModellingAudioProcessors/pull/146)
+
+The table gives the smallest margin over the 29 probes at each rate
+for T 0.5 mA. Positive margin passes. For these rows, allowing 3 dB
+on the hearing threshold alone while retaining −100 dBFS gives the
+same worst margins as allowing 3 dB on both terms. The allowance is
+a hypothetical comparison and leaves the strict gate in force.
+
+| Configuration | Rate (kHz) | Input (Hz) | Product (Hz) | Product (dBFS) | Limit (dBFS) | Strict margin (dB) | Margin with 3 dB (dB) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| OS only 4× | 44.1 | 19,977 | 3,393 | -44.93 | -119.96 | -75.03 | -72.03 |
+| OS only 4× | 48 | 19,437 | 2,370 | -48.04 | -117.01 | -68.97 | -65.97 |
+| ADAA1 + 4× | 44.1 | 19,237 | 3,267 | -41.62 | -119.97 | -78.35 | -75.35 |
+| ADAA1 + 4× | 48 | 19,437 | 2,370 | -44.55 | -117.01 | -72.46 | -69.46 |
+| ADAA2 + 4× | 44.1 | 15,037 | 4,044 | -53.87 | -118.21 | -64.34 | -61.34 |
+| ADAA2 + 4× | 48 | 15,037 | 3,481 | -54.40 | -119.88 | -65.49 | -62.49 |
+| OS only 8× | 44.1 | 19,437 | 2,934 | -62.01 | -119.39 | -57.38 | -54.38 |
+| OS only 8× | 48 | 19,997 | 4,057 | -64.42 | -118.15 | -53.73 | -50.73 |
+| ADAA1 + 8× | 44.1 | 19,437 | 2,934 | -61.53 | -119.39 | -57.85 | -54.85 |
+| ADAA1 + 8× | 48 | 19,997 | 4,057 | -62.44 | -118.15 | -55.71 | -52.71 |
+| ADAA2 + 8× | 44.1 | 19,437 | 2,934 | -64.54 | -119.39 | -54.85 | -51.85 |
+| ADAA2 + 8× | 48 | 19,037 | 3,260 | -69.27 | -119.97 | -50.70 | -47.70 |
+| OS only 16× | 44.1 | 19,637 | 1,332 | -83.24 | -112.74 | -29.50 | -26.50 |
+| OS only 16× | 48 | 19,637 | 2,157 | -87.34 | -115.98 | -28.64 | -25.64 |
+| ADAA1 + 16× | 44.1 | 19,997 | 5,705 | -86.45 | -113.24 | -26.79 | -23.79 |
+| ADAA1 + 16× | 48 | 19,637 | 2,157 | -89.83 | -115.98 | -26.15 | -23.15 |
+| ADAA2 + 16× | 44.1 | 18,037 | 2,157 | -91.57 | -115.98 | -24.41 | -21.41 |
+| ADAA2 + 16× | 48 | 19,637 | 2,157 | -91.78 | -115.98 | -24.20 | -21.20 |
+
+The loudest non-harmonic bin and the smallest hearing margin can occur at
+different frequencies. Each cell below gives the worst and median per-tone
+loudest product in dBFS. All orders at a given setting use the listed number
+of tones. The full 29-tone grid covers P1 0.6 mA and T 0.375, 0.4, 0.45 and
+0.5 mA. The other supported bias settings use five common high-band probes
+(14,037, 17,037, 19,037, 19,937 and 19,997 Hz). This yields 3,240 nominal
+measurements after matching the tone sets. The remaining frequencies at
+the five-tone settings are outside the reported sweep.
+
+The control cells combine fresh renders with 336 archived #146 scores
+from head `1c0a7f4`. The 570 repeated control points agree to
+within 0.000129 dB on strict margin. The per-tone records tag archival
+scores with their source.
+
+The decisive 48 kHz ADAA2 + 8× probe at 19,037 Hz puts the folded
+20th harmonic at 3,260 Hz. Python and the native screen found the
+same bin and agreed within 0.000001 dB. Both counted 140 out-of-law
+internal samples over the render. The Python trace identifies them
+as negative plate-to-cathode voltage. At T 0.5 mA, ADAA2 + 4× also
+hits the model guard at both rates. Every scored render completed
+without a convergence failure or an upper-table excursion.
+Doubling the spline resolution to 1/512 V kept the same deciding
+bin and changed the margin by less than 0.000001 dB on four hot-T
+probes spanning both orders, rates and the 8× and 16× factors.
+
+**4× oversampling**
+
+| Mode | Bias (mA) | Rate (kHz) | Tones | OS only | ADAA1 | ADAA2 |
+|---|---:|---:|---:|---:|---:|---:|
+| P1 | 0.1 | 44.1 | 5 | -64.89 / -72.86 | -64.89 / -72.86 | -64.89 / -72.86 |
+| P1 | 0.1 | 48 | 5 | -61.29 / -73.56 | -61.29 / -73.56 | -61.29 / -73.56 |
+| P1 | 0.25 | 44.1 | 5 | -62.16 / -63.17 | -62.16 / -63.17 | -62.16 / -63.17 |
+| P1 | 0.25 | 48 | 5 | -61.38 / -71.32 | -61.38 / -71.32 | -61.38 / -71.32 |
+| P1 | 0.45 | 44.1 | 5 | -58.52 / -62.19 | -58.52 / -62.19 | -58.52 / -62.19 |
+| P1 | 0.45 | 48 | 5 | -62.03 / -65.85 | -62.03 / -65.85 | -62.03 / -65.85 |
+| P1 | 0.6 | 44.1 | 29 | -57.93 / -69.04 | -57.93 / -69.04 | -57.93 / -69.04 |
+| P1 | 0.6 | 48 | 29 | -61.77 / -71.60 | -61.77 / -71.60 | -61.77 / -71.60 |
+| T | 0.1 | 44.1 | 5 | -94.96 / -104.36 | -94.96 / -104.36 | -94.96 / -104.36 |
+| T | 0.1 | 48 | 5 | -103.75 / -115.49 | -103.75 / -115.49 | -103.75 / -115.49 |
+| T | 0.25 | 44.1 | 5 | -92.05 / -102.96 | -92.05 / -102.96 | -92.05 / -102.96 |
+| T | 0.25 | 48 | 5 | -96.73 / -105.54 | -96.73 / -105.54 | -96.73 / -105.54 |
+| T | 0.3 | 44.1 | 5 | -90.69 / -103.46 | -90.69 / -103.46 | -90.69 / -103.46 |
+| T | 0.3 | 48 | 5 | -95.58 / -103.31 | -95.58 / -103.31 | -95.58 / -103.31 |
+| T | 0.35 | 44.1 | 5 | -60.52 / -62.91 | -72.65 / -74.07 | -85.56 / -87.01 |
+| T | 0.35 | 48 | 5 | -62.89 / -65.15 | -74.79 / -76.03 | -87.12 / -87.89 |
+| T | 0.375 | 44.1 | 29 | -50.75 / -65.89 | -55.41 / -63.22 | -59.43 / -70.50 |
+| T | 0.375 | 48 | 29 | -55.40 / -66.69 | -58.75 / -63.96 | -62.48 / -73.89 |
+| T | 0.4 | 44.1 | 29 | -51.73 / -59.49 | -50.50 / -55.60 | -53.90 / -65.08 |
+| T | 0.4 | 48 | 29 | -57.39 / -62.12 | -52.42 / -56.84 | -57.00 / -67.83 |
+| T | 0.45 | 44.1 | 29 | -48.67 / -54.29 | -44.83 / -49.48 | -48.66 / -58.28 |
+| T | 0.45 | 48 | 29 | -49.50 / -57.78 | -45.52 / -53.16 | -51.40 / -60.02 |
+| T | 0.5 | 44.1 | 29 | -44.91 / -52.37 | -41.58 / -47.83 | -50.91 / -56.17 |
+| T | 0.5 | 48 | 29 | -46.37 / -53.95 | -42.12 / -55.82 | -53.75 / -55.58 |
+
+**8× oversampling**
+
+| Mode | Bias (mA) | Rate (kHz) | Tones | OS only | ADAA1 | ADAA2 |
+|---|---:|---:|---:|---:|---:|---:|
+| P1 | 0.1 | 44.1 | 5 | -100.98 / -114.54 | -100.98 / -114.54 | -100.98 / -114.54 |
+| P1 | 0.1 | 48 | 5 | -110.25 / -120.80 | -110.25 / -120.80 | -110.25 / -120.80 |
+| P1 | 0.25 | 44.1 | 5 | -93.89 / -105.55 | -93.89 / -105.55 | -93.89 / -105.55 |
+| P1 | 0.25 | 48 | 5 | -103.37 / -111.07 | -103.37 / -111.07 | -103.37 / -111.07 |
+| P1 | 0.45 | 44.1 | 5 | -92.01 / -97.30 | -92.01 / -97.30 | -92.01 / -97.30 |
+| P1 | 0.45 | 48 | 5 | -99.46 / -103.18 | -99.46 / -103.18 | -99.46 / -103.18 |
+| P1 | 0.6 | 44.1 | 29 | -91.61 / -109.93 | -91.61 / -109.93 | -91.61 / -109.93 |
+| P1 | 0.6 | 48 | 29 | -97.05 / -118.08 | -97.05 / -118.08 | -97.05 / -118.08 |
+| T | 0.1 | 44.1 | 5 | -156.38 / -156.41 | -156.38 / -156.41 | -156.38 / -156.41 |
+| T | 0.1 | 48 | 5 | -156.37 / -156.40 | -156.37 / -156.40 | -156.37 / -156.40 |
+| T | 0.25 | 44.1 | 5 | -156.00 / -156.02 | -156.00 / -156.02 | -156.00 / -156.02 |
+| T | 0.25 | 48 | 5 | -155.99 / -156.01 | -155.99 / -156.01 | -155.99 / -156.01 |
+| T | 0.3 | 44.1 | 5 | -155.76 / -155.78 | -155.76 / -155.78 | -155.76 / -155.78 |
+| T | 0.3 | 48 | 5 | -155.76 / -155.77 | -155.76 / -155.77 | -155.76 / -155.77 |
+| T | 0.35 | 44.1 | 5 | -96.55 / -98.57 | -97.79 / -99.43 | -113.83 / -117.09 |
+| T | 0.35 | 48 | 5 | -97.04 / -97.51 | -101.27 / -103.30 | -119.42 / -122.65 |
+| T | 0.375 | 44.1 | 29 | -78.75 / -88.49 | -75.63 / -94.81 | -87.75 / -93.63 |
+| T | 0.375 | 48 | 29 | -79.08 / -93.09 | -82.61 / -100.98 | -89.34 / -98.05 |
+| T | 0.4 | 44.1 | 29 | -67.33 / -80.98 | -73.74 / -84.04 | -75.01 / -87.65 |
+| T | 0.4 | 48 | 29 | -72.33 / -85.26 | -79.52 / -85.59 | -76.81 / -96.12 |
+| T | 0.45 | 44.1 | 29 | -66.51 / -73.04 | -68.25 / -74.85 | -64.23 / -79.89 |
+| T | 0.45 | 48 | 29 | -66.94 / -75.45 | -68.89 / -78.18 | -69.85 / -83.05 |
+| T | 0.5 | 44.1 | 29 | -61.31 / -69.55 | -61.53 / -71.61 | -60.04 / -73.75 |
+| T | 0.5 | 48 | 29 | -64.42 / -72.62 | -62.38 / -74.62 | -69.27 / -75.22 |
+
+**16× oversampling**
+
+| Mode | Bias (mA) | Rate (kHz) | Tones | OS only | ADAA1 | ADAA2 |
+|---|---:|---:|---:|---:|---:|---:|
+| P1 | 0.1 | 44.1 | 5 | -147.56 / -147.58 | -147.56 / -147.58 | -147.56 / -147.58 |
+| P1 | 0.1 | 48 | 5 | -147.56 / -147.57 | -147.56 / -147.57 | -147.56 / -147.57 |
+| P1 | 0.25 | 44.1 | 5 | -150.55 / -150.56 | -150.55 / -150.56 | -150.55 / -150.56 |
+| P1 | 0.25 | 48 | 5 | -150.54 / -150.56 | -150.54 / -150.56 | -150.54 / -150.56 |
+| P1 | 0.45 | 44.1 | 5 | -152.63 / -155.41 | -152.63 / -155.41 | -152.63 / -155.41 |
+| P1 | 0.45 | 48 | 5 | -152.85 / -160.69 | -152.85 / -160.69 | -152.85 / -160.69 |
+| P1 | 0.6 | 44.1 | 29 | -147.94 / -148.73 | -147.94 / -148.73 | -147.94 / -148.73 |
+| P1 | 0.6 | 48 | 29 | -147.94 / -148.73 | -147.94 / -148.73 | -147.94 / -148.73 |
+| T | 0.1 | 44.1 | 5 | -156.38 / -156.42 | -156.38 / -156.42 | -156.38 / -156.42 |
+| T | 0.1 | 48 | 5 | -156.37 / -156.41 | -156.37 / -156.41 | -156.37 / -156.41 |
+| T | 0.25 | 44.1 | 5 | -156.00 / -156.02 | -156.00 / -156.02 | -156.00 / -156.02 |
+| T | 0.25 | 48 | 5 | -155.99 / -156.01 | -155.99 / -156.01 | -155.99 / -156.01 |
+| T | 0.3 | 44.1 | 5 | -155.77 / -155.78 | -155.77 / -155.78 | -155.77 / -155.78 |
+| T | 0.3 | 48 | 5 | -155.76 / -155.77 | -155.76 / -155.77 | -155.76 / -155.77 |
+| T | 0.35 | 44.1 | 5 | -138.82 / -150.75 | -146.90 / -154.47 | -155.49 / -160.65 |
+| T | 0.35 | 48 | 5 | -149.71 / -150.26 | -157.90 / -165.20 | -159.65 / -165.17 |
+| T | 0.375 | 44.1 | 29 | -106.21 / -125.33 | -112.19 / -133.76 | -123.36 / -138.81 |
+| T | 0.375 | 48 | 29 | -116.52 / -136.70 | -117.92 / -138.18 | -129.89 / -145.04 |
+| T | 0.4 | 44.1 | 29 | -97.92 / -113.27 | -104.63 / -117.19 | -107.86 / -122.19 |
+| T | 0.4 | 48 | 29 | -103.33 / -117.94 | -107.65 / -123.83 | -111.64 / -128.14 |
+| T | 0.45 | 44.1 | 29 | -87.43 / -101.11 | -89.00 / -102.83 | -96.92 / -106.64 |
+| T | 0.45 | 48 | 29 | -91.86 / -106.90 | -94.70 / -107.44 | -99.64 / -109.48 |
+| T | 0.5 | 44.1 | 29 | -82.42 / -94.73 | -86.16 / -96.26 | -90.45 / -96.31 |
+| T | 0.5 | 48 | 29 | -86.27 / -99.40 | -89.23 / -100.09 | -91.04 / -100.88 |
+
+### Grid-law sensitivity at T 0.5 mA
+
+The RSD-2 and EHX-1 bounds are borrowed 12AX7 fits, estimated and
+unvalidated for the 6AS6. Each entry is the worst strict margin in
+dB over 18,037, 19,037, 19,437, 19,637 and 19,997 Hz at 8 V, with the
+post-filter off. The sensitivity probes fail under both bounds and
+leave the nominal RSD-1 constants in place. [PR #151, grid-current bounds](https://github.com/pmsorhaindo/ModellingAudioProcessors/pull/151)
+
+| Grid fit | Configuration | 44.1 kHz | 48 kHz |
+|---|---|---:|---:|
+| RSD-2 | OS only 8× | -58.04 | -55.83 |
+| RSD-2 | ADAA1 + 8× | -59.06 | -57.49 |
+| RSD-2 | ADAA2 + 8× | -57.08 | -52.37 |
+| RSD-2 | OS only 16× | -32.23 | -28.98 |
+| RSD-2 | ADAA1 + 16× | -29.83 | -29.31 |
+| RSD-2 | ADAA2 + 16× | -26.90 | -26.78 |
+| EHX-1 | OS only 8× | -57.74 | -54.69 |
+| EHX-1 | ADAA1 + 8× | -58.73 | -56.81 |
+| EHX-1 | ADAA2 + 8× | -55.65 | -51.20 |
+| EHX-1 | OS only 16× | -30.77 | -29.01 |
+| EHX-1 | ADAA1 + 16× | -28.66 | -28.15 |
+| EHX-1 | ADAA2 + 16× | -26.21 | -26.07 |
+
+### Same-model ngspice agreement
+
+The comparison uses `dk/validate.CRIT` with the committed nominal-grid
+ngspice records at P1 0.1, 0.25 and 0.45 mA and T 0.1, 0.25, 0.35, 0.45
+and 0.5 mA. These are the eight supported settings with complete
+`dualg` references. The checks cover the DC operating point, a DC
+linearization over 20 Hz–20 kHz, harmonics from the existing 1 kHz
+drive sweep, and the 4 V tone burst and tail. The AC calculation
+applies the two- or three-tap equal-weight response to the grid
+slope alone. The burst aligns to the upsampler delay because the
+linear and plate/screen paths use current-sample voltages.
+
+The ngspice T 0.5 mA THD at 8 V and 1 kHz is 13.25074%.
+The chain AC tolerance and the H2–H5 tolerance are each 0.1 dB.
+ADAA2 + 4× exceeds the harmonic limit at T 0.35 mA at both sample
+rates. All other configurations pass these comparisons. Burst
+columns give the maximum relative shift, trajectory and tail errors
+across the two sample rates.
+
+| Configuration | Largest AC chain error (dB), 44.1 / 48 | Largest H2–H5 error (dB), 44.1 / 48 | T 0.5 mA THD (%), 44.1 / 48 | Largest burst errors | Settings passing |
+|---|---:|---:|---:|---:|---:|
+| OS only 4× | 0.0012 / 0.0010 | 0.0032 / 0.0037 | 13.25097 / 13.25096 | 0.163% / 0.032% / 0.018% | 16/16 |
+| ADAA1 + 4× | 0.0012 / 0.0010 | 0.0720 / 0.0624 | 13.25296 / 13.25273 | 0.163% / 0.032% / 0.018% | 16/16 |
+| ADAA2 + 4× | 0.0012 / 0.0010 | 0.2135 / 0.1840 | 13.25720 / 13.25639 | 0.163% / 0.032% / 0.018% | 14/16 |
+| OS only 8× | 0.0003 / 0.0002 | 0.0032 / 0.0037 | 13.25098 / 13.25097 | 0.137% / 0.237% / 0.018% | 16/16 |
+| ADAA1 + 8× | 0.0003 / 0.0002 | 0.0238 / 0.0209 | 13.25177 / 13.25168 | 0.137% / 0.237% / 0.018% | 16/16 |
+| ADAA2 + 8× | 0.0003 / 0.0002 | 0.0654 / 0.0569 | 13.25311 / 13.25285 | 0.137% / 0.237% / 0.018% | 16/16 |
+| OS only 16× | 0.0001 / 0.0001 | 0.0032 / 0.0037 | 13.25098 / 13.25097 | 0.138% / 0.049% / 0.018% | 16/16 |
+| ADAA1 + 16× | 0.0001 / 0.0001 | 0.0089 / 0.0080 | 13.25132 / 13.25128 | 0.138% / 0.049% / 0.018% | 16/16 |
+| ADAA2 + 16× | 0.0001 / 0.0001 | 0.0222 / 0.0195 | 13.25181 / 13.25171 | 0.138% / 0.049% / 0.018% | 16/16 |
+
+### CPU versus ordinary oversampling
+
+The #20/#67 harness timed 2 s of its 8 V peak guitar phrase in mono,
+64-sample blocks at 48 kHz, with one warm-up and five round-robin
+passes. It ran the ordinary engine and the offline ADAA adapter in
+one binary on Apple M1 with Apple clang 17, `-O3 -ffp-contract=off`.
+The host was heavily loaded and scheduled work across performance
+and efficiency cores. Median CPU-on fractions were 0.54–0.70, so
+the comparison uses median process-counter cycles per host sample.
+The raw results include timing and core residency.
+
+| Configuration | Cycles per host sample, P1 0.45 / T 0.5 mA | Cost vs 8×, P1 / T | Cost vs 16×, P1 / T |
+|---|---:|---:|---:|
+| OS only 4× | 13,946 / 13,484 | 0.54× / 0.53× | 0.31× / 0.30× |
+| ADAA1 + 4× | 11,677 / 15,332 | 0.46× / 0.60× | 0.26× / 0.34× |
+| ADAA2 + 4× | 11,972 / 16,567 | 0.47× / 0.65× | 0.27× / 0.37× |
+| OS only 8× | 25,622 / 25,346 | 1.00× / 1.00× | 0.57× / 0.57× |
+| ADAA1 + 8× | 21,776 / 28,007 | 0.85× / 1.10× | 0.48× / 0.63× |
+| ADAA2 + 8× | 21,955 / 30,358 | 0.86× / 1.20× | 0.49× / 0.68× |
+| OS only 16× | 44,989 / 44,484 | 1.76× / 1.76× | 1.00× / 1.00× |
+| ADAA1 + 16× | 38,950 / 49,058 | 1.52× / 1.94× | 0.87× / 1.10× |
+| ADAA2 + 16× | 39,041 / 53,050 | 1.52× / 2.09× | 0.87× / 1.19× |
+
+At T 0.5 mA, ADAA2 + 8× improves the worst margin over plain 8× by
+2.53 / 3.03 dB at 44.1 / 48 kHz for 1.20× its cycles. It uses 0.68×
+the cycles of plain 16× and has worst margins 25.35 / 22.06 dB lower.
+ADAA2 + 16× improves on plain 16× by 5.09 / 4.44 dB for 1.19× its
+cycles. The cheaper P1 timings do not resolve the hot-T failures.
+No measured configuration reaches the full-envelope gate at a cost
+that warrants a core port.
+
+### Reproduction
+
+Run from `prototypes/fullstage` with the repository’s NumPy/SciPy environment and a C++17 compiler.
+
+```sh
+grid_work=$(mktemp -d)
+export GRID_ADAA_WORK="$grid_work"
+python - <<'PY'
+import os
+from pathlib import Path
+
+from dk6as6.grid_adaa_measure import build_screen, tables
+from dk6as6.pentode import GRID_SHAPES
+
+work = Path(os.environ["GRID_ADAA_WORK"])
+for shape in GRID_SHAPES:
+    build_screen(work / f"{shape}.so", shape)
+for mode, bias in (("P1", 0.45), ("T", 0.5)):
+    for factor in (4, 8, 16):
+        with (work / f"{mode}_{bias}mA_x{factor}.bin").open("wb") as out:
+            for table in tables(work / "RSD-1.so", 48000, factor, mode, bias):
+                table.tofile(out)
+PY
+
+python -m dk6as6.grid_adaa_measure --lib "$grid_work/RSD-1.so" --out "$grid_work/nominal.jsonl" \
+  --cases P1:0.6 T:0.375 T:0.4 T:0.45 T:0.5
+python -m dk6as6.grid_adaa_measure --lib "$grid_work/RSD-1.so" --out "$grid_work/nominal.jsonl" \
+  --cases P1:0.1 P1:0.25 P1:0.45 T:0.1 T:0.25 T:0.3 T:0.35 --tones 14037 17037 19037 19937 19997
+for shape in RSD-2 EHX-1; do
+    python -m dk6as6.grid_adaa_measure --lib "$grid_work/$shape.so" --shape "$shape" \
+      --out "$grid_work/bounds.jsonl" --cases T:0.5 \
+      --configs os8 os16 a1x8 a2x8 a1x16 a2x16 --tones 18037 19037 19437 19637 19997
+done
+python -m dk6as6.grid_adaa_validate --lib "$grid_work/RSD-1.so" --out "$grid_work/ngspice.jsonl"
+DK6AS6_GRID_ADAA_TABLES="$grid_work" python -m cpp.bench --core 6as6 \
+  --flags '-O3 -ffp-contract=off -DDK6AS6_BENCH_GRID_ADAA' \
+  --reps 5 --only P1_0.45mA_8V_b64_x1,T_0.5mA_8V_b64_x1 --out "$grid_work/cpu.json"
+python -m pytest -q dk6as6/tests/test_dk6as6_grid_adaa.py
+```
+
+[Per-tone alias scores, benchmark output, validation and numerical checks](grid_adaa_results.json)

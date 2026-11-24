@@ -11,6 +11,7 @@
  * range), no grid current, the 7k post-filter, and the shipped resampler. There is no SIMD 6AS6 kernel (README-6as6.md,
  * "CPU"), so there are no s2 / v2 rows.
  * DK6AS6_BENCH_ADAA adds experimental rows from the offline #136 renderer.
+ * DK6AS6_BENCH_GRID_ADAA adds experimental rows from the offline #154 grid renderer.
  */
 #include "dk6as6_core.h"
 
@@ -21,6 +22,10 @@
 #include "bench_common.h"   // FS, the signal, the counters, thread_cpu_ns, pct / median / jnum
 #ifdef DK6AS6_BENCH_ADAA
 #include "../dk6as6/adaa_screen.h"
+#endif
+#ifdef DK6AS6_BENCH_GRID_ADAA
+#include "../dk6as6/grid_adaa_screen.h"
+#include <fstream>
 #endif
 
 using namespace dk6as6;
@@ -36,30 +41,56 @@ struct BenchQuality {
     std::string name;
     Quality rate;
     int order = 0, nodes = 0;
+#ifdef DK6AS6_BENCH_GRID_ADAA
+    bool grid_study = false;
+#endif
 };
 
 class BenchStage {
 public:
-    Status prepare(double fs, const BenchQuality& q, const Settings& s) {
+    Status prepare(double fs, const BenchQuality& q, const Settings& s, [[maybe_unused]] const std::string& variant) {
+#ifdef DK6AS6_BENCH_GRID_ADAA
+        grid_adaa_ = q.grid_study && q.order != 0;
+        if (grid_adaa_) {
+            const char* dir = std::getenv("DK6AS6_GRID_ADAA_TABLES");
+            if (!dir) return Status::bad_argument;
+            const std::string file = std::string(dir) + "/" + variant + "_x" + std::to_string(q.rate.os) + ".bin";
+            std::ifstream table(file, std::ios::binary);
+            table_.resize(grid_research::ROWS * grid_research::COLS * 2);
+            if (!table.read(reinterpret_cast<char*>(table_.data()), table_.size() * sizeof(double)))
+                return Status::bad_argument;
+            return grid_screen_.prepare(fs, q.rate.os, s, q.order, table_.data(),
+                                        table_.data() + grid_research::ROWS * grid_research::COLS);
+        }
+#endif
 #ifdef DK6AS6_BENCH_ADAA
-        adaa_ = q.order != 0;
+        adaa_ = q.nodes != 0;
         if (adaa_) return screen_.prepare(fs, q.rate, s, q.order, q.nodes);
 #endif
         return stage_.prepare(fs, q.rate, s);
     }
     void reset() {
+#ifdef DK6AS6_BENCH_GRID_ADAA
+        if (grid_adaa_) { grid_screen_.reset(); return; }
+#endif
 #ifdef DK6AS6_BENCH_ADAA
         if (adaa_) { screen_.reset(); return; }
 #endif
         stage_.reset();
     }
     void process(const double* x, double* y, std::size_t n) {
+#ifdef DK6AS6_BENCH_GRID_ADAA
+        if (grid_adaa_) { grid_screen_.process(x, y, n); return; }
+#endif
 #ifdef DK6AS6_BENCH_ADAA
         if (adaa_) { screen_.process(x, y, n); return; }
 #endif
         stage_.process(x, y, n);
     }
     const Stats& stats() const {
+#ifdef DK6AS6_BENCH_GRID_ADAA
+        if (grid_adaa_) return grid_screen_.stats();
+#endif
 #ifdef DK6AS6_BENCH_ADAA
         if (adaa_) return screen_.stats();
 #endif
@@ -70,6 +101,11 @@ private:
 #ifdef DK6AS6_BENCH_ADAA
     research::Screen screen_;
     bool adaa_ = false;
+#endif
+#ifdef DK6AS6_BENCH_GRID_ADAA
+    grid_research::Screen grid_screen_;
+    std::vector<double> table_;
+    bool grid_adaa_ = false;
 #endif
 };
 
@@ -177,6 +213,14 @@ int main(int argc, char** argv) {
                 qs.push_back({"a" + std::to_string(order) + "x" + std::to_string(os) + "q" + std::to_string(nodes),
                               {os, 0.0}, order, nodes});
 #endif
+#ifdef DK6AS6_BENCH_GRID_ADAA
+#ifndef DK6AS6_BENCH_ADAA
+    qs.push_back({"os4", {4, 0.0}, 0, 0, true});
+#endif
+    for (int os : {4, 8, 16})
+        for (int order : {1, 2})
+            qs.push_back({"a" + std::to_string(order) + "x" + std::to_string(os), {os, 0.0}, order, 0, true});
+#endif
     const double levels[] = {0.5, 2.0, 8.0};
     // (name, settings): the default, and one change from it per variant
     std::vector<std::pair<std::string, Settings>> variants;
@@ -194,6 +238,10 @@ int main(int argc, char** argv) {
                 for (int blk : {64, 512})
                     for (int inst : {1, 2}) {
                         if (v.first != "P1_0.45mA" && (blk != 64 || inst != 1)) continue;
+#ifdef DK6AS6_BENCH_GRID_ADAA
+                        if (q.grid_study && (lv != 8 || blk != 64 || inst != 1 ||
+                            (v.first != "P1_0.45mA" && v.first != "T_0.5mA"))) continue;
+#endif
                         char nm[96];
                         std::snprintf(nm, sizeof nm, "%s_%s_%gV_b%d_x%d", q.name.c_str(), v.first.c_str(), lv, blk, inst);
                         bool keep = only.empty();
@@ -229,7 +277,7 @@ int main(int argc, char** argv) {
         const int l = int(std::find(levels, levels + 3, c.level) - levels);
         for (int k = 0; k < c.inst; ++k) {
             c.s[k] = new BenchStage;
-            const Status st = c.s[k]->prepare(FS, c.q, c.set);
+            const Status st = c.s[k]->prepare(FS, c.q, c.set, c.variant);
             if (st != Status::ok) { std::fprintf(stderr, "%s: prepare failed (%s)\n", c.name.c_str(), to_string(st)); return 3; }
             c.x[k] = &sig[l][k];
             c.y[k].assign(n, 0.0);
