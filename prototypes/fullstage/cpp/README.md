@@ -100,8 +100,19 @@ the best finite iterate, i.e. the one with the smallest finite ‖F‖∞ (the w
 iterate never wins. The stage keeps that iterate as the sample's state and counts it in `Stats::nonconverged`,
 `Stats::nonconv_block` (last call) and `nonconverged_total()` (atomic, for the UI thread). Python warns on each
 call; the C++ core only counts, and the host polls the counters. The DC solve has no state to fall back on, so it
-fails the build instead. The core adds one rule of its own: NaN / inf input samples are replaced by 0 and counted
-(`nonfinite_inputs`). Python has no such guard.
+fails the build instead.
+
+**NaN / inf audio and out-of-range gains (#137, the 6AS6 core's rule from #104).** Python has no such guard; the
+core adds one. NaN / inf input samples, checked after the drive gain (a finite sample times a finite gain can
+overflow), are replaced by 0 and counted (`nonfinite_inputs`). `set_drive()` / `set_output()` ignore a non-finite
+gain, so the last finite one stays. If the state still goes non-finite (a finite input far outside any signal, such as
+the largest double), that sample outputs 0 and the state goes back to the active pack's operating point with the
+resampler cleared (`recoveries`). This is realtime-safe and needs no `reset()`. An output sample whose gained value
+does not fit the destination type (double or float) is written as 0 and counted (`nonfinite_outputs`); the state is
+not touched. `process_internal()` applies the same input and state rule. A `set_bias_ramp()` length that is NaN,
+inf, negative or over the cap is clamped before `lround`. None of this changes a sample whose input, state and output
+are finite: the old and new headers give byte-identical outputs, Vgk, states and stats on the validated paths.
+`test_nonfinite_recovery` (mono, libm and fast, every quality) and `test_stereo_nonfinite` check it.
 
 ## Stereo (#21)
 
@@ -113,7 +124,9 @@ one shared coefficient pack, since the matrices are the same for both. Drive and
   `detail::StageBase`, shared by both classes.
 - `process(inL, inR, outL, outR, n)`, double or float. No allocation, locks or syscalls.
 - The same `ScopedFlushDenormals`.
-- NaN / inf inputs are replaced and counted per channel.
+- NaN / inf inputs are replaced and counted per channel, non-finite gains are ignored per channel, and a non-finite
+  state recovers per channel: `ResamplerT::reset_lanes()` clears and re-primes only that lane, so the other channel
+  carries on untouched and each channel still equals a mono `Stage` (`test_stereo_nonfinite`).
 - `stats(ch)` gives the per-channel `Stats`. `nonconverged_total()` counts both channels.
 - `sizeof(StereoStage)` is 45 kB; two `Stage`s take 55 kB.
 
@@ -398,7 +411,8 @@ agree to 7.2e-5 dB (reported, not asserted).
 **Allocation.** `test_core.cpp` replaces global `operator new` / `delete` in every form. On glibc it also interposes
 `malloc` / `calloc` / `realloc` / `free` / `memalign` / `aligned_alloc` / `posix_memalign`, forwarding to glibc's
 `__libc_*` entry points. Both count while a flag is set, and every `process()` / `process_internal()` call in the
-tests runs with the flag set: 0 allocations over all cases, the NaN-input block and float I/O. `request_bias()`
+tests runs with the flag set: 0 allocations over all cases, the NaN-input block, the non-finite recovery tests and
+float I/O. `request_bias()`
 (the producer side) also allocates nothing.
 
 **Mutation check** (by hand, 6 Nov 2026; each a one-line change to `dk_core.h`). Caught:

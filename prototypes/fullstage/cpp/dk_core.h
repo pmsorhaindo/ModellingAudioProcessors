@@ -35,6 +35,15 @@
  * (Stats::nonconverged, nonconv_block, nonconverged_total()). The DC solve has no state to fall back on, so a pack
  * whose DC solve fails is never built (BuildStatus::dc_nonconvergence) and never published.
  *
+ * Non-finite input (#137, as dk6as6_core.h, #104): NaN / inf input samples, after the drive gain, are replaced by 0
+ * and counted (Stats::nonfinite_inputs), and set_drive() / set_output() ignore a non-finite gain. If the state still
+ * goes non-finite (a finite input far outside any signal, such as the largest double), that sample outputs 0 and the
+ * state returns to the active pack's operating point, the resampler cleared (Stats::recoveries): realtime-safe, no
+ * reset() needed. An output sample whose gained value does not fit the destination type (double or float) is written
+ * as 0 and counted (Stats::nonfinite_outputs). process_internal() applies the same input and state rule. StereoStage
+ * does all of this per channel: a recovery on one lane leaves the other lane's state and resampler lane untouched.
+ * None of it changes a sample whose input, state and output are finite.
+ *
  * Triode math: TriodeMath::libm (default, as in Python) or TriodeMath::fast (dk/fastmath.h, #18), per pack,
  * dispatched once per block.
  *
@@ -57,6 +66,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <type_traits>
 #include <utility>
@@ -264,6 +274,12 @@ inline V2 to_double(S2 a) { return __builtin_convertvector(a, V2); }
 template <class T> inline T bcast(double a);
 template <> inline double bcast<double>(double a) { return a; }
 template <> inline V2 bcast<V2>(double a) { return splat(a); }
+/* Lane selection by a bit set (bit 0 = lane 0, bit 1 = lane 1; for double, bit 0 is the one value): a in the lanes
+ * of b, old elsewhere. Lets the resampler clear and prime single lanes (StereoStage's per-lane recovery, #137). */
+inline M2 lane_mask(int b) { return ne(make(b & 1 ? 1.0 : 0.0, b & 2 ? 1.0 : 0.0), splat(0.0)); }
+template <class T> inline T keep(int b, T a, T old);
+template <> inline double keep<double>(int b, double a, double old) { return b & 1 ? a : old; }
+template <> inline V2 keep<V2>(int b, V2 a, V2 old) { return select(lane_mask(b), a, old); }
 }  // namespace simd
 
 // ---- triode (dk/triode.py): same expressions, same order --------------------------------------------------------
@@ -1066,6 +1082,13 @@ template <int N, class T = double> struct Fir {
         for (int k = m - 1; k >= 0; --k) { zi = zi + b[k + 1]; z[k] = zi * c; }
         return dc * c;
     }
+    // clear() / prime() on the lanes of ln only (simd::keep); the same arithmetic per lane, the other lanes untouched
+    void clear_lanes(int ln) { for (int k = 0; k < N; ++k) z[k] = simd::keep<T>(ln, T{}, z[k]); }
+    T prime_lanes(T c, int ln) {
+        T zi{};
+        for (int k = m - 1; k >= 0; --k) { zi = zi + b[k + 1]; z[k] = simd::keep<T>(ln, zi * c, z[k]); }
+        return dc * c;
+    }
     T tick(T x) {
         if (m == 0) return b[0] * x;
         const T y = z[0] + b[0] * x;
@@ -1097,6 +1120,8 @@ template <int N, class T> struct FirHalfBand {
     }
     void reset() { upe.clear(); upo.clear(); dne.clear(); dno.clear(); }
     T prime(T c) { return dne.prime(c) + dno.prime(c); }
+    void reset_lanes(int ln) { upe.clear_lanes(ln); upo.clear_lanes(ln); dne.clear_lanes(ln); dno.clear_lanes(ln); }
+    T prime_lanes(T c, int ln) { return dne.prime_lanes(c, ln) + dno.prime_lanes(c, ln); }
     void up(const T* x, T* y, int n) {
         for (int j = 0; j < n; ++j) { const T v = x[j]; y[2*j] = upe.tick(v); y[2*j+1] = upo.tick(v); }
     }
@@ -1132,7 +1157,16 @@ public:
     void reset() {
         first_.reset();
         for (int i = 1; i < nst_; ++i) later_[i-1].reset();
-        delay_.clear(); primed_ = false;
+        delay_.clear(); primed_ = false; reprime_ = 0;
+    }
+    /* reset() for the lanes of ln only (bit 0 = lane 0, bit 1 = lane 1; StereoStage's per-lane recovery, #137): those
+     * lanes' filter states are cleared and the next down() primes them from its first sample, as after reset(), with
+     * the same arithmetic per lane. The other lanes carry on untouched. */
+    void reset_lanes(int ln) {
+        first_.reset_lanes(ln);
+        for (int i = 1; i < nst_; ++i) later_[i-1].reset_lanes(ln);
+        delay_.clear_lanes(ln);
+        reprime_ |= ln;
     }
     int os() const { return os_; }
     int latency_samples() const { return latency_; }
@@ -1167,6 +1201,12 @@ public:
             T c = delay_.prime(y[0]);
             for (int i = nst_ - 1; i >= 0; --i) c = i == 0 ? first_.prime(c) : later_[i-1].prime(c);
             primed_ = true;
+            reprime_ = 0;
+        } else if (reprime_) {
+            const int ln = reprime_;
+            T c = delay_.prime_lanes(y[0], ln);
+            for (int i = nst_ - 1; i >= 0; --i) c = i == 0 ? first_.prime_lanes(c, ln) : later_[i-1].prime_lanes(c, ln);
+            reprime_ = 0;
         }
         for (int j = 0; j < os_; ++j) a[j] = pad_ ? delay_.tick(y[j]) : y[j];
         int len = os_;
@@ -1184,6 +1224,7 @@ private:
     FirHalfBand<LATER_N, T> later_[stages > 1 ? stages - 1 : 1];
     Fir<MaxOs + 1, T> delay_;
     bool primed_ = false;
+    int reprime_ = 0;              // lanes reset_lanes() cleared: primed by the next down()
 };
 using Resampler = ResamplerT<double>;
 
@@ -1264,7 +1305,9 @@ struct Stats {                         // audio-thread side; since reset()
     std::uint64_t samples = 0;         // internal-rate samples solved
     std::uint64_t iterations = 0;      // Newton iterations, summed
     std::uint64_t nonconverged = 0;    // samples that hit the cap and kept the best iterate (#7)
-    std::uint64_t nonfinite_inputs = 0;  // base-rate input samples that were NaN / inf and were replaced by 0
+    std::uint64_t nonfinite_inputs = 0;  // input samples that were NaN / inf after the drive gain, replaced by 0
+    std::uint64_t recoveries = 0;        // samples whose state went non-finite: the state went back to the op point
+    std::uint64_t nonfinite_outputs = 0; // output samples whose gained value overflowed the destination type: 0 written
     std::uint64_t swaps = 0;           // coefficient packs adopted
     std::uint32_t nonconv_block = 0;   // ... nonconverged in the last process() / process_internal() call
     int max_iterations = 0;
@@ -1365,7 +1408,10 @@ protected:
             vw_[0] = work_[0].op.vgk; vw_[1] = work_[0].op.vak;
         }
         const double sec = ramp_s_.load(std::memory_order_relaxed);
-        const long len = sec > 0.0 && std::isfinite(sec) ? std::lround(sec * fs_base_) : 0;
+        // an out-of-range ramp (NaN, inf, negative, or longer than the cap below) is clamped before lround, whose
+        // result is unspecified outside long (#137)
+        const double ns = sec > 0.0 && std::isfinite(sec) ? sec * fs_base_ : 0.0;
+        const long len = ns < double(0x3fffffff) ? std::lround(ns) : 0x3fffffff;
         b_left_ = len > 1 ? (len < 0x3fffffff ? int(len) : 0x3fffffff) : 1;
         b_tgt_ = b;
         b_step_ = (b - b_eff_) / double(b_left_);
@@ -1457,8 +1503,9 @@ public:
     // request_bias(), publish(), latest(), nonconverged_total(), prepared(), fs_base(), active(): StageBase
 
     // ---- any thread ---------------------------------------------------------------------------------------------
-    void set_drive(double g) { drive_.store(g, std::memory_order_relaxed); }     // linear gain before the stage
-    void set_output(double g) { output_.store(g, std::memory_order_relaxed); }   // linear gain after it
+    // linear gains before / after the stage; a non-finite value is ignored (the last finite one stays)
+    void set_drive(double g) { if (std::isfinite(g)) drive_.store(g, std::memory_order_relaxed); }
+    void set_output(double g) { if (std::isfinite(g)) output_.store(g, std::memory_order_relaxed); }
 
     // ---- audio thread -------------------------------------------------------------------------------------------
     // state to the active pack's operating point (after a jump to the set_bias() target); clears the stats
@@ -1474,7 +1521,8 @@ public:
     }
 
     // Base rate in, base rate out, os-times oversampled. Stateful (call it block by block); the output lags the input
-    // by latency_samples(). in may equal out. NaN / inf input samples are replaced by 0 and counted.
+    // by latency_samples(). in may equal out. Non-finite input, state and output: the "Non-finite input" rule at the
+    // top of this file.
     // vgk_internal (optional, n * oversampling() values): Vgk at the internal rate, as Stage.process(record=("vgk",)).
     void process(const double* in, double* out, std::size_t n, double* vgk_internal = nullptr) noexcept {
         process_t(in, out, n, vgk_internal);
@@ -1490,7 +1538,11 @@ public:
         const Coeffs& c = cur();
         for (std::size_t i = 0; i < n; ++i) {
             int it;
-            out[i] = c.math == TriodeMath::fast ? tick<FastMath>(c, vin[i], it) : tick<LibmMath>(c, vin[i], it);
+            double x = vin[i];
+            if (!std::isfinite(x)) { x = 0.0; ++stats_.nonfinite_inputs; }
+            double y = c.math == TriodeMath::fast ? tick<FastMath>(c, x, it) : tick<LibmMath>(c, x, it);
+            if (!(std::isfinite(y) && state_finite())) { recover(); y = 0.0; }
+            out[i] = y;
             if (vgk) vgk[i] = v_[0];
             if (iters) iters[i] = std::uint16_t(it);
         }
@@ -1563,16 +1615,40 @@ private:
                     for (int k = 0; k < NX; ++k) x_[k] = x_[k] + d[k];
                 c = &cur();
             }
-            double x = double(in[i]);
+            double x = drive * double(in[i]);           // checked after the gain: a finite sample times a gain can overflow
             if (!std::isfinite(x)) { x = 0.0; ++stats_.nonfinite_inputs; }
-            rs_.up(drive * x, u);
+            rs_.up(x, u);
             int it;
             for (int j = 0; j < os; ++j) {
                 y[j] = tick<M>(*c, u[j], it);
                 if (vgk) vgk[i * std::size_t(os) + std::size_t(j)] = v_[0];
             }
-            out[i] = S(og * rs_.down(y));
+            const double yd = rs_.down(y);
+            // an input finite but far outside any signal (e.g. the largest double) can still drive the solve to inf /
+            // NaN; it must not stay in the state: back to the operating point, resampler cleared, this sample silent
+            if (!(std::isfinite(yd) && state_finite())) { recover(); out[i] = S(0); continue; }
+            // a finite output gain can still overflow the destination: range-checked in double before the conversion
+            // (an out-of-range double -> float conversion is undefined), written as 0 and counted; the state is fine
+            const double o = og * yd;
+            if (!(std::fabs(o) <= double(std::numeric_limits<S>::max()))) { out[i] = S(0); ++stats_.nonfinite_outputs; continue; }
+            out[i] = S(o);
         }
+    }
+    // the persistent per-sample state (capacitor histories, Newton unknowns) is finite: v * 0 is 0 for finite v, NaN else
+    bool state_finite() const noexcept {
+        double z = 0.0;
+        for (double v : x_) z += v * 0.0;
+        for (int k = 0; k < 2; ++k) z += v_[k] * 0.0 + q_[k] * 0.0;
+        return z == 0.0;
+    }
+    // realtime-safe: what reset() does to the state, without the bias jump or clearing the stats
+    void recover() noexcept {
+        const Coeffs& c = cur();
+        for (double& v : x_) v = 0.0;
+        v_[0] = q_[0] = c.op.vgk;
+        v_[1] = q_[1] = c.op.vak;
+        rs_.reset();
+        ++stats_.recoveries;
     }
 
     template <class S> void process_t(const S* in, S* out, std::size_t n, double* vgk) noexcept {
@@ -1598,7 +1674,7 @@ private:
  * channel. Every per-sample step is Stage's with V2 for double: tick, solve2 (per-lane Newton, see there), Triode2,
  * ResamplerT<V2>. So channel k equals a mono Stage given the same input, gains and packs (cpp/README.md, "Stereo";
  * test_core.cpp test_stereo). Threads, realtime rules (no allocation, locks or syscalls in process()), denormal
- * handling, the #7 fallback and the NaN-input rule are Stage's, per channel. */
+ * handling, the #7 fallback and the non-finite input / state / output rule (#137) are Stage's, per channel. */
 class StereoStage : public detail::StageBase {
 public:
     using V2 = simd::V2;
@@ -1615,9 +1691,10 @@ public:
     }
 
     // ---- any thread ---------------------------------------------------------------------------------------------
-    void set_drive(double l, double r) { drive_[0].store(l, std::memory_order_relaxed); drive_[1].store(r, std::memory_order_relaxed); }
+    // per channel, as Stage's: a non-finite value is ignored for its channel (the last finite one stays)
+    void set_drive(double l, double r) { store_finite(drive_[0], l); store_finite(drive_[1], r); }
     void set_drive(double g) { set_drive(g, g); }
-    void set_output(double l, double r) { output_[0].store(l, std::memory_order_relaxed); output_[1].store(r, std::memory_order_relaxed); }
+    void set_output(double l, double r) { store_finite(output_[0], l); store_finite(output_[1], r); }
     void set_output(double g) { set_output(g, g); }
     // the lane maths (#67), read once per block like the gains; default vector (used with TriodeMath::fast;
     // per_lane is the #21 bit-exact reference). With libm the setting is ignored.
@@ -1638,6 +1715,7 @@ public:
         rs_.reset();
     }
     // As Stage::process, per channel. inL may equal outL, and inR outR. nonconverged_total() counts both channels.
+    // A non-finite state on one channel recovers that channel only (the "Non-finite input" rule, top of this file).
     void process(const double* inL, const double* inR, double* outL, double* outR, std::size_t n) noexcept {
         process_t(inL, inR, outL, outR, n);
     }
@@ -1654,6 +1732,8 @@ public:
     double state_v(int ch, int i) const { return simd::lane(v_[i], ch); }
 
 private:
+    static void store_finite(std::atomic<double>& a, double g) { if (std::isfinite(g)) a.store(g, std::memory_order_relaxed); }
+
     void begin_block() {                                        // as Stage::begin_block, both lanes
         double x0_old[NX];
         std::memcpy(x0_old, cur().x0, sizeof x0_old);
@@ -1713,15 +1793,53 @@ private:
                     for (int k = 0; k < NX; ++k) x_[k] = x_[k] + simd::splat(d[k]);
                 c = &cur();
             }
-            double xl = double(inL[i]), xr = double(inR[i]);
+            const V2 xd = drive * simd::make(double(inL[i]), double(inR[i]));   // checked after the gain, as Stage::run
+            double xl = simd::lane(xd, 0), xr = simd::lane(xd, 1);
             if (!std::isfinite(xl)) { xl = 0.0; ++stats_[0].nonfinite_inputs; }
             if (!std::isfinite(xr)) { xr = 0.0; ++stats_[1].nonfinite_inputs; }
-            rs_.up(drive * simd::make(xl, xr), u);
+            rs_.up(simd::make(xl, xr), u);
             for (int j = 0; j < os; ++j) y[j] = tick<M>(*c, u[j]);
-            const V2 o = og * rs_.down(y);
-            outL[i] = S(simd::lane(o, 0));
-            outR[i] = S(simd::lane(o, 1));
+            const V2 yd = rs_.down(y);
+            // as Stage::run, per lane: a lane whose output or state went non-finite goes back to the operating point
+            // (its resampler lane cleared) and is silent for this sample; the other lane is untouched
+            const int bad = nonfinite_lanes(yd) | nonfinite_state_lanes();
+            if (bad) recover(bad);
+            const V2 o = og * yd;
+            outL[i] = out_lane<S>(o, 0, bad);
+            outR[i] = out_lane<S>(o, 1, bad);
         }
+    }
+    // lane bits (bit 0 = left, bit 1 = right) where v is non-finite: v * 0 is 0 for finite v, NaN else
+    static int nonfinite_lanes(V2 v) noexcept {
+        const V2 zero = simd::splat(0.0);
+        return simd::bits(simd::ne(v * zero, zero));
+    }
+    // ... where the persistent per-sample state (capacitor histories, Newton unknowns) is non-finite
+    int nonfinite_state_lanes() const noexcept {
+        const V2 zero = simd::splat(0.0);
+        V2 z = zero;
+        for (const V2& v : x_) z = z + v * zero;
+        for (int k = 0; k < 2; ++k) z = z + v_[k] * zero + q_[k] * zero;
+        return simd::bits(simd::ne(z, zero));
+    }
+    // Stage::recover() on the lanes of b only, realtime-safe
+    void recover(int b) noexcept {
+        using simd::keep;
+        using simd::splat;
+        const Coeffs& c = cur();
+        for (V2& v : x_) v = keep(b, splat(0.0), v);
+        v_[0] = keep(b, splat(c.op.vgk), v_[0]); q_[0] = keep(b, splat(c.op.vgk), q_[0]);
+        v_[1] = keep(b, splat(c.op.vak), v_[1]); q_[1] = keep(b, splat(c.op.vak), q_[1]);
+        rs_.reset_lanes(b);
+        for (int k = 0; k < 2; ++k) if (b >> k & 1) ++stats_[k].recoveries;
+    }
+    // channel ch of the gained output o, as Stage::run writes it: 0 for a recovered lane, 0 and counted where the value
+    // does not fit S
+    template <class S> S out_lane(V2 o, int ch, int bad) noexcept {
+        if (bad >> ch & 1) return S(0);
+        const double v = simd::lane(o, ch);
+        if (!(std::fabs(v) <= double(std::numeric_limits<S>::max()))) { ++stats_[ch].nonfinite_outputs; return S(0); }
+        return S(v);
     }
 
     template <class S> void process_t(const S* inL, const S* inR, S* outL, S* outR, std::size_t n) noexcept {
