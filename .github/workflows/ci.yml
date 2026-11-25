@@ -120,13 +120,10 @@ jobs:
       - name: Pytest
         run: python -m pytest -q ${{ matrix.pytest_args }}
 
-  # The AU v2 + VST 3 wrapper (#22, plugin/): build the universal bundles, then plugin/tests/run_checks.sh --au
-  # (engine test, Steinberg validator, null renders through both plugins vs the direct core, auval). The SDKs are
-  # fetched by CMake at pinned tags. Same gating as test-macos: non-draft PRs and manual dispatch only
-  # (macOS bills at 10x).
+  # Validate the universal AU and VST 3 bundles on main, ready PRs and manual dispatch (#140).
   plugin-macos:
     name: plugin (AU + VST3, macos arm64)
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false)
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false)
     runs-on: macos-15
     timeout-minutes: 20
     steps:
@@ -137,8 +134,51 @@ jobs:
         run: >-
           cmake --build plugin/build -j "$(sysctl -n hw.ncpu)"
           --target map_vst3 map_au validator map_engine_test map_smoothing_test map_null_vst3 map_null_au
-      - name: Checks (engine, VST 3 validator, nulls, auval)
+      - name: Download pluginval v1.0.4
+        run: |
+          mkdir -p "$RUNNER_TEMP/pluginval"
+          cd "$RUNNER_TEMP/pluginval"
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip \
+            --output pluginval_macOS.zip
+          shasum -a 256 -c <<'EOF'
+          3c4c533bda0c5059eea3ddaea752d757ee2025041f0f47e6bcb0e87f6082b29f  pluginval_macOS.zip
+          EOF
+          ditto -x -k pluginval_macOS.zip .
+      - name: Checks (engine, Steinberg validator, nulls, auval, pluginval strictness 10)
+        env:
+          PLUGINVAL: ${{ runner.temp }}/pluginval/pluginval.app/Contents/MacOS/pluginval
         run: plugin/tests/run_checks.sh plugin/build --au
+      # Archive first so GitHub's artifact ZIP preserves the bundle executables' modes inside the tarball.
+      # Manual dispatch is for validation only.
+      - name: Archive validated bundles with licenses
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          notices="$RUNNER_TEMP/gyre-notices"
+          mkdir -p "$notices/licenses"
+          cp plugin/build/_deps/vst3sdk-src/LICENSE.txt "$notices/licenses/VST3-SDK.txt"
+          cp plugin/build/_deps/audiounitsdk-src/LICENSE.txt "$notices/licenses/AudioUnitSDK.txt"
+          cp LICENSE THIRD_PARTY_NOTICES.md "$notices/"
+          tar -czf "$RUNNER_TEMP/Gyre.vst3.tar.gz" -C plugin/build/VST3/Release Gyre.vst3 \
+            -C "$notices" LICENSE THIRD_PARTY_NOTICES.md licenses
+          tar -czf "$RUNNER_TEMP/Gyre.component.tar.gz" -C plugin/build/AU Gyre.component \
+            -C "$notices" LICENSE THIRD_PARTY_NOTICES.md licenses
+      - name: Upload Gyre.vst3
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Gyre.vst3
+          path: ${{ runner.temp }}/Gyre.vst3.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+      - name: Upload Gyre.component
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Gyre.component
+          path: ${{ runner.temp }}/Gyre.component.tar.gz
+          compression-level: 0
+          if-no-files-found: error
 
   # Blocking aliasing guard (#35): the lean aliasing subset for every setting x filter at 2 V and 8 V, against
   # the absolute limits (dk/aliasing.py LIMIT_DBC) and each tone's own committed baseline (separate rate files,
@@ -264,7 +304,8 @@ jobs:
 
   # Merge gate (#113 review). One stable check name for main's branch protection: .github/scripts/ci_gate.py reads every
   # job of this run from the API and fails unless each expected job (its list, by name, every matrix leg) is present and
-  # passed (macOS jobs may be skipped where they do not run: drafts and pushes to main), and no unlisted job exists. The workflow cannot block a merge by itself: making
+  # passed (the fullstage macOS matrix may be skipped on drafts and main, and the plugin job on drafts), and no
+  # unlisted job exists. The workflow cannot block a merge by itself: making
   # "ci gate" a required status check on main is a repository setting (Settings -> Branches / Rulesets).
   ci-gate:
     name: ci gate
@@ -283,5 +324,6 @@ jobs:
       - name: Every expected job passed
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          MACOS_EXPECTED: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false) }}
+          FULLSTAGE_MACOS_EXPECTED: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false) }}
+          PLUGIN_EXPECTED: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false) }}
         run: python3 .github/scripts/ci_gate.py
