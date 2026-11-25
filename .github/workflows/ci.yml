@@ -4,11 +4,11 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
-    branches: [main, issue-140-ci-release-artifacts]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
-  group: ci-probe-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
