@@ -5,7 +5,8 @@ keeps SciPy's BSD licence. The plugin wrapper in [plugin/](plugin/) builds
 against the two SDKs below. Neither is vendored into this repository. CMake fetches each one at a pinned tag when the
 build is configured ([plugin/CMakeLists.txt](plugin/CMakeLists.txt)). Their files keep their own licences. Our
 `LICENSE` does not relicense them. Any distributed binary must carry these notices and the licence texts (see
-[docs/licensing-and-wrapper-plan.md](docs/licensing-and-wrapper-plan.md), section 3.3). Nothing is distributed yet.
+[docs/licensing-and-wrapper-plan.md](docs/licensing-and-wrapper-plan.md), section 3.3). The CI bundle archives
+include this file and the licence texts.
 
 ## Steinberg VST 3 SDK
 

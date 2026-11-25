@@ -6,6 +6,7 @@
 #   plugin/tests/run_checks.sh [build-dir] --au       also: install the AU into ~/Library/Audio/Plug-Ins/Components
 #                                                     (the user's own folder), auval, AU null (arm64, and x86_64
 #                                                     under Rosetta when it is installed)
+#   PLUGINVAL=/path/to/pluginval                      also: validate each requested format at strictness 10
 #
 # Exits non-zero at the first failure. No signing identity is used (only ad-hoc signatures: the linker's, and the
 # VST 3 SDK's post-build one on the .vst3), and nothing is published.
@@ -14,6 +15,7 @@ BUILD="${1:-$(cd "$(dirname "$0")/.." && pwd)/build}"
 AU=0
 [[ "${2:-}" == "--au" || "${1:-}" == "--au" ]] && AU=1
 [[ "${1:-}" == "--au" ]] && BUILD="$(cd "$(dirname "$0")/.." && pwd)/build"
+BUILD="$(cd "$BUILD" && pwd)"
 BIN="$BUILD/bin/Release"
 # bundle file name and AU codes come from map_identity.h, so they cannot drift from the build
 IDENTITY="$(cd "$(dirname "$0")/.." && pwd)/src/map_identity.h"
@@ -56,8 +58,13 @@ if [[ $AU == 1 ]]; then
     killall -9 AudioComponentRegistrar 2>/dev/null || true
     sleep 1
     echo "== auval"
-    auval -v "$AU_TYPE" "$AU_SUBTYPE" "$AU_MANUFACTURER" | tail -n 4
-    auval -v "$AU_TYPE" "$AU_SUBTYPE" "$AU_MANUFACTURER" | grep -q "AU VALIDATION SUCCEEDED"
+    auval_status=0
+    auval_log=$(auval -v "$AU_TYPE" "$AU_SUBTYPE" "$AU_MANUFACTURER") || auval_status=$?
+    printf '%s\n' "$auval_log"
+    if [[ $auval_status != 0 || "$auval_log" != *"AU VALIDATION SUCCEEDED"* ]]; then
+        echo "FAIL: auval did not validate $BUNDLE_FILE" >&2
+        exit 1
+    fi
     echo "== AU null (48 kHz standard; 44.1 kHz eco; 96 kHz hq)"
     "$BIN/map_null_au"
     "$BIN/map_null_au" --fs 44100 --quality 0 --drive 4 --bias 1.0 --output 0.5
@@ -65,6 +72,15 @@ if [[ $AU == 1 ]]; then
     if arch -x86_64 /usr/bin/true 2>/dev/null; then
         echo "== AU null, x86_64 slice (Rosetta)"
         arch -x86_64 "$BIN/map_null_au"
+    fi
+fi
+if [[ -n "${PLUGINVAL:-}" ]]; then
+    "$PLUGINVAL" --version
+    echo "== pluginval VST 3, strictness 10"
+    "$PLUGINVAL" --strictness-level 10 --validate "$VST3"
+    if [[ $AU == 1 ]]; then
+        echo "== pluginval AU, strictness 10"
+        "$PLUGINVAL" --strictness-level 10 --validate "$COMPONENT"
     fi
 fi
 echo "== all plugin checks passed"

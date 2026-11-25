@@ -5,8 +5,7 @@ The first loadable plugin. It wraps `dkcore::StereoStage` from
 common-cathode stage, #75 option A. The wrapper is a thin one of our own, written directly against the Steinberg
 VST® 3 SDK and Apple's AudioUnitSDK ([licensing plan](../docs/licensing-and-wrapper-plan.md), section 6). It does not
 use iPlug2, JUCE, VSTGUI or Steinberg's AUWrapper. The host shows its generic parameter UI; there is no custom GUI.
-Nothing is notarised or published, and no signing identity is used. The only signatures are ad-hoc, with no
-identity: the linker's automatic one on both binaries, and the VST 3 SDK's post-build `codesign --sign -` of the
+The builds use ad-hoc signatures from the linker on both binaries and the VST 3 SDK's post-build `codesign --sign -` of the
 .vst3 bundle (its "Adhoc codesign workaround for Xcode 15" in `smtg_add_vst3plugin`). The AU is not signed
 beyond the linker's signature, and auval did not need more.
 
@@ -28,7 +27,7 @@ these, so a renamed plugin looks like a new plugin to them, and old sessions wil
 | `tests/smoothing_test.cpp` | #73: full-range Drive / Output / Bias moves during a sine and silence (worst step vs a continuous reference, stated limits), block sizes 16 / 64 / 512, the Drive ramp vs aliasing ([results](../prototypes/fullstage/cpp/RESULTS-smoothing.md)) |
 | `tests/engine_test.cpp` | engine tests: exact null vs the core (3 qualities × 44.1 / 48 / 96 kHz, stereo and mono), no allocation in `process()`, bypass, live quality / bias switch, NaN input |
 | `tests/null_vst3.cpp`, `tests/null_au.cpp` | offline renders **through the built plugins** (VST 3 hosting classes; AudioComponent API), compared to the direct core |
-| `tests/run_checks.sh` | runs all of the above, plus the Steinberg validator and (with `--au`) auval |
+| `tests/run_checks.sh` | runs the tests, the Steinberg validator, auval with `--au`, and strictness-10 pluginval when `PLUGINVAL` points to the external executable |
 
 ## Build and check (macOS)
 
@@ -39,6 +38,11 @@ plugin/tests/run_checks.sh plugin/build          # engine test, VST 3 validator,
 plugin/tests/run_checks.sh plugin/build --au     # + installs the AU to ~/Library/Audio/Plug-Ins/Components, auval, AU null
 ```
 
+- The hosted macOS plugin job runs on pushes to `main`, ready PRs and manual dispatches. It validates both
+  bundles with pluginval in addition to the Steinberg validator and auval. Only successful manual runs upload
+  the `Gyre.vst3` and `Gyre.component` Actions artifacts, retained for seven days. Each artifact contains a
+  `.tar.gz` with its bundle and licenses. Extract the `.tar.gz` after downloading to preserve the bundle's
+  executable permissions.
 - Output: `plugin/build/VST3/Release/Gyre.vst3` and `plugin/build/AU/Gyre.component`. The build is universal
   (`arm64;x86_64`) with a macOS 11.0 deployment target (AudioUnitSDK's minimum). Use
   `-DCMAKE_OSX_ARCHITECTURES=arm64` for arm64 only.
