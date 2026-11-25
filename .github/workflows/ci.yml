@@ -4,11 +4,11 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
-    branches: [main]
+    branches: [main, issue-140-ci-release-artifacts]
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-probe-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -150,9 +150,9 @@ jobs:
           PLUGINVAL: ${{ runner.temp }}/pluginval/pluginval.app/Contents/MacOS/pluginval
         run: plugin/tests/run_checks.sh plugin/build --au
       # Archive first so GitHub's artifact ZIP preserves the bundle executables' modes inside the tarball.
-      # Manual dispatch is for validation only.
+      # Manual runs make the validated test builds available for seven days.
       - name: Archive validated bundles with licenses
-        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch'
         run: |
           notices="$RUNNER_TEMP/gyre-notices"
           mkdir -p "$notices/licenses"
@@ -164,21 +164,23 @@ jobs:
           tar -czf "$RUNNER_TEMP/Gyre.component.tar.gz" -C plugin/build/AU Gyre.component \
             -C "$notices" LICENSE THIRD_PARTY_NOTICES.md licenses
       - name: Upload Gyre.vst3
-        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: Gyre.vst3
           path: ${{ runner.temp }}/Gyre.vst3.tar.gz
           compression-level: 0
           if-no-files-found: error
+          retention-days: 7
       - name: Upload Gyre.component
-        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: Gyre.component
           path: ${{ runner.temp }}/Gyre.component.tar.gz
           compression-level: 0
           if-no-files-found: error
+          retention-days: 7
 
   # Blocking aliasing guard (#35): the lean aliasing subset for every setting x filter at 2 V and 8 V, against
   # the absolute limits (dk/aliasing.py LIMIT_DBC) and each tone's own committed baseline (separate rate files,

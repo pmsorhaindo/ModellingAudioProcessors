@@ -39,9 +39,10 @@ plugin/tests/run_checks.sh plugin/build --au     # + installs the AU to ~/Librar
 ```
 
 - The hosted macOS plugin job runs on pushes to `main`, ready PRs and manual dispatches. It validates both
-  bundles with pluginval in addition to the Steinberg validator and auval. After the checks pass on a push or
-  ready PR, the `Gyre.vst3` and `Gyre.component` Actions artifacts each contain a `.tar.gz` with the bundle and
-  licenses. Extract the `.tar.gz` after downloading to preserve the bundle's executable permissions.
+  bundles with pluginval in addition to the Steinberg validator and auval. Only successful manual runs upload
+  the `Gyre.vst3` and `Gyre.component` Actions artifacts, retained for seven days. Each artifact contains a
+  `.tar.gz` with its bundle and licenses. Extract the `.tar.gz` after downloading to preserve the bundle's
+  executable permissions.
 - Output: `plugin/build/VST3/Release/Gyre.vst3` and `plugin/build/AU/Gyre.component`. The build is universal
   (`arm64;x86_64`) with a macOS 11.0 deployment target (AudioUnitSDK's minimum). Use
   `-DCMAKE_OSX_ARCHITECTURES=arm64` for arm64 only.
