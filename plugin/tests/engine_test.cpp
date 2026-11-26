@@ -8,12 +8,14 @@
  *   3. live switches through the worker, realtime-paced: 12AX7 quality / bias, valve 12AX7 -> 6AS6, 6AS6 mode / bias /
  *      quality / filter, 6AS6 -> 12AX7. Each is adopted, the latency follows, the output stays finite, and process()
  *      neither allocates (operator new counted) nor locks, waits or makes a listed syscall (rt_hooks.cpp)
- *   4. after a live path switch, each path nulls against its own core again (after request_reset)
+ *   4. after a live path switch, each path nulls against its own core again (after request_reset); a filter-only
+ *      change on the running 6AS6 stage nulls against the core switched at the same block
  *   5. NaN / inf input, each path: output finite
  *   6. NaN / inf and out-of-range parameter values: sanitized, output finite; a host rate the 6AS6 core refuses runs
  *      the 12AX7 path
  *   7. the 12AX7 Bias range ends (0.5, 2.0) build a pack and solve the DC point; the T cap is the core's envelope
- *   8. saved state: VST 3 state decoding (v1 -> the 12AX7 path, v2, refused states) and sanitize_plain (the AU's)
+ *   8. saved state: VST 3 state decoding (no extension -> the 12AX7 path, the #114 extension, refused values),
+ *      normalized -> index conversions (NaN, between entries) and sanitize_plain (the AU's)
  * Prints one line per check; exit status 0 if all pass.
  */
 #include "../tests/null_common.h"
@@ -343,6 +345,57 @@ int main() {
         }
     }
 
+    // 4b. a filter-only change on the running 6AS6 stage (no rebuild): fixed 256-sample blocks so the engine's chunks
+    // and the reference's blocks coincide; the reference core gets set_lpf before the same block
+    for (int to : {mapvs::kFilter7k, mapvs::kFilter4k}) {
+        Settings s;
+        s.valve = mapvs::k6AS6;
+        s.seconds = 0.25;
+        s.drive = 4.0;
+        s.filter6 = mapvs::kFilterOff;
+        std::vector<float> L, R;
+        make_signal(s, L, R);
+        set_all(e, s);
+        e.set_bypass(false);
+        e.prepare(s.fs);
+        auto ref = std::make_unique<dk6as6::Stage[]>(2);
+        const dk6as6::Settings set = settings_6as6(s);
+        for (int c = 0; c < 2; ++c) {
+            ref[c].prepare(s.fs, quality_6as6(s.quality), set);
+            ref[c].set_drive(s.drive * mapvs::kVoltsPerFullScale);
+            ref[c].set_output(s.output * mapvs::kFullScalePerVolt);
+        }
+        const std::size_t blk = std::size_t(Engine::kChunk), at = 40 * blk;   // change at 0.21 s, > 15 ms before the end
+        std::vector<float> pL(L.size()), pR(R.size()), rL(L.size()), rR(R.size()), uL(L.size()), uR(R.size());
+        Settings off = s;
+        int lat = 0;
+        reference(off, L, R, uL, uR, lat);                // unchanged filter, for "the change took effect"
+        g_allocs = 0;
+        map_rt_clear();
+        for (std::size_t pos = 0; pos < L.size(); pos += blk) {
+            const std::size_t n = std::min(blk, L.size() - pos);
+            if (pos == at) {
+                e.set_filter6(to);
+                for (int c = 0; c < 2; ++c) ref[c].set_lpf(to == mapvs::kFilter7k ? dk6as6::Lpf::k7 : dk6as6::Lpf::k4);
+            }
+            const float* in[2] = {L.data() + pos, R.data() + pos};
+            float* out[2] = {pL.data() + pos, pR.data() + pos};
+            process_armed(e, in, out, 2, int(n));
+            ref[0].process(L.data() + pos, rL.data() + pos, n);
+            ref[1].process(R.data() + pos, rR.data() + pos, n);
+        }
+        const Diff dl = compare(pL, rL), dr = compare(pR, rR);
+        double moved = 0.0;
+        for (std::size_t i = at + std::size_t(0.015 * s.fs) + std::size_t(lat); i < L.size(); ++i)
+            moved = std::fmax(moved, std::fabs(double(pL[i]) - double(uL[i])));
+        check(dl.max_abs == 0.0 && dr.max_abs == 0.0 && moved > 1e-3 && e.active_valve() == mapvs::k6AS6 &&
+                  g_allocs.load() == 0 && map_rt_count() == 0,
+              std::string("live 6AS6 filter-only change Off -> ") + mapvs::kFilter6Names[to] +
+                  " on the running stage: exact null vs the core switched at the same block, no allocation / lock",
+              fmt("max abs diff L %.3g R %.3g; differs from the unfiltered output by up to %.3g after the 15 ms fade",
+                  dl.max_abs, dr.max_abs, moved));
+    }
+
     // 5. non-finite input, each path
     for (int valve : {mapvs::k12AX7, mapvs::k6AS6}) {
         Settings s;
@@ -434,43 +487,51 @@ int main() {
         double norm[kNumParams];
         for (double& v : norm) v = -1.0;
         const double v1[kNumParamsV1] = {0.25, 0.75, 0.5, 0.0, 1.0};
-        bool ok = decode_state(kStateVersionV1, v1, kNumParamsV1, norm);
+        bool ok = decode_state(v1, nullptr, norm);
         bool same = true;
         for (int i = 0; i < kNumParamsV1; ++i) same = same && norm[i] == v1[i];
         check(ok && same && index_from_norm(norm[kValve], kNumValves) == k12AX7 &&
                   norm[kBias6] == default_norm(kBias6) && norm[kMode6] == default_norm(kMode6) &&
                   norm[kFilter6] == default_norm(kFilter6),
-              "state v1 (pre-#114): its 5 values, the 12AX7 path, the 6AS6 values at their defaults");
+              "state without the #114 extension (pre-#114): its 5 values, the 12AX7 path, 6AS6 values at their defaults");
 
-        double v2[kNumParams];
-        for (int i = 0; i < kNumParams; ++i) v2[i] = double(i) / double(kNumParams);
-        v2[kValve] = index_to_norm(k6AS6, kNumValves);
-        ok = decode_state(kStateVersion, v2, kNumParams, norm);
+        double ext[kNumParamsExt];
+        for (int i = 0; i < kNumParamsExt; ++i) ext[i] = double(i + 1) / 10.0;
+        ext[kValve - kNumParamsV1] = index_to_norm(k6AS6, kNumValves);
+        ok = decode_state(v1, ext, norm);
         same = true;
-        for (int i = 0; i < kNumParams; ++i) same = same && norm[i] == v2[i];
-        check(ok && same, "state v2: every value of both paths round-trips");
+        for (int i = 0; i < kNumParamsV1; ++i) same = same && norm[i] == v1[i];
+        for (int i = 0; i < kNumParamsExt; ++i) same = same && norm[kNumParamsV1 + i] == ext[i];
+        check(ok && same, "state with the #114 extension: every value of both paths round-trips");
 
         double before[kNumParams];
         for (int i = 0; i < kNumParams; ++i) before[i] = norm[i];
-        double bad[kNumParams];
-        for (int i = 0; i < kNumParams; ++i) bad[i] = 0.5;
-        bad[kBias6] = NAN;
-        const bool r_nan = decode_state(kStateVersion, bad, kNumParams, norm);
-        bad[kBias6] = INFINITY;
-        const bool r_inf = decode_state(kStateVersion, bad, kNumParams, norm);
-        const bool r_short = decode_state(kStateVersion, v2, kNumParamsV1, norm);
-        const bool r_ver = decode_state(3, v2, kNumParams, norm) || decode_state(0, v2, kNumParams, norm);
+        double bad_ext[kNumParamsExt];
+        for (double& v : bad_ext) v = 0.5;
+        bad_ext[kBias6 - kNumParamsV1] = NAN;
+        const bool r_nan = decode_state(v1, bad_ext, norm);
+        bad_ext[kBias6 - kNumParamsV1] = INFINITY;
+        const bool r_inf = decode_state(v1, bad_ext, norm);
+        double bad_base[kNumParamsV1] = {0.5, 0.5, NAN, 0.5, 0.0};
+        const bool r_base = decode_state(bad_base, nullptr, norm);
         same = true;
         for (int i = 0; i < kNumParams; ++i) same = same && norm[i] == before[i];
-        check(!r_nan && !r_inf && !r_short && !r_ver && same,
-              "state refused, nothing changed: a NaN or inf value, a short stream, an unknown version");
+        check(!r_nan && !r_inf && !r_base && same,
+              "state refused, nothing changed: a NaN or inf value in the head or the extension (stream framing: null_vst3)");
 
-        double wide[kNumParams];
-        for (int i = 0; i < kNumParams; ++i) wide[i] = i % 2 ? 7.0 : -7.0;
-        ok = decode_state(kStateVersion, wide, kNumParams, norm);
+        double wide[kNumParamsV1], wide_ext[kNumParamsExt];
+        for (int i = 0; i < kNumParamsV1; ++i) wide[i] = i % 2 ? 7.0 : -7.0;
+        for (int i = 0; i < kNumParamsExt; ++i) wide_ext[i] = (kNumParamsV1 + i) % 2 ? 7.0 : -7.0;
+        ok = decode_state(wide, wide_ext, norm);
         same = true;
         for (int i = 0; i < kNumParams; ++i) same = same && norm[i] == (i % 2 ? 1.0 : 0.0);
         check(ok && same, "state values outside 0..1 are clamped");
+
+        // conversions are defined for NaN (no NaN reaches an integer cast), and lists round to the nearest entry
+        check(clamp01(NAN) == 0.0 && index_from_norm(NAN, kNumModes6) == 0 && to_plain(kBias6Range, NAN) == kBias6Range.min &&
+                  index_from_norm(0.30, kNumModes6) == kT && index_from_norm(0.24, kNumModes6) == kP1 &&
+                  index_from_norm(0.76, kNumFilters6) == kFilter7k && quality_from_norm(0.30) == kStandard,
+              "normalized -> index: NaN -> the first entry; between entries, the nearest (0.30 of 3 -> entry 1)");
 
         // AU: any restored float lands on a valid plain value
         same = true;

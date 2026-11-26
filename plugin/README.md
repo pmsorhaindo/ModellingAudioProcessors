@@ -127,17 +127,29 @@ On the 6AS6 path a change between Eco and Standard builds nothing (both run 8×)
 
 **Saved state and presets.** Every save carries both paths' values, so switching the path and back restores the
 same sound, and a session reopens on the path it was saved on.
-- VST 3: state version 2, `int32` 2 then the 9 normalized values. A version 1 state (before #114: 5 values) is the
-  12AX7 plugin: it loads on the 12AX7 path with the 6AS6 values at their defaults. An unknown version, a short
-  stream, or a NaN / inf value is refused and nothing changes; a finite value outside 0..1 is clamped.
-- AU: AUBase's ClassInfo plus a `gyre-state-version` key. RestoreState first sets every parameter to its default, so
-  a preset defines all of them; a ClassInfo without the key is from before #114 and loads on the 12AX7 path; NaN and
-  out-of-range values are sanitized (`sanitize_plain`). If AUBase refuses the preset, the previous values stay.
+- VST 3: the pre-#114 layout first (`int32` 1, then the 5 normalized values Drive … Bypass), then the #114 extension
+  (`int32` magic `GYR2`, `int32` extension version 1, the 4 values Valve … Filter). A pre-#114 build checks the
+  version, reads the 5 values and ignores the rest, so a session saved by this build still opens there with its
+  shared and 12AX7 values (rolling back keeps them). A state without the extension is the 12AX7 plugin: it loads on
+  the 12AX7 path with the 6AS6 values at their defaults. Another head version, a stream short of its values, or a
+  NaN / inf value is refused and nothing changes; a finite value outside 0..1 is clamped.
+- VST 3 host values: a NaN / inf normalized value from the host (processor queue or controller) is ignored, so it
+  never reaches the saved state or an integer conversion. List parameters (Quality, Valve, Mode, Filter) round a
+  normalized value to the nearest entry on both sides: the controller's display uses the processor's
+  `index_from_norm` rather than `StringListParameter`'s floor, so the two agree between entries too.
+- AU: AUBase's ClassInfo plus a `gyre-state-version` key (a pre-#114 build ignores the key and the IDs it lacks).
+  RestoreState first sets every parameter to its default, so a preset defines all of them; a ClassInfo without the key
+  is from before #114 and loads on the 12AX7 path (set before AUBase announces the preset); NaN and out-of-range values
+  are sanitized (`sanitize_plain`). If AUBase refuses the preset, the previous values stay. Render never takes values
+  from a restore in progress (a seqlock around RestoreState); the final values reach the engine once.
+- AU scheduled parameters (`AudioUnitScheduleParameters`) are applied at once, an immediate event's value or a ramp's
+  end value, without AUBase's event list, which is a `std::vector` that grows on the render thread. The engine reads
+  its targets once per 256-sample chunk and ramps Drive and Output itself, so it has no use for sub-block slices.
 - A new instance starts on the 6AS6 path (Gyre's v1 stage), with each path's defaults. User-view presets are #144.
 
 **Rates the 6AS6 core refuses.** Its post-filter cannot run at an internal rate below about 32 kHz (host rates below
 about 4 kHz at Standard; the Steinberg validator activates at 1234.5678 Hz). There the engine runs the 12AX7 path
-instead of failing activation (`active_valve()`, `build_status()`); VST 3 still reports the 6AS6 latency.
+instead of failing activation (`active_valve()`, `build_status()`), and both formats report that path's latency.
 
 ## Host full scale ↔ volts (provisional)
 
@@ -173,8 +185,12 @@ and publishes it. The audio thread then fades out for 5 ms, switches at a block 
 in for 5 ms. The worker reuses a slot only after that acknowledgement. Latency reporting:
 - **AU:** `kAudioUnitProperty_Latency` follows the running slot. The worker sends the property notification once the
   switch is in effect.
-- **VST 3:** the controller calls `restartComponent(kLatencyChanged)` when Quality or Valve changes the latency, and
-  `getLatencySamples()` returns the latency of the requested valve and quality.
+- **VST 3:** `getLatencySamples()` returns the latency of the running slot once active (before activation: what the
+  requested valve and quality will have). When the running latency changes, the processor writes it to a hidden,
+  read-only output parameter (`Latency`, ID 1000, not saved); the host hands that to the controller on its own
+  thread, and the controller calls `restartComponent(kLatencyChanged)`. So the host is told once the switch is in
+  effect, however the change arrived (controller edit, processor automation, state). A Quality / Valve edit in the
+  controller also asks at once, so a host that reactivates on `kLatencyChanged` prepares the new stage right away.
 
 ## Known limits
 
@@ -190,8 +206,9 @@ in for 5 ms. The worker reuses a slot only after that acknowledgement. Latency r
 - Quality, valve and 6AS6 mode / bias changes reach the stage through the worker. They land about 5 ms (wall clock)
   plus the build time after the parameter changes, also in an offline render that runs faster than real time. 12AX7
   Bias changes are sample-aligned (since #73).
-- VST 3: the host may re-read the latency right after `restartComponent` and before the Quality / Valve change has reached
-  the processor through `process()`. It then sees the old value until it asks again (e.g. on the next activation).
+- VST 3: between a Quality / Valve change and its adoption (the worker's build plus 10 ms of fades) the host
+  compensates the old latency, which is the one the audio still has; a host that does not pass output parameter
+  changes to the controller is only told by the controller's immediate request, and then reads the old value.
 - Reported tail: latency + 0.2 s on the 12AX7 path, about 6 × the slowest time constant of its circuit values
   (Ck · Rk = 33 ms); latency + 0.8 s on the 6AS6 path, about 6 × its slowest coupling RC (Cout · (Ra + Rl) =
   100 nF · 1.27 MΩ = 0.127 s, `dk6as6/circuit.py`, inferred values). Provisional choices, not measured decays.
