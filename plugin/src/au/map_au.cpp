@@ -20,8 +20,11 @@
  *   scheduled parameters   AUBase's own slicing: immediate events take effect at their buffer offsets (the render is
  *                          split there and the store updated per slice). Its event list is a std::vector: Initialize
  *                          reserves kMaxScheduledEvents, and an immediate event beyond that capacity in one render
- *                          cycle is applied at once instead of appended (its offset is lost), so the render thread
- *                          never grows it. Ramped events are dropped: the pinned SDK sets nothing for them anyway
+ *                          cycle is not appended, so the render thread never grows it. Such an event is applied at
+ *                          once (as AUBase applies every immediate event when it is scheduled) and, after the render's
+ *                          slices, again if no queued event of the same parameter has a later offset: the last value
+ *                          requested for each parameter is always the one kept. Only its timing is lost (it takes effect
+ *                          from the slice after it is applied, at the latest from the next render). Ramped events are dropped: the pinned SDK sets nothing for them anyway
  *                          (AUElement::SetScheduledEvent ignores ramps), but it would still split slices at them and
  *                          log a warning through os_log on the render thread for every slice a ramp covers.
  */
@@ -133,16 +136,33 @@ public:
     OSStatus ScheduleParameter(const AudioUnitParameterEvent* events, UInt32 count) AUSDK_RTSAFE override {
         if (!events && count > 0) return kAudio_ParamError;
         auto& list = GetParamEventList();
+        if (list.empty()) sched_.clear();               // AUBase ended the last cycle (also one whose render failed)
         for (UInt32 i = 0; i < count; ++i) {
             const AudioUnitParameterEvent& e = events[i];   // NOLINT subscript
             if (e.eventType != kParameterEvent_Immediate) continue;   // a ramp: see the header comment
+            const UInt32 off = e.eventValues.immediate.bufferOffset;   // NOLINT union
+            const bool ours = e.scope == kAudioUnitScope_Global && e.element == 0 && e.parameter < kNumParams;
             if (list.size() < list.capacity()) {
                 Base::ScheduleParameter(&e, 1);             // push_back within capacity: no allocation
+                if (ours) sched_.queued(e.parameter, off);
             } else {
+                // past the reserve: applied at once (as AUBase does for every immediate event when it is scheduled),
+                // and remembered, so that after the slices it wins over any earlier-offset queued event (end_render)
                 SetParameter(e.parameter, e.scope, e.element, e.eventValues.immediate.value, 0);   // NOLINT union
+                if (ours) sched_.overflowed(e.parameter, off, e.eventValues.immediate.value);   // NOLINT union
             }
         }
         return noErr;
+    }
+    // AUBase's render (its slices set the queued events per slice), then the overflow rule of the header comment
+    OSStatus Render(AudioUnitRenderActionFlags& flags, const AudioTimeStamp& ts, UInt32 frames) AUSDK_RTSAFE override {
+        const OSStatus r = Base::Render(flags, ts, frames);
+        for (AudioUnitParameterID id = 0; id < kNumParams; ++id) {
+            AudioUnitParameterValue v;
+            if (sched_.final_overflow(id, v)) Globals()->SetParameter(id, v);
+        }
+        sched_.clear();                                 // AUBase clears its event list after this render too
+        return r;
     }
 
     // Our key next to AUBase's: marks a state as #114's layout (map_params.h, "saved state").
@@ -276,6 +296,36 @@ private:
         bool committed_ = false;
     };
     std::atomic<unsigned> restore_seq_{0};             // odd while RestoreState runs (main thread)
+
+    // Render-thread bookkeeping of one render cycle's scheduled events (ScheduleParameter and Render run on the render
+    // thread, as AUBase's own event list assumes): per parameter, the latest queued offset, and the latest overflowed
+    // event (largest offset; at an equal offset the later call). Fixed size, no allocation.
+    struct ScheduleBook {
+        bool any_queued[kNumParams] = {}, any_over[kNumParams] = {};
+        UInt32 queued_max[kNumParams] = {}, over_off[kNumParams] = {};
+        AudioUnitParameterValue over_val[kNumParams] = {};
+        void queued(AudioUnitParameterID id, UInt32 off) {
+            if (!any_queued[id] || off > queued_max[id]) queued_max[id] = off;
+            any_queued[id] = true;
+        }
+        void overflowed(AudioUnitParameterID id, UInt32 off, AudioUnitParameterValue v) {
+            if (any_over[id] && off < over_off[id]) return;    // an earlier offset than the one kept: superseded
+            over_off[id] = off;
+            over_val[id] = v;
+            any_over[id] = true;
+        }
+        // the overflowed value is the parameter's last one in this cycle: no queued event of it comes later (an
+        // overflowed event was scheduled after every queued one, so at an equal offset it is the later)
+        bool final_overflow(AudioUnitParameterID id, AudioUnitParameterValue& v) const {
+            if (!any_over[id] || (any_queued[id] && queued_max[id] > over_off[id])) return false;
+            v = over_val[id];
+            return true;
+        }
+        void clear() {
+            for (AudioUnitParameterID id = 0; id < kNumParams; ++id) any_queued[id] = any_over[id] = false;
+        }
+    };
+    ScheduleBook sched_;
     Engine engine_;
 };
 

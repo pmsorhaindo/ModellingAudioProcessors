@@ -184,8 +184,10 @@ same sound, and a session reopens on the path it was saved on.
   that the same scope always ends).
 - AU scheduled parameters (`AudioUnitScheduleParameters`) keep AUBase's slicing: an immediate event takes effect at its
   buffer offset. AUBase's event list is a `std::vector`; Initialize reserves 1024 entries, and an immediate event past
-  that in one render cycle is applied at once instead of appended (its offset is lost), so the render thread never
-  grows it. Ramped events are dropped: the pinned SDK sets nothing for them anyway, but would split slices at them and
+  that in one render cycle is not appended, so the render thread never grows it. It is applied at once and, after the
+  render's slices, again unless a queued event of the same parameter has a later offset, so the last value requested
+  for each parameter is always the one kept; only its timing is lost (at the latest it takes effect from the next
+  render). Ramped events are dropped: the pinned SDK sets nothing for them anyway, but would split slices at them and
   log a warning through `os_log` on the render thread for each slice a ramp covers.
 - A new instance starts on the 6AS6 path (Gyre's v1 stage), with each path's defaults. User-view presets are #144.
 

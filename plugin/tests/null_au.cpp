@@ -8,7 +8,9 @@
  *   2b. AudioUnitScheduleParameters: 100 Valve events (more than AUBase's own reserve of 24) and a ramp, then 1100
  *      events (more than the wrapper's reserve): no allocation, lock or listed syscall in the call or in the render
  *      after it (rt_hooks.cpp), the last value wins; and two Drive points in one render (1 at frame 0, 8 at frame 128)
- *      take effect at their offsets: the output nulls exactly against an Engine given the same two slices
+ *      take effect at their offsets: the output nulls exactly against an Engine given the same two slices; past the
+ *      reserve the last value requested per parameter is kept (a final overflowed Valve wins over earlier queued
+ *      ones; a later queued one wins over an earlier overflowed one)
  *   3. saved state (#114): ClassInfo round-trips every value of both paths; a rejected ClassInfo, and one whose decoding
  *      throws inside AUBase (a bad scope in the data), change nothing and leave render publishing parameters; a
  *      ClassInfo without our key (pre-#114) loads on the 12AX7 path with the 6AS6 values at their defaults, and a
@@ -335,6 +337,63 @@ int main(int argc, char** argv) {
                     "the call %ld, in call + render %ld %s; last Valve kept, the ramp set nothing (Drive %g): %s\n", nev,
                     int(st), int(rr), in_call, total, map_rt_last(), double(get_param(au, mapvs::kDrive)), last ? "yes" : "NO");
         ok = ok && st == noErr && rr == noErr && total == 0 && last;
+    }
+
+    // 2b'. past the reserve, the last value requested per parameter is the one kept:
+    //   (i)  1099 queued events select this valve (offsets < 511), the 1100th, past the reserve, the other at frame 511:
+    //        the other valve is kept and adopted (the reviewer's case, round 2);
+    //   (ii) 1024 queued events, the last the other valve at frame 450, then an overflowed event of this valve at frame
+    //        100: the queued later one is kept.
+    for (int which = 0; which < 2; ++which) {
+        // start from the engine running this valve, so that adopting the other one below means something
+        CHECK(AudioUnitSetParameter(au, mapvs::kValve, kAudioUnitScope_Global, 0, float(s.valve), 0));
+        {
+            std::vector<float> wL(std::size_t(0.02 * s.fs)), wR(wL.size());
+            for (int k = 0; k < 40 && tail_property(au) != mapvs::tail_seconds(s.valve); ++k) {
+                if (render(au, in, wL, wR, wL.size(), t0, true)) return 1;
+                t0 += double(wL.size());
+            }
+            if (tail_property(au) != mapvs::tail_seconds(s.valve)) { std::fprintf(stderr, "FAIL: settle\n"); return 1; }
+        }
+        std::vector<AudioUnitParameterEvent> ev(which == 0 ? 1100 : 1025);
+        for (std::size_t k = 0; k < ev.size(); ++k) {
+            ev[k] = AudioUnitParameterEvent{};
+            ev[k].scope = kAudioUnitScope_Global;
+            ev[k].parameter = mapvs::kValve;
+            ev[k].eventType = kParameterEvent_Immediate;
+            ev[k].eventValues.immediate.bufferOffset = UInt32(k % 400);
+            ev[k].eventValues.immediate.value = float(s.valve);
+        }
+        if (which == 0) {
+            ev.back().eventValues.immediate.bufferOffset = 511;
+            ev.back().eventValues.immediate.value = float(other_valve);
+        } else {
+            ev[1023].eventValues.immediate.bufferOffset = 450;         // still queued (the 1024th)
+            ev[1023].eventValues.immediate.value = float(other_valve);
+            ev.back().eventValues.immediate.bufferOffset = 100;        // past the reserve, earlier than 450
+        }
+        std::vector<float> zL(512), zR(512);
+        map_rt_clear();
+        map_rt_arm(true);
+        const OSStatus st = AudioUnitScheduleParameters(au, ev.data(), UInt32(ev.size()));
+        const OSStatus rr = render_once(au, in, zL, zR, 0, 512, t0);
+        map_rt_arm(false);
+        t0 += 512.0;
+        const long hooked = map_rt_count();
+        const bool kept = std::lround(get_param(au, mapvs::kValve)) == other_valve;
+        std::vector<float> wL(std::size_t(0.02 * s.fs)), wR(wL.size());
+        for (int k = 0; k < 40 && tail_property(au) != mapvs::tail_seconds(other_valve); ++k) {
+            if (render(au, in, wL, wR, wL.size(), t0, true)) return 1;
+            t0 += double(wL.size());
+        }
+        const bool adopted = tail_property(au) == mapvs::tail_seconds(other_valve);
+        std::printf("scheduled past the reserve, %s: status %d / render %d, hooked calls %ld, Valve after the render %s "
+                    "(want %s), adopted: %s\n",
+                    which == 0 ? "1099 x this valve then the other at frame 511 (overflowed)"
+                               : "the other valve queued at frame 450, this one overflowed at frame 100",
+                    int(st), int(rr), hooked, valve_name(int(std::lround(get_param(au, mapvs::kValve)))),
+                    valve_name(other_valve), adopted ? "yes" : "NO");
+        ok = ok && st == noErr && rr == noErr && hooked == 0 && kept && adopted;
     }
 
     // 2c. immediate events take effect at their buffer offsets (AUBase's slices): Drive 1 at frame 0, 8 at frame 128
