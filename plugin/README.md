@@ -28,6 +28,7 @@ these, so a renamed plugin looks like a new plugin to them, and old sessions wil
 | `tests/engine_test.cpp` | engine tests: exact null vs the core (3 qualities × 44.1 / 48 / 96 kHz, stereo and mono), no allocation in `process()`, bypass, live quality / bias switch, NaN input |
 | `tests/null_vst3.cpp`, `tests/null_au.cpp` | offline renders **through the built plugins** (VST 3 hosting classes; AudioComponent API), compared to the direct core |
 | `tests/run_checks.sh` | runs the tests, the Steinberg validator, auval with `--au`, and strictness-10 pluginval when `PLUGINVAL` points to the external executable |
+| `install.sh` | installs both macOS bundles for a local smoke test |
 
 ## Build and check (macOS)
 
@@ -50,9 +51,41 @@ plugin/tests/run_checks.sh plugin/build --au     # + installs the AU to ~/Librar
   Apple clang 17 from the Command Line Tools alone, with no Xcode.app. The VST 3 SDK's CMake asks `xcodebuild` for
   a version; with the CLT alone, `CMakeLists.txt` passes the CLT version through the SDK's own `XCODE_VERSION`
   override.
-- The VST 3 SDK's `SMTG_CREATE_PLUGIN_LINK` and its post-build validator run are off. The build does not touch
-  `~/Library/Audio/Plug-Ins`; only `run_checks.sh --au` copies the AU there.
+- The VST 3 SDK's `SMTG_CREATE_PLUGIN_LINK` and its post-build validator run are off. The build leaves
+  `~/Library/Audio/Plug-Ins` alone. `run_checks.sh --au` installs the AU for validation.
 - `dk_core.h` must not be built with `-ffast-math` (it `#error`s).
+
+## Install for a local Ableton Live smoke test (#142)
+
+Quit Live before installing. From the repo root, install an existing local build with `plugin/install.sh`
+(or `plugin/install.sh path/to/build` for a custom build directory).
+
+To reuse the validated #140 CI outputs, download `Gyre.vst3` and `Gyre.component` from the same successful
+manual CI run and extract each `.tar.gz`. Pass the extracted bundles to the installer:
+
+```bash
+plugin/install.sh /path/to/Gyre.vst3 /path/to/Gyre.component
+```
+
+The installer replaces only the two Gyre bundles in `~/Library/Audio/Plug-Ins/VST3` and
+`~/Library/Audio/Plug-Ins/Components`. It applies an ad-hoc signature to each staged copy without a developer
+identity or `sudo`. To test the copy in isolation, run the same command with `HOME` set to a temporary directory.
+
+### Ableton Live checklist (macOS)
+
+- [ ] Launch Live. In **Settings → Plug-Ins**, enable **Use Audio Units v2** and **Use VST3 Plug-In System
+  Folders** (this also scans the user VST3 folder). Click **Rescan** and wait for the scan to finish. If either
+  format is missing, hold **Option** and click **Rescan** for a full scan. [Ableton's scan instructions](https://help.ableton.com/hc/en-us/articles/115000349184-VST-AU-plug-in-doesn-t-appear-in-Live-s-Browser)
+- [ ] Find Gyre under both **VST3** and **Audio Units** in the Plug-Ins browser. Load each format on an audio
+  track with a looping clip. Test one instance at a time.
+- [ ] For each format, start playback with the device enabled and confirm audible output and track meter activity.
+  Increase Drive and listen for a change, then toggle Live's device activator to compare with the dry clip.
+- [ ] Once [#105](https://github.com/pmsorhaindo/ModellingAudioProcessors/issues/105) is present in the tested
+  build, open the custom editor in each format. In the dev view, check that the available path, quality, mode
+  and filter controls can be changed. Open a fresh instance in the user view, check its defaults and try Drive
+  and Output. Record the UI check as pending for builds without the custom editor.
+
+Record the source commit or CI run, Live and macOS versions, and the result for each format.
 
 ## Parameters
 
