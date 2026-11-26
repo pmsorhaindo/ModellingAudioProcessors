@@ -14,7 +14,13 @@
  *                          token, cleared in the destructor, keeps a late notification from reaching a disposed AU.
  *   saved state            AUBase's ClassInfo plus our kAUStateKey (map_params.h). RestoreState starts every parameter
  *                          from its default, so a preset defines all of them; a preset without the key is from before
- *                          #114 and loads on the 12AX7 path; every value is sanitized (NaN, out of range).
+ *                          #114 and loads on the 12AX7 path; every value is sanitized (NaN, out of range). Render
+ *                          never takes parameter values from a restore in progress (restore_seq_, a seqlock).
+ *   scheduled parameters   AudioUnitScheduleParameters applies each event at once, through SetParameter (atomics):
+ *                          an immediate event's value, a ramp's end value. AUBase's own scheduling would push every
+ *                          event onto a std::vector on the render thread (an allocation once more than its reserved 24
+ *                          arrive in a cycle). The engine reads its targets once per 256-sample chunk and ramps Drive
+ *                          and Output itself, so it does not use sub-block slices.
  */
 #include "../map_engine.h"
 #include "../map_identity.h"
@@ -22,6 +28,7 @@
 
 #include <AudioUnitSDK/AUEffectBase.h>
 
+#include <atomic>
 #include <cmath>
 #include <memory>
 #include <mutex>
@@ -129,6 +136,19 @@ public:
         for (int i = 0; i < count; ++i) CFRelease(names[i]);
         return noErr;
     }
+    // ---- scheduled parameters: realtime-safe, no event list (see the header comment) ---------------------------
+    [[nodiscard]] bool CanScheduleParameters() const AUSDK_RTSAFE override { return false; }
+    OSStatus ScheduleParameter(const AudioUnitParameterEvent* events, UInt32 count) AUSDK_RTSAFE override {
+        if (!events && count > 0) return kAudio_ParamError;
+        for (UInt32 i = 0; i < count; ++i) {
+            const AudioUnitParameterEvent& e = events[i];   // NOLINT subscript
+            const AudioUnitParameterValue v =
+                e.eventType == kParameterEvent_Ramped ? e.eventValues.ramp.endValue : e.eventValues.immediate.value;   // NOLINT union
+            SetParameter(e.parameter, e.scope, e.element, v, 0);
+        }
+        return noErr;
+    }
+
     using Base::SetParameter;
     OSStatus SetParameter(AudioUnitParameterID id, AudioUnitScope scope, AudioUnitElement element,
                           AudioUnitParameterValue value, UInt32 offset) AUSDK_RTSAFE override {
@@ -141,7 +161,7 @@ public:
         const OSStatus r = Base::SaveState(outData);
         if (r != noErr || !outData || !*outData || CFGetTypeID(*outData) != CFDictionaryGetTypeID()) return r;
         auto* dict = static_cast<CFMutableDictionaryRef>(const_cast<void*>(*outData));   // AUBase made it mutable
-        const SInt32 version = kStateVersion;
+        const SInt32 version = kAUStateVersion;
         CFNumberRef num = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &version);
         CFStringRef key = CFStringCreateWithCString(kCFAllocatorDefault, kAUStateKey, kCFStringEncodingUTF8);
         CFDictionarySetValue(dict, key, num);
@@ -150,29 +170,35 @@ public:
         return r;
     }
     // Every parameter starts from its default, so the restored state does not depend on what was set before; a state
-    // without our key is from before #114 (the 12AX7 plugin) and loads on the 12AX7 path. If AUBase refuses the
-    // state, the previous values come back. Restored values are sanitized (a preset can hold NaN or any float).
+    // without our key is from before #114 (the 12AX7 plugin) and loads on the 12AX7 path (set before AUBase restores,
+    // so its PresentPreset notification already sees the final Valve). If AUBase refuses the state, the previous
+    // values come back. Restored values are sanitized (a preset can hold NaN or any float). The parameter store is
+    // shared with render, so the whole restore is bracketed by restore_seq_: render keeps the engine's previous targets
+    // while it runs, and the final values reach the engine once, at the end.
     OSStatus RestoreState(CFPropertyListRef plist) override {
-        AudioUnitParameterValue before[kNumParams];
-        for (AudioUnitParameterID id = 0; id < kNumParams; ++id) {
-            before[id] = Globals()->GetParameter(id);
-            Globals()->SetParameter(id, AudioUnitParameterValue(default_plain(id)));
-        }
-        const OSStatus r = Base::RestoreState(plist);
-        if (r != noErr) {
-            for (AudioUnitParameterID id = 0; id < kNumParams; ++id) Globals()->SetParameter(id, before[id]);
-            return r;
-        }
         bool ours = false;
         if (plist && CFGetTypeID(plist) == CFDictionaryGetTypeID()) {
             CFStringRef key = CFStringCreateWithCString(kCFAllocatorDefault, kAUStateKey, kCFStringEncodingUTF8);
             ours = CFDictionaryContainsKey(static_cast<CFDictionaryRef>(plist), key);
             CFRelease(key);
         }
+        restore_seq_.fetch_add(1, std::memory_order_relaxed);   // odd: a restore is in progress
+        std::atomic_thread_fence(std::memory_order_release);
+        AudioUnitParameterValue before[kNumParams];
+        for (AudioUnitParameterID id = 0; id < kNumParams; ++id) {
+            before[id] = Globals()->GetParameter(id);
+            Globals()->SetParameter(id, AudioUnitParameterValue(default_plain(id)));
+        }
         if (!ours) Globals()->SetParameter(kValve, AudioUnitParameterValue(kValveLegacy));
-        for (AudioUnitParameterID id = 0; id < kNumParams; ++id)
-            Globals()->SetParameter(id, AudioUnitParameterValue(sanitize_plain(id, double(Globals()->GetParameter(id)))));
-        push_parameters();
+        const OSStatus r = Base::RestoreState(plist);
+        if (r != noErr) {
+            for (AudioUnitParameterID id = 0; id < kNumParams; ++id) Globals()->SetParameter(id, before[id]);
+        } else {
+            for (AudioUnitParameterID id = 0; id < kNumParams; ++id)
+                Globals()->SetParameter(id, AudioUnitParameterValue(sanitize_plain(id, double(Globals()->GetParameter(id)))));
+            push_parameters();
+        }
+        restore_seq_.fetch_add(1, std::memory_order_release);   // even: done
         return r;
     }
 
@@ -229,8 +255,16 @@ private:
         default: break;
         }
     }
-    void push_parameters_rt() AUSDK_RTSAFE {           // render thread: scheduled / ramped values land here
-        for (AudioUnitParameterID id = 0; id < kNumParams; ++id) push_parameter(id, Globals()->GetParameterRT(id));
+    // render thread: a consistent snapshot of the parameter store, or nothing (seqlock reader: a restore was running
+    // or ran meanwhile; the engine keeps its targets, and the restore pushes its final values itself)
+    void push_parameters_rt() AUSDK_RTSAFE {
+        const unsigned seq = restore_seq_.load(std::memory_order_acquire);
+        if (seq & 1u) return;
+        AudioUnitParameterValue v[kNumParams];
+        for (AudioUnitParameterID id = 0; id < kNumParams; ++id) v[id] = Globals()->GetParameterRT(id);
+        std::atomic_thread_fence(std::memory_order_acquire);
+        if (restore_seq_.load(std::memory_order_relaxed) != seq) return;
+        for (AudioUnitParameterID id = 0; id < kNumParams; ++id) push_parameter(id, v[id]);
     }
     void push_parameters() {
         for (AudioUnitParameterID id = 0; id < kNumParams; ++id) push_parameter(id, Globals()->GetParameter(id));
@@ -241,6 +275,7 @@ private:
         GyreAU* au = nullptr;
     };
     std::shared_ptr<Token> token_ = std::make_shared<Token>();
+    std::atomic<unsigned> restore_seq_{0};             // odd while RestoreState runs (main thread)
     Engine engine_;
 };
 

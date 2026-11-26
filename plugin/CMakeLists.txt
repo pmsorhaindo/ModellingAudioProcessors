@@ -156,7 +156,7 @@ add_executable(map_smoothing_test tests/smoothing_test.cpp)       # #73: Drive /
 target_link_libraries(map_smoothing_test PRIVATE map_engine)
 
 add_executable(map_null_au tests/null_au.cpp)
-target_link_libraries(map_null_au PRIVATE map_engine
+target_link_libraries(map_null_au PRIVATE map_engine map_rt_hooks
     "-framework AudioToolbox" "-framework CoreAudio" "-framework CoreFoundation")
 target_compile_definitions(map_null_au PRIVATE
     MAP_TEST_AU_TYPE="${MAP_AU_TYPE}" MAP_TEST_AU_SUBTYPE="${MAP_AU_SUBTYPE}"

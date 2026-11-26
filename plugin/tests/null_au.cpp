@@ -3,10 +3,13 @@
  * Finds the component by type / subtype / manufacturer (map_identity.h, via CMake), so it tests the bundle that
  * the system registered (install it to ~/Library/Audio/Plug-Ins/Components first). Then:
  *   1. null: parameters set before AudioUnitInitialize, render in varying blocks, compare to the reference
- *   2. live: switch the quality and the bias, then the valve, while rendering; the latency property must follow
- *   3. saved state (#114): ClassInfo round-trips every value of both paths; a ClassInfo without our key (pre-#114)
- *      loads on the 12AX7 path with the 6AS6 values at their defaults; NaN / out-of-range values in a preset are
- *      sanitized
+ *   2. live: switch the quality and the bias, then the valve, while rendering; the latency property must follow, and
+ *      a kAudioUnitProperty_Latency listener must be called (the worker posts it to the main queue, pumped here)
+ *   2b. AudioUnitScheduleParameters with 100 Valve events (more than AUBase's reserved 24) and a ramp: no allocation,
+ *      lock or listed syscall in the call or in the render after it (rt_hooks.cpp), the last value wins
+ *   3. saved state (#114): ClassInfo round-trips every value of both paths; a rejected ClassInfo changes nothing; a
+ *      ClassInfo without our key (pre-#114) loads on the 12AX7 path with the 6AS6 values at their defaults, and a
+ *      PresentPreset listener already sees the 12AX7 Valve; NaN / out-of-range values in a preset are sanitized
  * Exit status 0 only if the null is exact (max abs diff 0) and the live and state checks pass.
  *
  *   map_null_au [--fs 48000] [--quality 1] [--drive 2] [--bias 1.25] [--output 1.25] [--seconds 2]
@@ -19,9 +22,28 @@
 #include <chrono>
 #include <thread>
 
+extern "C" {                                            // rt_hooks.cpp (linked dylib)
+void map_rt_arm(bool on);
+long map_rt_count();
+void map_rt_clear();
+const char* map_rt_last();
+}
+
 using namespace nulltest;
 
 namespace {
+
+int g_latency_notes = 0;                                // kAudioUnitProperty_Latency listener calls
+float g_valve_at_preset = -1.0f;                        // Valve when kAudioUnitProperty_PresentPreset was announced
+void on_property(void*, AudioUnit au, AudioUnitPropertyID id, AudioUnitScope, AudioUnitElement) {
+    if (id == kAudioUnitProperty_Latency) ++g_latency_notes;
+    if (id == kAudioUnitProperty_PresentPreset) {
+        AudioUnitParameterValue v = -1.0f;
+        AudioUnitGetParameter(au, mapvs::kValve, kAudioUnitScope_Global, 0, &v);
+        g_valve_at_preset = v;
+    }
+}
+void pump_main_queue() { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.002, false); }
 
 OSType fourcc(const char* s) {
     return OSType((std::uint32_t(std::uint8_t(s[0])) << 24) | (std::uint32_t(std::uint8_t(s[1])) << 16) |
@@ -182,6 +204,8 @@ int main(int argc, char** argv) {
     CHECK(AudioUnitSetParameter(au, mapvs::kMode6, kAudioUnitScope_Global, 0, float(s.mode6), 0));
     CHECK(AudioUnitSetParameter(au, mapvs::kFilter6, kAudioUnitScope_Global, 0, float(s.filter6), 0));
     CHECK(AudioUnitInitialize(au));
+    CHECK(AudioUnitAddPropertyListener(au, kAudioUnitProperty_Latency, on_property, nullptr));
+    CHECK(AudioUnitAddPropertyListener(au, kAudioUnitProperty_PresentPreset, on_property, nullptr));
 
     // 1. null
     std::vector<float> pL(L.size()), pR(R.size()), rL, rR;
@@ -214,23 +238,81 @@ int main(int argc, char** argv) {
         } else {
             CHECK(AudioUnitSetParameter(au, mapvs::kValve, kAudioUnitScope_Global, 0, float(other_valve), 0));
         }
+        const int notes0 = g_latency_notes;
+        const long before = std::lround(latency_property(au) * s.fs);
         if (render(au, in, qL, qR, nlive, t0, true)) return 1;
         t0 += double(nlive);
         const int valve = step == 0 ? s.valve : other_valve;
-        // the latency property follows once the switch is in effect (the worker's notification): settle briefly
+        // the latency property follows once the switch is in effect, and the worker's notification reaches listeners
+        // through the main queue: settle briefly
         double lat2 = latency_property(au);
         const int want = mapvs::Engine::latency_for(valve, target_q, s.fs);
-        for (int k = 0; k < 20 && std::lround(lat2 * s.fs) != want; ++k) {
+        for (int k = 0; k < 40 && (std::lround(lat2 * s.fs) != want || (want != before && g_latency_notes == notes0)); ++k) {
             if (render(au, in, qL, qR, std::size_t(0.02 * s.fs), t0, true)) return 1;
             t0 += 0.02 * s.fs;
+            pump_main_queue();
             lat2 = latency_property(au);
         }
         std::size_t bad = 0;
         for (std::size_t i = 0; i < nlive; ++i) bad += !std::isfinite(qL[i]) || !std::isfinite(qR[i]);
-        std::printf("live: quality -> %s, bias -> 1.5%s%s: latency property %.3f samples (want %d), nonfinite %zu\n",
-                    quality_name(target_q), step ? ", valve -> " : "", step ? valve_name(valve) : "", lat2 * s.fs, want,
-                    bad);
-        ok = ok && std::lround(lat2 * s.fs) == want && bad == 0;
+        const bool told = want == before || g_latency_notes > notes0;
+        std::printf("live: quality -> %s, bias -> 1.5%s%s: latency property %ld -> %.3f samples (want %d), latency "
+                    "listener called x%d, nonfinite %zu\n",
+                    quality_name(target_q), step ? ", valve -> " : "", step ? valve_name(valve) : "", before, lat2 * s.fs,
+                    want, g_latency_notes - notes0, bad);
+        ok = ok && std::lround(lat2 * s.fs) == want && told && bad == 0;
+    }
+
+    // 2b. scheduled parameters: more events than AUBase's reserved event list, Valve alternating and ending on the
+    // other valve (where step 1 left it), plus a Drive ramp ending on the current Drive
+    {
+        std::vector<AudioUnitParameterEvent> ev(101);
+        for (std::size_t k = 0; k < 100; ++k) {
+            ev[k] = AudioUnitParameterEvent{};
+            ev[k].scope = kAudioUnitScope_Global;
+            ev[k].element = 0;
+            ev[k].parameter = mapvs::kValve;
+            ev[k].eventType = kParameterEvent_Immediate;
+            ev[k].eventValues.immediate.bufferOffset = UInt32(k);
+            ev[k].eventValues.immediate.value = float(k % 2 == 0 ? s.valve : other_valve);
+        }
+        ev[100] = AudioUnitParameterEvent{};
+        ev[100].scope = kAudioUnitScope_Global;
+        ev[100].parameter = mapvs::kDrive;
+        ev[100].eventType = kParameterEvent_Ramped;
+        ev[100].eventValues.ramp.startBufferOffset = 0;
+        ev[100].eventValues.ramp.durationInFrames = 256;
+        ev[100].eventValues.ramp.startValue = 0.0f;
+        ev[100].eventValues.ramp.endValue = float(s.drive);
+        std::vector<float> zL(512), zR(512);
+        // render once unarmed (first-call setup in AudioToolbox), then the scheduled cycle armed
+        if (render(au, in, zL, zR, zL.size(), t0, false)) return 1;
+        t0 += double(zL.size());
+        map_rt_clear();
+        map_rt_arm(true);
+        const OSStatus st = AudioUnitScheduleParameters(au, ev.data(), UInt32(ev.size()));
+        const long in_call = map_rt_count();
+        Abl2 abl{};
+        abl.mNumberBuffers = 2;
+        for (int c = 0; c < 2; ++c) {
+            abl.mBuffers[c].mNumberChannels = 1;
+            abl.mBuffers[c].mDataByteSize = 512 * sizeof(float);
+            abl.mBuffers[c].mData = (c == 0 ? zL.data() : zR.data());
+        }
+        AudioTimeStamp ts{};
+        ts.mFlags = kAudioTimeStampSampleTimeValid;
+        ts.mSampleTime = t0;
+        in.pos = 0;
+        AudioUnitRenderActionFlags flags = 0;
+        const OSStatus rr = AudioUnitRender(au, &flags, &ts, 0, 512, reinterpret_cast<AudioBufferList*>(&abl));
+        map_rt_arm(false);
+        t0 += 512.0;
+        const long total = map_rt_count();
+        const bool last = std::lround(get_param(au, mapvs::kValve)) == other_valve && get_param(au, mapvs::kDrive) == float(s.drive);
+        std::printf("AudioUnitScheduleParameters, 100 Valve events + a Drive ramp: status %d / render %d, hooked calls "
+                    "in the call %ld, in call + render %ld %s, last values kept: %s\n", int(st), int(rr), in_call, total,
+                    map_rt_last(), last ? "yes" : "NO");
+        ok = ok && st == noErr && rr == noErr && total == 0 && last;
     }
 
     // 3. saved state (#114)
@@ -255,6 +337,29 @@ int main(int argc, char** argv) {
         std::printf("ClassInfo round trip after the live path switch (our key present, every value of both paths): %s\n",
                     same ? "yes" : "NO");
         ok = ok && same;
+
+        // a ClassInfo AUBase refuses (another subtype): an error, every value as it was, the running path unchanged.
+        // (That render never takes a restore's intermediate values is the restore_seq_ seqlock in map_au.cpp: a race,
+        // not reproducible on demand here.)
+        {
+            CFMutableDictionaryRef wrong = CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0, static_cast<CFDictionaryRef>(saved));
+            const SInt32 bad_subtype = 0x7a7a7a7a;
+            CFNumberRef n = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &bad_subtype);
+            CFDictionarySetValue(wrong, CFSTR(kAUPresetSubtypeKey), n);
+            CFRelease(n);
+            CFPropertyListRef wp = wrong;
+            const double lat_before = latency_property(au);
+            const OSStatus rs = AudioUnitSetProperty(au, kAudioUnitProperty_ClassInfo, kAudioUnitScope_Global, 0, &wp, sizeof wp);
+            CFRelease(wrong);
+            std::vector<float> zL(std::size_t(0.05 * s.fs)), zR(zL.size());
+            if (render(au, in, zL, zR, zL.size(), t0, true)) return 1;
+            t0 += double(zL.size());
+            bool kept = rs != noErr && latency_property(au) == lat_before;
+            for (AudioUnitParameterID id = 0; id < mapvs::kNumParams; ++id) kept = kept && get_param(au, id) == values[id];
+            std::printf("rejected ClassInfo (other subtype): error %d, every value and the running %s path kept: %s\n",
+                        int(rs), valve_name(other_valve), kept ? "yes" : "NO");
+            ok = ok && kept;
+        }
 
         // pre-#114: no key, and no 6AS6 values (they were never saved); set them away from the defaults first
         CHECK(AudioUnitSetParameter(au, mapvs::kValve, kAudioUnitScope_Global, 0, float(mapvs::k6AS6), 0));
@@ -287,15 +392,18 @@ int main(int argc, char** argv) {
             CFDictionarySetValue(d, CFSTR(kAUPresetDataKey), m);
             CFRelease(m);
         }
+        g_valve_at_preset = -1.0f;
         CHECK(AudioUnitSetProperty(au, kAudioUnitProperty_ClassInfo, kAudioUnitScope_Global, 0, &legacy, sizeof legacy));
         bool old = int(std::lround(get_param(au, mapvs::kValve))) == mapvs::k12AX7 &&
+                   g_valve_at_preset == float(mapvs::k12AX7) &&
                    get_param(au, mapvs::kBias6) == float(mapvs::kBias6Range.def) &&
                    get_param(au, mapvs::kMode6) == float(mapvs::kMode6Default) &&
                    get_param(au, mapvs::kFilter6) == float(mapvs::kFilter6Default);
         for (AudioUnitParameterID id = 0; id < AudioUnitParameterID(mapvs::kNumParamsV1); ++id)
             old = old && get_param(au, id) == values[id];
-        std::printf("pre-#114 ClassInfo (no key, IDs 0-4 only): the 12AX7 path, its 5 values, the 6AS6 values at their "
-                    "defaults: %s\n", old ? "yes" : "NO");
+        std::printf("pre-#114 ClassInfo (no key, IDs 0-4 only): the 12AX7 path (also when PresentPreset is announced: "
+                    "Valve %g), its 5 values, the 6AS6 values at their defaults: %s\n", double(g_valve_at_preset),
+                    old ? "yes" : "NO");
         ok = ok && old;
         CFRelease(legacy);
 
