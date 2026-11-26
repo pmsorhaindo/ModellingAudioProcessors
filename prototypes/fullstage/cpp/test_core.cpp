@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cfloat>
 #include <cinttypes>
 #include <cstddef>
 #include <cstdio>
@@ -446,6 +447,202 @@ static void test_nonconvergence() {
     delete s;
 }
 
+// #137 (as test_nonfinite_recovery in test_core_6as6.cpp, #104): NaN / inf audio and finite-but-absurd samples or gains
+// must not leave the state non-finite. The input is checked after the drive gain; a non-finite drive / output gain is
+// ignored; a state that still goes non-finite recovers to the operating point without reset(). Mono, libm and fast,
+// every quality.
+static bool same_bits(double a, double b);
+
+// Stage::process one sample at a time (mono is block-size invariant, test_cases). Every sample whose call raised
+// Stats::recoveries must be written as exactly +0 (zero_ok); returns how many there were.
+static long process_per_sample(Stage& s, const double* x, double* y, size_t n, bool& zero_ok) {
+    long rec = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const std::uint64_t r0 = s.stats().recoveries;
+        s.process(x + i, y + i, 1);
+        if (s.stats().recoveries != r0) { ++rec; zero_ok = zero_ok && same_bits(y[i], 0.0); }
+    }
+    return rec;
+}
+
+// expected output of a stage at output gain og, from the same stage's output yd at unity gain: og * yd converted to
+// the destination type (lim = its max), or exactly 0 where that does not fit; zeros counts the zeroed samples
+static Vec gained(const Vec& yd, double og, double lim, bool to_float, long& zeros) {
+    Vec e(yd.size());
+    zeros = 0;
+    for (size_t i = 0; i < yd.size(); ++i) {
+        const double o = og * yd[i];
+        if (!(std::fabs(o) <= lim)) { e[i] = 0.0; ++zeros; }
+        else e[i] = to_float ? double(float(o)) : o;
+    }
+    return e;
+}
+static bool same_vec(const Vec& a, const Vec& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) if (!same_bits(a[i], b[i])) return false;
+    return true;
+}
+
+static void test_nonfinite_recovery() {
+    long allocs = 0;
+    double worst_after = 0.0;
+    bool finite = true, counted = true, zero_ok = true;
+    for (Quality q : {ECO, STANDARD, HQ})
+        for (TriodeMath m : {TriodeMath::libm, TriodeMath::fast}) {
+            Stage* s = new Stage; Stage* ref = new Stage;
+            check(s->prepare(48000.0, q, 1.0, m) == BuildStatus::ok && ref->prepare(48000.0, q, 1.0, m) == BuildStatus::ok,
+                  "recovery: prepare");
+            Vec x(512, 0.0), y(512), z(512, 0.0), w(512), r(512);
+            // otherwise silent, so after the recovery the stage must sit on its operating point
+            x[10] = DBL_MAX; x[20] = -DBL_MAX; x[30] = NAN; x[40] = INFINITY;
+            long rec = 0;
+            {
+                CountAllocs c;
+                rec += process_per_sample(*s, x.data(), y.data(), x.size(), zero_ok);   // the bad samples
+                for (double v : y) finite = finite && std::isfinite(v);
+                s->set_drive(NAN);                                        // ignored: the drive stays 1
+                s->set_output(INFINITY);                                  // ignored
+                s->process(z.data(), w.data(), z.size());
+                for (double v : w) finite = finite && std::isfinite(v);
+                s->set_drive(1e308);                                      // finite, but 4 V x 1e308 overflows
+                std::fill(x.begin(), x.end(), 4.0);
+                rec += process_per_sample(*s, x.data(), y.data(), 8, zero_ok);
+                for (int i = 0; i < 8; ++i) finite = finite && std::isfinite(y[i]);
+                s->set_drive(1.0);
+                for (int b = 0; b < 6; ++b) s->process(z.data(), w.data(), z.size());   // silence, no reset()
+                allocs += c.n();
+            }
+            for (int b = 0; b < 7; ++b) ref->process(z.data(), r.data(), z.size());   // a stage that only saw silence
+            for (size_t i = 0; i < w.size(); ++i) {
+                finite = finite && std::isfinite(w[i]);
+                worst_after = std::max(worst_after, std::fabs(w[i] - r[i]));
+            }
+            finite = finite && allfinite(s->state_x(), NX) && allfinite(s->state_v(), 2);
+            const Stats& st = s->stats();
+            // +-DBL_MAX recovered (at least once: a recovery clears the resampler, so it can flush both), every
+            // recovery inside the per-sample calls; NaN, inf and the 8 overflowing driven samples replaced by 0
+            counted = counted && rec >= 1 && st.recoveries == std::uint64_t(rec) && st.nonfinite_inputs == 2 + 8 &&
+                      st.nonfinite_outputs == 0;
+            if (q.os == STANDARD.os && m == TriodeMath::libm) metric("recovery_count_standard_libm", double(st.recoveries));
+            delete s; delete ref;
+        }
+    metric("recovery_after_max_dev_v", worst_after);
+    check(finite, "recovery: every output and the final state finite");
+    check(counted, "recovery: counted (recoveries, nonfinite_inputs)");
+    check(zero_ok, "recovery: the sample that recovers is written as exactly 0");
+    check(worst_after <= TOL_PINNED_ABS, "recovery: silence settles back on the operating point without reset() " +
+          std::to_string(worst_after));
+    check(!ALLOC_HOOKS || allocs == 0, "recovery: no allocation");
+
+    // a non-finite gain is ignored, the last finite one stays (drive 2.5, output 0.4); the next finite one applies
+    {
+        Stage* a = new Stage; Stage* b = new Stage;
+        a->prepare(48000.0); b->prepare(48000.0);
+        a->set_drive(2.5); a->set_output(0.4); b->set_drive(2.5); b->set_output(0.4);
+        a->set_drive(NAN); a->set_output(NAN); a->set_drive(INFINITY); a->set_output(-INFINITY);
+        Vec x(1024), ya(1024), yb(1024);
+        for (size_t i = 0; i < x.size(); ++i) x[i] = 0.3 * std::sin(0.05 * double(i));
+        a->process(x.data(), ya.data(), x.size()); b->process(x.data(), yb.data(), x.size());
+        bool same = same_vec(ya, yb);
+        a->set_drive(NAN); a->set_drive(3.0); a->set_output(INFINITY); a->set_output(0.7);
+        b->set_drive(3.0); b->set_output(0.7);
+        a->process(x.data(), ya.data(), x.size()); b->process(x.data(), yb.data(), x.size());
+        same = same && same_vec(ya, yb);
+        check(same && a->stats().nonfinite_inputs == 0, "recovery: a non-finite gain is ignored, a later finite one applies");
+        delete a; delete b;
+    }
+
+    // process_internal(): the same input and state rule; the sample that recovers is written as exactly 0
+    {
+        Stage* s = new Stage;
+        s->prepare(48000.0);
+        Vec u(512, 0.0), o(512), v(512);
+        u[5] = NAN; u[9] = -INFINITY; u[100] = DBL_MAX; u[200] = -DBL_MAX;
+        long a = 0, rec = 0;
+        bool zero = true;
+        {
+            CountAllocs c;
+            for (size_t i = 0; i < u.size(); ++i) {
+                const std::uint64_t r0 = s->stats().recoveries;
+                s->process_internal(&u[i], &o[i], &v[i], nullptr, 1);
+                if (s->stats().recoveries != r0) { ++rec; zero = zero && same_bits(o[i], 0.0); }
+            }
+            a = c.n();
+        }
+        check(a == 0 && allfinite(o.data(), o.size()) && allfinite(v.data(), v.size()) && allfinite(s->state_x(), NX) &&
+              allfinite(s->state_v(), 2) && s->stats().nonfinite_inputs == 2 && rec >= 1 && zero,
+              "recovery: process_internal (NaN / inf replaced, +-DBL_MAX recovered to exactly 0, no allocation)");
+        delete s;
+    }
+
+    // A finite output gain that overflows the destination: every sample is og * (the unity-gain output) converted, or
+    // exactly 0 where that does not fit, and exactly those are counted. The state is untouched: back at unity gain,
+    // the next block equals that of a stage that never saw the gain. Double I/O (og = DBL_MAX) and float I/O (og = 1e38:
+    // finite as a double, over FLT_MAX times most of the stage's output).
+    bool ok = true;
+    const size_t n = 4800;
+    Vec x(n);
+    for (size_t i = 0; i < n; ++i) x[i] = 0.5 * std::sin(2 * PI * 997.0 * double(i) / 48000.0);
+    for (int pass = 0; pass < 2; ++pass) {          // 0: double I/O, 1: float I/O
+        const bool flt = pass == 1;
+        const double og = flt ? 1e38 : DBL_MAX;
+        Stage* s = new Stage; Stage* ref = new Stage;
+        s->prepare(48000.0); ref->prepare(48000.0);
+        s->set_output(og);
+        std::vector<float> xf(x.begin(), x.end()), yf(n);
+        Vec xd = flt ? Vec(xf.begin(), xf.end()) : x;   // the samples both stages see, as doubles
+        Vec y1(n), y2(n), r1(n), r2(n);
+        auto run = [&](Stage& st, Vec& y) {
+            if (!flt) { st.process(x.data(), y.data(), n); return; }
+            st.process(xf.data(), yf.data(), n);
+            for (size_t i = 0; i < n; ++i) y[i] = yf[i];
+        };
+        long a;
+        { CountAllocs c; run(*s, y1); a = c.n(); }
+        ref->process(xd.data(), r1.data(), n);          // unity gain, double: the stage's own output
+        long zeros = 0;
+        const Vec e1 = gained(r1, og, flt ? double(FLT_MAX) : DBL_MAX, flt, zeros);
+        const Stats& st = s->stats();
+        ok = ok && same_vec(y1, e1) && zeros > 0 && zeros < long(n) && st.nonfinite_outputs == std::uint64_t(zeros) &&
+             st.recoveries == 0 && st.nonconverged == 0 && a == 0;
+        s->set_output(1.0);
+        run(*s, y2);
+        ref->process(xd.data(), r2.data(), n);
+        long z2 = 0;
+        ok = ok && same_vec(y2, gained(r2, 1.0, flt ? double(FLT_MAX) : DBL_MAX, flt, z2)) && z2 == 0;
+        metric(flt ? "output_overflow_float_zeroed" : "output_overflow_double_zeroed", double(zeros));
+        delete s; delete ref;
+    }
+    check(ok, "an overflowing output gain writes exactly 0 there, the gained value elsewhere, counted exactly; the "
+              "state is untouched (double and float I/O)");
+
+    // out-of-range bias and bias-ramp values: a non-finite bias is ignored, a finite one is clamped to the range, and a
+    // NaN / inf / negative / huge ramp length is safe; the stage stays finite and within the range
+    {
+        Stage* s = new Stage;
+        s->prepare(48000.0);
+        Vec xs(256), ys(256);
+        for (size_t i = 0; i < xs.size(); ++i) xs[i] = 2.0 * std::sin(0.03 * double(i));
+        bool fin = true, in_range = true;
+        const double biases[] = {NAN, INFINITY, -INFINITY, -5.0, 0.0, 1e300, -1e300, 1.3};
+        const double ramps[] = {NAN, INFINITY, -INFINITY, -1.0, 0.0, 1e300, 1e-300, 0.005};
+        long a = 0;
+        for (double rp : ramps)
+            for (double b : biases) {
+                s->set_bias_ramp(rp);
+                s->set_bias(b);
+                CountAllocs c;
+                s->process(xs.data(), ys.data(), xs.size());
+                a += c.n();
+                fin = fin && allfinite(ys.data(), ys.size()) && allfinite(s->state_x(), NX) && allfinite(s->state_v(), 2);
+                in_range = in_range && s->bias_now() >= 0.5 && s->bias_now() <= 2.0;
+            }
+        check(fin && in_range && a == 0 && s->stats().recoveries == 0,
+              "out-of-range bias / ramp values: finite, within the bias range, no allocation");
+        delete s;
+    }
+}
+
 // #70: the state runs as the deviation from the operating point, so 100 ms of silence stays at the rest point: out =
 // the DC out node (0 V) up to per-sample rounding (measured 1.2e-13 V at hq, Apple M1). The absolute-state form
 // settled 7.7e-8 / 7.4e-7 / 1.2e-6 V off (eco / standard / hq, Apple M1, Apple clang -O2).
@@ -629,7 +826,8 @@ static long g_stereo_runs = 0, g_stereo_allocs = 0, g_stereo_lanes_differ = 0, g
 
 static bool same_stats(const Stats& a, const Stats& b) {
     return a.samples == b.samples && a.iterations == b.iterations && a.nonconverged == b.nonconverged &&
-           a.nonfinite_inputs == b.nonfinite_inputs && a.swaps == b.swaps && a.max_iterations == b.max_iterations &&
+           a.nonfinite_inputs == b.nonfinite_inputs && a.recoveries == b.recoveries &&
+           a.nonfinite_outputs == b.nonfinite_outputs && a.swaps == b.swaps && a.max_iterations == b.max_iterations &&
            std::equal(a.histogram, a.histogram + Stats::HIST, b.histogram);
 }
 
@@ -649,7 +847,8 @@ static void compare_channel(const std::string& what, const Vec& ys, const Vec& y
     const double di = std::fabs(double(a.iterations) - double(b.iterations)) / double(b.iterations);
     const double dn = std::fabs(double(a.nonconverged) - double(b.nonconverged));
     check(e <= TOL_STEREO_ABS && ds <= TOL_STEREO_ABS, what + " output / state abs " + std::to_string(e));
-    check(a.samples == b.samples && a.nonfinite_inputs == b.nonfinite_inputs && a.swaps == b.swaps &&
+    check(a.samples == b.samples && a.nonfinite_inputs == b.nonfinite_inputs && a.recoveries == b.recoveries &&
+          a.nonfinite_outputs == b.nonfinite_outputs && a.swaps == b.swaps &&
           di <= TOL_ITER_FRAC && dn <= TOL_ITER_FRAC * double(b.samples), what + " stats");
     if (!exact) std::fprintf(stderr, "note: %s not bit-equal to mono (abs %.3g, iterations %" PRIu64 " vs %" PRIu64 ")\n",
                              what.c_str(), e, a.iterations, b.iterations);
@@ -1049,11 +1248,105 @@ static void test_vecmath() {
     check(pe <= 1e-14, "VecFastMath::pnjlim = detail::pnjlim (rounding only) " + std::to_string(pe));
 }
 
+// #137: the non-finite rule per channel. Each lane against a mono Stage that gets the same input and the gains that lane
+// should end up with (compare_channel: output, Stats including recoveries, final state; bit-equal where the build
+// guarantees it, g_stereo_exact / g_vec_exact). The left lane gets +-DBL_MAX, NaN / inf and an overflowing drive; the
+// right lane a plain sine, which a recovery on the left must leave untouched. The stereo stage runs one sample at a
+// time, so the sample where a lane recovers can be checked: exactly 0. Gains: the lanes start at different finite
+// gains, then each set_drive() / set_output() call pairs an invalid value on one lane with a new finite one on the
+// other, both ways round: the invalid one is ignored (that lane keeps its gain), the finite one applies.
+static void test_stereo_nonfinite() {
+    const size_t n = 2048;
+    Vec xl(n), xr(n);
+    for (size_t i = 0; i < n; ++i) {
+        xl[i] = 0.8 * std::sin(2 * PI * 440.0 * double(i) / 48000.0);
+        xr[i] = 2.0 * std::sin(2 * PI * 997.0 * double(i) / 48000.0);
+    }
+    xl[100] = DBL_MAX; xl[300] = -DBL_MAX; xl[500] = NAN; xl[501] = INFINITY;
+    for (size_t i = 1024; i < 1032; ++i) xl[i] = 4.0;              // x the 1e308 drive below: overflows
+    long allocs = 0;
+    bool split = true, zero_ok = true;
+    struct Way { const char* name; TriodeMath math; LaneMath lm; };
+    for (const Way& wy : {Way{"per_lane libm", TriodeMath::libm, LaneMath::per_lane},
+                          Way{"per_lane fast", TriodeMath::fast, LaneMath::per_lane},
+                          Way{"vector fast", TriodeMath::fast, LaneMath::vector}})
+        for (Quality q : {STANDARD, HQ}) {
+            const bool vec = wy.lm == LaneMath::vector;
+            Stage* ml = new Stage; Stage* mr = new Stage; StereoStage* s = new StereoStage;
+            ml->prepare(48000.0, q, 1.0, wy.math); mr->prepare(48000.0, q, 1.0, wy.math);
+            s->prepare(48000.0, q, 1.0, wy.math);
+            s->set_lane_math(wy.lm);
+            Vec yml(n), ymr(n), yl(n), yr(n);
+            long rec_l = 0;
+            // the monos in one block, the stereo stage one sample at a time
+            auto blocks = [&](size_t a, size_t b) {
+                ml->process(xl.data() + a, yml.data() + a, b - a);
+                mr->process(xr.data() + a, ymr.data() + a, b - a);
+                CountAllocs c;
+                for (size_t i = a; i < b; ++i) {
+                    const std::uint64_t r0 = s->stats(0).recoveries;
+                    s->process(&xl[i], &xr[i], &yl[i], &yr[i], 1);
+                    if (s->stats(0).recoveries != r0) { ++rec_l; zero_ok = zero_ok && same_bits(yl[i], 0.0); }
+                }
+                allocs += c.n();
+            };
+            s->set_drive(1.0, 0.7); s->set_output(0.9, 1.1);             // different gains per lane
+            ml->set_drive(1.0); ml->set_output(0.9); mr->set_drive(0.7); mr->set_output(1.1);
+            blocks(0, 1024);
+            s->set_drive(1e308, 0.7); ml->set_drive(1e308);              // the left lane's input overflows
+            blocks(1024, 1032);
+            s->set_drive(1.0, 0.7); ml->set_drive(1.0);
+            s->set_drive(NAN, 1.6); mr->set_drive(1.6);                  // L ignored (stays 1.0), R applies
+            s->set_output(1.3, INFINITY); ml->set_output(1.3);           // L applies, R ignored (stays 1.1)
+            blocks(1032, 1536);
+            s->set_drive(2.2, -INFINITY); ml->set_drive(2.2);            // L applies, R ignored (stays 1.6)
+            s->set_output(NAN, 0.5); mr->set_output(0.5);                // L ignored (stays 1.3), R applies
+            blocks(1536, n);
+            const std::string what = std::string("stereo recovery ") + wy.name + " os" + std::to_string(q.os);
+            compare_channel(what + " L", yl, yml, *s, 0, *ml, vec);
+            compare_channel(what + " R", yr, ymr, *s, 1, *mr, vec);
+            split = split && rec_l >= 1 && s->stats(0).recoveries == std::uint64_t(rec_l) &&
+                    s->stats(1).recoveries == 0 && s->stats(0).nonfinite_inputs == 2 + 8 &&
+                    s->stats(1).nonfinite_inputs == 0 && allfinite(yl.data(), n) && allfinite(yr.data(), n);
+            delete ml; delete mr; delete s;
+        }
+    check(split, "stereo recovery: per channel (left recovered and counted, right untouched)");
+    check(zero_ok, "stereo recovery: the sample where a lane recovers is written as exactly 0 on that lane");
+    check(!ALLOC_HOOKS || allocs == 0, "stereo recovery: no allocation");
+
+    // An overflowing output gain on one channel (float I/O; 1e38 x the stage's volts is over FLT_MAX): that channel is
+    // og * (its unity-gain output) converted, or exactly 0 where that does not fit, counted exactly; the other channel
+    // is its own gain times its output; no recovery. Back at unity gain both channels equal a stage that never saw it.
+    StereoStage* a = new StereoStage; StereoStage* b = new StereoStage;
+    a->prepare(48000.0); b->prepare(48000.0);
+    a->set_output(1e38, 0.8);
+    std::vector<float> fl(xr.begin(), xr.end()), fr(xl.begin(), xl.begin() + long(n)), al(n), ar(n);
+    for (size_t i = 0; i < n; ++i) if (!std::isfinite(fr[i]) || std::fabs(fr[i]) > 10.0f) fr[i] = 0.25f;   // plain signal
+    const Vec dl(fl.begin(), fl.end()), dr(fr.begin(), fr.end());
+    Vec bl(n), br(n), gl(n), gr(n);
+    a->process(fl.data(), fr.data(), al.data(), ar.data(), n);
+    b->process(dl.data(), dr.data(), bl.data(), br.data(), n);   // unity gain, double: the stage's own output
+    for (size_t i = 0; i < n; ++i) { gl[i] = al[i]; gr[i] = ar[i]; }
+    long zl = 0, zr = 0;
+    bool ok = same_vec(gl, gained(bl, 1e38, double(FLT_MAX), true, zl)) && same_vec(gr, gained(br, 0.8, double(FLT_MAX), true, zr)) &&
+              zl > 0 && zl < long(n) && zr == 0 && a->stats(0).nonfinite_outputs == std::uint64_t(zl) &&
+              a->stats(1).nonfinite_outputs == 0 && a->stats(0).recoveries == 0 && a->stats(1).recoveries == 0;
+    a->set_output(1.0, 1.0);
+    a->process(fl.data(), fr.data(), al.data(), ar.data(), n);
+    b->process(dl.data(), dr.data(), bl.data(), br.data(), n);
+    for (size_t i = 0; i < n; ++i) { gl[i] = al[i]; gr[i] = ar[i]; }
+    ok = ok && same_vec(gl, gained(bl, 1.0, double(FLT_MAX), true, zl)) && same_vec(gr, gained(br, 1.0, double(FLT_MAX), true, zr));
+    check(ok, "stereo: an overflowing output gain on one channel writes exactly 0 there, the gained value elsewhere, "
+              "counted exactly; the other channel and both states are untouched");
+    delete a; delete b;
+}
+
 static void run_stereo_tests(const std::map<std::string, Vec>& V) {
     test_vecmath();
     test_stereo(V);
     test_stereo_solve(V);
     test_stereo_misc();
+    test_stereo_nonfinite();
     g_json << (g_json.tellp() > 0 ? ", " : "") << "\"simd\": \"" << simd::NAME << "\", \"compiler\": \"" << __VERSION__ << "\"";
     metric("fma", simd::FMA ? 1 : 0);
     metric("stereo_exact", g_stereo_exact ? 1 : 0);
@@ -1464,6 +1757,7 @@ int main(int argc, char** argv) {
     test_internal(V);
     test_cases(V);
     test_nonconvergence();
+    test_nonfinite_recovery();
     test_silence();
     test_sample_rates();
     test_denormals();
