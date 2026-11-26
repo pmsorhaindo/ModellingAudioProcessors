@@ -90,7 +90,9 @@ inline constexpr double kTailSeconds6AS6 = 0.8;
 inline constexpr double kTailSeconds = kTailSeconds12AX7;   // the pre-#114 name
 inline double tail_seconds(int valve) { return valve == k12AX7 ? kTailSeconds12AX7 : kTailSeconds6AS6; }
 
-inline double clamp01(double n) { return n < 0.0 ? 0.0 : (n > 1.0 ? 1.0 : n); }
+// 0..1; NaN goes to 0, so every conversion below is defined (no NaN reaches an integer cast). Callers that must not
+// act on a NaN host value (the VST 3 processor and controller) refuse it before converting.
+inline double clamp01(double n) { return n > 0.0 ? (n < 1.0 ? n : 1.0) : 0.0; }
 inline double to_plain(const Range& r, double norm) { return r.min + clamp01(norm) * (r.max - r.min); }
 inline double to_norm(const Range& r, double plain) { return clamp01((plain - r.min) / (r.max - r.min)); }
 // a plain value inside the range; NaN goes to the default (inf clamps to the nearer end)
@@ -171,32 +173,41 @@ inline double default_norm(std::uint32_t id) {
 }
 
 /* ---- saved state -------------------------------------------------------------------------------------------------
- * VST 3 (processor getState / setState, controller setComponentState): int32 version, then that version's normalized
- * values as doubles, in ParamID order, little endian (IBStreamer).
- *   version 1 (before #114): 5 values, Drive .. Bypass. Loads on the 12AX7 path; the 6AS6 values take their defaults.
- *   version 2 (#114):        9 values, Drive .. Filter6. Both paths' values are always saved.
- * Any other version, a short stream or a NaN / inf value: the state is refused and nothing changes. A finite value
- * outside 0..1 is clamped.
- * AU: AUBase's ClassInfo dictionary (parameter ID -> value), plus the key kAUStateKey = kStateVersion, written by our
- * SaveState. A dictionary without it is from before #114: it loads on the 12AX7 path. Parameters a preset does not
- * carry take their defaults, and every restored value goes through sanitize_plain(). */
-inline constexpr std::int32_t kStateVersion = 2;
-inline constexpr std::int32_t kStateVersionV1 = 1;
+ * VST 3 (processor getState / setState, controller setComponentState), little endian (IBStreamer):
+ *   int32 kStateVersion (1), then the 5 shared / 12AX7 normalized doubles (Drive, Bias, Output, Quality, Bypass):
+ *     exactly the pre-#114 layout, which a pre-#114 build reads (it checks the version, reads 5 doubles and ignores
+ *     what follows), so rolling back keeps those values;
+ *   then the #114 extension: int32 kStateExtMagic, int32 kStateExtVersion, and the kNumParamsExt doubles Valve, 6AS6
+ *     Bias, Mode, Filter.
+ * A state that ends after the 5 values, or continues with anything but the magic, is from before #114 (the 12AX7
+ * plugin): it loads on the 12AX7 path with the 6AS6 values at their defaults. An extension with a later version is
+ * read for the values this build knows. Refused, and nothing changes: another head version, a stream short of the
+ * 5 values or of the extension's values, an extension version below 1, any NaN / inf value. A finite value outside 0..1
+ * is clamped.
+ * AU: AUBase's ClassInfo dictionary (parameter ID -> value), plus the key kAUStateKey = kAUStateVersion, written by
+ * our SaveState (a pre-#114 build ignores both the key and the IDs it does not have). A dictionary without the key is
+ * from before #114: it loads on the 12AX7 path. Parameters a preset does not carry take their defaults, and every
+ * restored value goes through sanitize_plain(). */
+inline constexpr std::int32_t kStateVersion = 1;
+inline constexpr std::int32_t kStateExtMagic = 0x47595232;   // "GYR2"
+inline constexpr std::int32_t kStateExtVersion = 1;
+inline constexpr int kNumParamsExt = int(kNumParams) - kNumParamsV1;
+inline constexpr std::int32_t kAUStateVersion = 2;
 inline constexpr const char* kAUStateKey = "gyre-state-version";
 
-// number of values a state of this version carries; 0: not a version this build reads
-inline int state_value_count(std::int32_t version) {
-    return version == kStateVersion ? kNumParams : (version == kStateVersionV1 ? kNumParamsV1 : 0);
-}
-/* Decode the values of a VST 3 state (already read from the stream: count of them). On success every one of the
- * kNumParams normalized values is set: from the state, else the version's default. On failure norm is untouched. */
-inline bool decode_state(std::int32_t version, const double* values, int count, double (&norm)[kNumParams]) {
-    const int want = state_value_count(version);
-    if (want == 0 || count < want || !values) return false;
-    for (int i = 0; i < want; ++i)
-        if (!std::isfinite(values[i])) return false;
-    for (int i = 0; i < int(kNumParams); ++i) norm[i] = i < want ? clamp01(values[i]) : default_norm(std::uint32_t(i));
-    if (version == kStateVersionV1) norm[kValve] = index_to_norm(kValveLegacy, kNumValves);
+/* Decode the values of a VST 3 state (already read from the stream): base = the 5 head values, ext = the extension's
+ * kNumParamsExt values, or null if the state had no extension (pre-#114). On success every one of the kNumParams
+ * normalized values is set; on failure (a NaN / inf value) norm is untouched. */
+inline bool decode_state(const double* base, const double* ext, double (&norm)[kNumParams]) {
+    if (!base) return false;
+    for (int i = 0; i < kNumParamsV1; ++i)
+        if (!std::isfinite(base[i])) return false;
+    for (int i = 0; ext && i < kNumParamsExt; ++i)
+        if (!std::isfinite(ext[i])) return false;
+    for (int i = 0; i < kNumParamsV1; ++i) norm[i] = clamp01(base[i]);
+    for (int i = 0; i < kNumParamsExt; ++i)
+        norm[kNumParamsV1 + i] = ext ? clamp01(ext[i]) : default_norm(std::uint32_t(kNumParamsV1 + i));
+    if (!ext) norm[kValve] = index_to_norm(kValveLegacy, kNumValves);
     return true;
 }
 
