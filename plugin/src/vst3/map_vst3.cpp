@@ -1,4 +1,4 @@
-/* map_vst3.cpp -- VST 3 processor, controller and factory for the DK stage (#22).
+/* map_vst3.cpp -- VST 3 processor, controller and factory for the DK stages (#22; two valve paths, #114).
  *
  * Thin glue over mapvs::Engine (../map_engine.h): parameters in, audio through, latency out. Generic host UI only
  * (no IPlugView). Built directly against the Steinberg VST 3 SDK (MIT, 3.8.x); no VSTGUI.
@@ -27,26 +27,57 @@ namespace mapvs {
 static const FUID kProcessorUID(MAP_VST3_PROCESSOR_UID);
 static const FUID kControllerUID(MAP_VST3_CONTROLLER_UID);
 
-static double default_norm(ParamID id) {
-    switch (id) {
-    case kDrive: return to_norm(kDriveRange, kDriveRange.def);
-    case kBias: return to_norm(kBiasRange, kBiasRange.def);
-    case kOutput: return to_norm(kOutputRange, kOutputRange.def);
-    case kQuality: return quality_to_norm(kQualityDefault);
-    default: return 0.0;
-    }
-}
-
-// state: kStateVersion, then kNumParams normalized doubles (map_params.h)
+// state (map_params.h, "saved state"): the pre-#114 head (version 1, 5 values), then the #114 extension if present.
+// Refused (false, norm untouched) for another head version, a short stream or a NaN / inf value.
 static bool read_state(IBStream* s, double (&norm)[kNumParams]) {
     IBStreamer st(s, kLittleEndian);
     int32 version = 0;
     if (!st.readInt32(version) || version != kStateVersion) return false;
-    double v[kNumParams];
-    for (double& x : v)
-        if (!st.readDouble(x) || !std::isfinite(x)) return false;
-    for (int i = 0; i < kNumParams; ++i) norm[i] = clamp01(v[i]);
-    return true;
+    double base[kNumParamsV1], ext[kNumParamsExt];
+    for (double& v : base)
+        if (!st.readDouble(v)) return false;
+    int32 magic = 0, ext_version = 0;
+    if (!st.readInt32(magic) || magic != kStateExtMagic) return decode_state(base, nullptr, norm);   // pre-#114
+    if (!st.readInt32(ext_version) || ext_version < 1) return false;
+    for (double& v : ext)
+        if (!st.readDouble(v)) return false;
+    return decode_state(base, ext, norm);
+}
+
+static void write_state(IBStream* s, const double (&norm)[kNumParams]) {
+    IBStreamer st(s, kLittleEndian);
+    st.writeInt32(kStateVersion);
+    for (int i = 0; i < kNumParamsV1; ++i) st.writeDouble(norm[i]);
+    st.writeInt32(kStateExtMagic);
+    st.writeInt32(kStateExtVersion);
+    for (int i = kNumParamsV1; i < int(kNumParams); ++i) st.writeDouble(norm[i]);
+}
+
+/* A list parameter whose index is the processor's (index_from_norm: rounded to the nearest entry), so the host's
+ * display and the DSP agree for any normalized value, also one between entries. StringListParameter's own toPlain
+ * would floor n * count instead (at n = 0.3 of three entries: entry 0, where the processor runs entry 1). Quality
+ * keeps the rounding the processor has always used, so a pre-#114 session sounds as it did. */
+class ListParameter : public StringListParameter {
+public:
+    ListParameter(const char16* title, Steinberg::Vst::ParamID id, int count)
+        : StringListParameter(title, id, nullptr, ParameterInfo::kCanAutomate | ParameterInfo::kIsList), count_(count) {}
+    ParamValue toPlain(ParamValue n) const override { return ParamValue(index_from_norm(n, count_)); }
+
+private:
+    int count_;
+};
+
+static void add_list(ParameterContainer& params, const char16* title, Steinberg::Vst::ParamID id,
+                     const char* const* names, int count, int def) {
+    auto* p = new ListParameter(title, id, count);
+    for (int k = 0; k < count; ++k) {
+        String128 s{};
+        for (int i = 0; names[k][i] && i < 127; ++i) s[i] = char16(names[k][i]);   // ASCII names
+        p->appendString(s);
+    }
+    p->getInfo().defaultNormalizedValue = index_to_norm(def, count);
+    p->setNormalized(index_to_norm(def, count));
+    params.addParameter(p);
 }
 
 // ---- processor ---------------------------------------------------------------------------------------------------
@@ -82,14 +113,17 @@ public:
     tresult PLUGIN_API canProcessSampleSize(int32 size) override {
         return size == kSample32 ? kResultTrue : kResultFalse;
     }
+    // One constant per sample rate, whatever valve and quality run (Engine::reported_latency_for; the engine pads every
+    // stage to it), so a switch never changes what the host compensates and needs no restartComponent. Hosts may
+    // query after setupProcessing and before activation.
     uint32 PLUGIN_API getLatencySamples() override {
-        // Hosts may query after setupProcessing and before activation/Engine::prepare.
         const double fs = processSetup.sampleRate > 0.0 ? processSetup.sampleRate : 48000.0;
-        return uint32(Engine::latency_for(engine_.quality_target(), fs));
+        return uint32(Engine::reported_latency_for(fs));
     }
     uint32 PLUGIN_API getTailSamples() override {
         const double fs = processSetup.sampleRate > 0.0 ? processSetup.sampleRate : 48000.0;
-        return uint32(getLatencySamples() + std::lround(kTailSeconds * fs));
+        const int valve = engine_.prepared() ? engine_.active_valve() : engine_.valve_target();
+        return uint32(getLatencySamples() + std::lround(tail_seconds(valve) * fs));
     }
 
     // non-RT, never concurrently with process(): the host's activation is the one place where prepare() runs
@@ -140,15 +174,17 @@ public:
     }
     tresult PLUGIN_API getState(IBStream* state) override {
         if (!state) return kResultFalse;
-        IBStreamer st(state, kLittleEndian);
-        st.writeInt32(kStateVersion);
-        for (auto& n : norm_) st.writeDouble(n.load(std::memory_order_relaxed));
+        double norm[kNumParams];
+        for (int i = 0; i < kNumParams; ++i) norm[i] = norm_[i].load(std::memory_order_relaxed);
+        write_state(state, norm);
         return kResultOk;
     }
 
 private:
-    void apply(Steinberg::Vst::ParamID id, double n) {   // any thread; realtime-safe (atomics only)
-        if (id >= kNumParams) return;
+    // any thread; realtime-safe (atomics only). A NaN / inf value from a host is ignored: it is neither applied nor
+    // stored, so it cannot reach the saved state or an integer conversion.
+    void apply(Steinberg::Vst::ParamID id, double n) {
+        if (id >= kNumParams || !std::isfinite(n)) return;
         n = clamp01(n);
         norm_[id].store(n, std::memory_order_relaxed);
         switch (id) {
@@ -157,6 +193,10 @@ private:
         case kOutput: engine_.set_output(to_plain(kOutputRange, n)); break;
         case kQuality: engine_.set_quality(quality_from_norm(n)); break;
         case kBypass: engine_.set_bypass(n >= 0.5); break;
+        case kValve: engine_.set_valve(index_from_norm(n, kNumValves)); break;
+        case kBias6: engine_.set_bias6(to_plain(kBias6Range, n)); break;
+        case kMode6: engine_.set_mode6(index_from_norm(n, kNumModes6)); break;
+        case kFilter6: engine_.set_filter6(index_from_norm(n, kNumFilters6)); break;
         default: break;
         }
     }
@@ -174,25 +214,23 @@ public:
     tresult PLUGIN_API initialize(FUnknown* context) override {
         const tresult r = EditController::initialize(context);
         if (r != kResultOk) return r;
+        // ParamID order (map_params.h); the 6AS6 / 12AX7 prefix says which path a control acts on (README)
         parameters.addParameter(new RangeParameter(STR16("Drive"), kDrive, STR16("x"), kDriveRange.min,
                                                    kDriveRange.max, kDriveRange.def, 0, ParameterInfo::kCanAutomate));
-        parameters.addParameter(new RangeParameter(STR16("Bias"), kBias, STR16("x Rk"), kBiasRange.min,
+        parameters.addParameter(new RangeParameter(STR16("12AX7 Bias"), kBias, STR16("x Rk"), kBiasRange.min,
                                                    kBiasRange.max, kBiasRange.def, 0, ParameterInfo::kCanAutomate));
         parameters.addParameter(new RangeParameter(STR16("Output"), kOutput, STR16("x"), kOutputRange.min,
                                                    kOutputRange.max, kOutputRange.def, 0,
                                                    ParameterInfo::kCanAutomate));
-        auto* quality = new StringListParameter(STR16("Quality"), kQuality, nullptr,
-                                                ParameterInfo::kCanAutomate | ParameterInfo::kIsList);
-        for (const char* name : kQualityNames) {
-            String128 s{};
-            for (int i = 0; name[i] && i < 127; ++i) s[i] = char16(name[i]);   // ASCII names
-            quality->appendString(s);
-        }
-        quality->getInfo().defaultNormalizedValue = quality_to_norm(kQualityDefault);
-        quality->setNormalized(quality_to_norm(kQualityDefault));
-        parameters.addParameter(quality);
+        add_list(parameters, STR16("Quality"), kQuality, kQualityNames, kNumQualities, kQualityDefault);
         parameters.addParameter(STR16("Bypass"), nullptr, 1, 0.0,
                                 ParameterInfo::kCanAutomate | ParameterInfo::kIsBypass, kBypass);
+        add_list(parameters, STR16("Valve"), kValve, kValveNames, kNumValves, kValveDefault);
+        // T caps the built bias at kTBiasCapMa (0.5 mA): above it, T runs 0.5 mA
+        parameters.addParameter(new RangeParameter(STR16("6AS6 Bias"), kBias6, STR16("mA"), kBias6Range.min,
+                                                   kBias6Range.max, kBias6Range.def, 0, ParameterInfo::kCanAutomate));
+        add_list(parameters, STR16("6AS6 Mode"), kMode6, kMode6Names, kNumModes6, kMode6Default);
+        add_list(parameters, STR16("6AS6 Filter"), kFilter6, kFilter6Names, kNumFilters6, kFilter6Default);
         return kResultOk;
     }
 
@@ -203,13 +241,10 @@ public:
         return kResultOk;
     }
 
-    // A quality change moves the latency: ask the host to re-read it (UI / main thread, not the audio thread).
+    // A NaN / inf value is refused. (The latency does not depend on any parameter: nothing to restart.)
     tresult PLUGIN_API setParamNormalized(Steinberg::Vst::ParamID tag, ParamValue value) override {
-        const int before = tag == kQuality ? quality_from_norm(getParamNormalized(tag)) : 0;
-        const tresult r = EditController::setParamNormalized(tag, value);
-        if (r == kResultOk && tag == kQuality && quality_from_norm(value) != before && componentHandler)
-            componentHandler->restartComponent(kLatencyChanged);
-        return r;
+        if (!std::isfinite(value)) return kResultFalse;
+        return EditController::setParamNormalized(tag, value);
     }
 };
 

@@ -32,7 +32,7 @@ AU_MANUFACTURER="$(ident MAP_AU_MANUFACTURER)"
 VST3="$BUILD/VST3/Release/$BUNDLE_FILE.vst3"
 COMPONENT="$BUILD/AU/$BUNDLE_FILE.component"
 
-echo "== engine test"
+echo "== engine test (both valve paths: nulls, bypass, live switches, no allocation / lock / syscall, saved state)"
 "$BIN/map_engine_test"
 
 echo "== smoothing test (#73: Drive / Output / Bias moves, block sizes, drive ramp vs aliasing)"
@@ -43,10 +43,14 @@ echo "== VST 3 validator"
 echo "== VST 3 validator, extensive (-e)"
 "$BIN/validator" -e "$VST3" | tail -n 3
 
-echo "== VST 3 null (48 kHz standard; 44.1 kHz eco; 96 kHz hq)"
+echo "== VST 3 null, 12AX7 path (48 kHz standard; 44.1 kHz eco; 96 kHz hq)"
 "$BIN/map_null_vst3" "$VST3"
 "$BIN/map_null_vst3" "$VST3" --fs 44100 --quality 0 --drive 4 --bias 1.0 --output 0.5
 "$BIN/map_null_vst3" "$VST3" --fs 96000 --quality 2 --drive 1 --bias 1.5 --output 1
+echo "== VST 3 null, 6AS6 path (48 kHz standard P1; 44.1 kHz eco = standard, T at the 0.5 mA cap, 7k; 48 kHz hq P2 4k)"
+"$BIN/map_null_vst3" "$VST3" --valve 0 --seconds 1
+"$BIN/map_null_vst3" "$VST3" --valve 0 --seconds 0.5 --fs 44100 --quality 0 --drive 4 --bias6 0.6 --mode6 1 --filter6 2
+"$BIN/map_null_vst3" "$VST3" --valve 0 --seconds 0.5 --quality 2 --drive 1 --bias6 0.45 --mode6 2 --filter6 1
 
 if [[ $AU == 1 ]]; then
     DEST="$HOME/Library/Audio/Plug-Ins/Components/$BUNDLE_FILE.component"
@@ -65,10 +69,14 @@ if [[ $AU == 1 ]]; then
         echo "FAIL: auval did not validate $BUNDLE_FILE" >&2
         exit 1
     fi
-    echo "== AU null (48 kHz standard; 44.1 kHz eco; 96 kHz hq)"
+    echo "== AU null, 12AX7 path (48 kHz standard; 44.1 kHz eco; 96 kHz hq)"
     "$BIN/map_null_au"
     "$BIN/map_null_au" --fs 44100 --quality 0 --drive 4 --bias 1.0 --output 0.5
     "$BIN/map_null_au" --fs 96000 --quality 2 --drive 1 --bias 1.5 --output 1
+    echo "== AU null, 6AS6 path (as the VST 3 ones)"
+    "$BIN/map_null_au" --valve 0 --seconds 1
+    "$BIN/map_null_au" --valve 0 --seconds 0.5 --fs 44100 --quality 0 --drive 4 --bias6 0.6 --mode6 1 --filter6 2
+    "$BIN/map_null_au" --valve 0 --seconds 0.5 --quality 2 --drive 1 --bias6 0.45 --mode6 2 --filter6 1
     if arch -x86_64 /usr/bin/true 2>/dev/null; then
         echo "== AU null, x86_64 slice (Rosetta)"
         arch -x86_64 "$BIN/map_null_au"

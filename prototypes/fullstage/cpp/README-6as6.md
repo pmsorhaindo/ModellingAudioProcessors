@@ -3,8 +3,8 @@
 Gyre's v1 distortion stage (#75): a port of the Python 6AS6 stage (`dk6as6/`: `stage.py`, `solver.py`,
 `circuit.py`, `pentode.py`, `lpf.py`) to the realtime C++ core. The Python stage stays the reference. The 12AX7
 stage (`dk_core.h`, [README.md](README.md)) stays in the core, unchanged, as the optional swap-in; how the plugin
-exposes the two is #114, and parameter smoothing / mode switching is #115. The plugin (`plugin/`) still wraps the
-12AX7 stage.
+exposes the two is #114 (`plugin/README.md`, "Valve paths": one Valve parameter), and parameter smoothing / mode
+switching is #115.
 
 | file | what |
 |---|---|

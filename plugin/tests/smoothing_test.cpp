@@ -81,24 +81,30 @@ static Params step_at_n0(std::size_t i, const Params& a, const Params& b) { retu
 // The engine at host blocks of `block`; the host sets the parameters curve(block start) before each block.
 static void run_engine(mapvs::Engine& e, const Signal& x, const Params& a, const Params& b, Curve curve,
                        std::size_t block, Vec& oL, Vec& oR) {
+    e.set_valve(mapvs::k12AX7);                         // #73 is the 12AX7 path's smoothing (6AS6: #115)
     e.set_drive(a.drive); e.set_bias(a.bias); e.set_output(a.output);
     e.set_quality(mapvs::kStandard);
     e.set_bypass(false);
     e.prepare(FS);
-    std::vector<float> fl(NS), fr(NS);
-    for (std::size_t i = 0; i < NS; i += block) {
+    // The engine pads the stage's latency up to the reported one (#114, map_engine.h); the references here carry the
+    // stage's own. Run pad samples longer (zero input) and drop the first pad: the stage's output, sample for sample.
+    const std::size_t pad = std::size_t(e.latency_samples() - e.active_latency_samples()), total = NS + pad;
+    std::vector<float> inL(x.L), inR(x.R), fl(total), fr(total);
+    inL.resize(total, 0.0f);
+    inR.resize(total, 0.0f);
+    for (std::size_t i = 0; i < total; i += block) {
         const Params p = curve(i, a, b);
         e.set_drive(p.drive); e.set_bias(p.bias); e.set_output(p.output);
-        const int n = int(std::min(block, NS - i));
-        const float* in[2] = {x.L.data() + i, x.R.data() + i};
+        const int n = int(std::min(block, total - i));
+        const float* in[2] = {inL.data() + i, inR.data() + i};
         float* out[2] = {fl.data() + i, fr.data() + i};
         g_armed = true;
         e.process(in, out, 2, n);
         g_armed = false;
     }
     e.release();
-    oL.assign(fl.begin(), fl.end());
-    oR.assign(fr.begin(), fr.end());
+    oL.assign(fl.begin() + std::ptrdiff_t(pad), fl.end());
+    oR.assign(fr.begin() + std::ptrdiff_t(pad), fr.end());
 }
 
 // the ideal 20 ms linear ramp from a to b starting at N0 (len 1: the unsmoothed jump), per sample

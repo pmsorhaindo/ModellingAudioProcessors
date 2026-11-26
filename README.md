@@ -36,9 +36,11 @@ will not use a brand or device name.
   envelope, P1 at 0.1–0.6 mA and T at 0.1–0.3 mA, passes the 12AX7 stage's criteria against same-model ngspice
   references and the aliasing quality gate (P1 ≤ −98 dBc at 8 V, standard 8× / 48 kHz); P2 and T above 0.3 mA are
   experimental only (`prototypes/fullstage/dk6as6/RESULTS.md`). It is not ported to C++.
-- **Plugin, first loadable build** (`plugin/README.md`, #22). AU v2 and VST 3 wrappers of the stereo 12AX7 stage,
-  under the code name Gyre (#116). Parameters: Drive, Bias, Output, Quality and Bypass. On the M1 it passes the
-  Steinberg validator and `auval`, and offline renders through both plugins null exactly against the C++ core.
+- **Plugin, first loadable build** (`plugin/README.md`, #22). AU v2 and VST 3 wrappers under the code name Gyre (#116),
+  with a Valve parameter that picks the 6AS6 stage (the default) or the stereo 12AX7 stage (#114). Parameters: Drive,
+  Output, Quality, Bypass and Valve; 12AX7 Bias; 6AS6 Bias, Mode (P2 experimental only, T capped at 0.5 mA) and
+  Filter. On the M1 it passes the Steinberg validator and `auval`, and offline renders through both plugins null
+  exactly against each path's C++ core.
 - **WDF reference** (#12, `prototypes/wdf/README.md`, `prototypes/wdf/RESULTS.md`). A wave digital filter version of
   the 12AX7 stage, kept as a reference implementation for comparison, not as the shipping core. It passes the DK
   stage's criteria in every setting, with the same output as the DK stage to ≤ 7.4e-8 V. In Python it is 0.92–0.94×
