@@ -5,22 +5,25 @@
  *   Initialize / Cleanup   engine prepare / release (non-RT; the host does not render meanwhile)
  *   Reset                  engine.request_reset(), honoured by the audio thread at its next block (not while
  *                          host-bypassed: see Reset)
- *   render                 parameters (RT-safe reads) -> engine targets -> engine.process
+ *   render                 the parameter store (RT-safe reads, sanitized) -> engine targets -> engine.process. Render
+ *                          is the only place that publishes parameters to the engine (Initialize too, before
+ *                          prepare), once per slice, so no older snapshot can overwrite a newer one.
  *   host bypass            kAudioUnitProperty_BypassEffect drives the engine's latency-aligned crossfade instead
  *                          of AUEffectBase's plain copy, so bypass is click-free and keeps the reported latency
- *   latency                kAudioUnitProperty_Latency follows the running quality. Once a quality switch is in
- *                          effect, the engine's worker thread posts the property notification to the main queue
- *                          (AUBase's listener list is not locked, and hosts edit it from the main thread). A shared
- *                          token, cleared in the destructor, keeps a late notification from reaching a disposed AU.
+ *   latency                kAudioUnitProperty_Latency: the engine's constant for the sample rate (every valve and
+ *                          quality is padded to it), so no switch changes it and nothing needs a notification
  *   saved state            AUBase's ClassInfo plus our kAUStateKey (map_params.h). RestoreState starts every parameter
  *                          from its default, so a preset defines all of them; a preset without the key is from before
  *                          #114 and loads on the 12AX7 path; every value is sanitized (NaN, out of range). Render
- *                          never takes parameter values from a restore in progress (restore_seq_, a seqlock).
- *   scheduled parameters   AudioUnitScheduleParameters applies each event at once, through SetParameter (atomics):
- *                          an immediate event's value, a ramp's end value. AUBase's own scheduling would push every
- *                          event onto a std::vector on the render thread (an allocation once more than its reserved 24
- *                          arrive in a cycle). The engine reads its targets once per 256-sample chunk and ramps Drive
- *                          and Output itself, so it does not use sub-block slices.
+ *                          never takes parameter values from a restore in progress (restore_seq_, a seqlock), and a
+ *                          restore that fails or throws puts the previous values back and ends the seqlock (RAII).
+ *   scheduled parameters   AUBase's own slicing: immediate events take effect at their buffer offsets (the render is
+ *                          split there and the store updated per slice). Its event list is a std::vector: Initialize
+ *                          reserves kMaxScheduledEvents, and an immediate event beyond that capacity in one render
+ *                          cycle is applied at once instead of appended (its offset is lost), so the render thread
+ *                          never grows it. Ramped events are dropped: the pinned SDK sets nothing for them anyway
+ *                          (AUElement::SetScheduledEvent ignores ramps), but it would still split slices at them and
+ *                          log a warning through os_log on the render thread for every slice a ramp covers.
  */
 #include "../map_engine.h"
 #include "../map_identity.h"
@@ -30,10 +33,7 @@
 
 #include <atomic>
 #include <cmath>
-#include <memory>
-#include <mutex>
-
-#include <dispatch/dispatch.h>
+#include <cstddef>
 
 namespace mapvs {
 
@@ -46,25 +46,15 @@ public:
         Globals()->UseIndexedParameters(kNumParams);
         for (AudioUnitParameterID id = 0; id < kNumParams; ++id)
             Globals()->SetParameter(id, AudioUnitParameterValue(default_plain(id)));
-        token_->au = this;
-        engine_.set_latency_listener([tok = token_] {        // worker thread (non-RT): hop to the main queue
-            auto* hold = new std::shared_ptr<Token>(tok);
-            dispatch_async_f(dispatch_get_main_queue(), hold, [](void* p) {
-                std::unique_ptr<std::shared_ptr<Token>> t(static_cast<std::shared_ptr<Token>*>(p));
-                std::lock_guard<std::mutex> lk((*t)->m);
-                if ((*t)->au) (*t)->au->PropertyChanged(kAudioUnitProperty_Latency, kAudioUnitScope_Global, 0);
-            });
-        });
     }
-    ~GyreAU() override {
-        engine_.release();                                  // joins the worker: no new notifications
-        std::lock_guard<std::mutex> lk(token_->m);
-        token_->au = nullptr;                               // queued ones become no-ops
-    }
+    ~GyreAU() override { engine_.release(); }
+
+    static constexpr std::size_t kMaxScheduledEvents = 1024;   // per render cycle; beyond it: applied at once
 
     OSStatus Initialize() override {
         const OSStatus r = Base::Initialize();
         if (r != noErr) return r;
+        GetParamEventList().reserve(kMaxScheduledEvents);      // non-RT; AUBase's own reserve(24) follows, a no-op
         push_parameters();
         engine_.set_host_bypass(IsBypassEffect());
         return engine_.prepare(GetSampleRate()) ? OSStatus(noErr) : OSStatus(kAudioUnitErr_FailedInitialization);
@@ -89,9 +79,12 @@ public:
 
     Float64 GetLatency() AUSDK_RTSAFE override {
         const Float64 fs = GetSampleRate();
-        return fs > 0.0 ? Float64(engine_.active_latency_samples()) / fs : 0.0;
+        return fs > 0.0 ? Float64(Engine::reported_latency_for(fs)) / fs : 0.0;
     }
-    Float64 GetTailTime() AUSDK_RTSAFE override { return tail_seconds(engine_.valve_target()); }
+    // the running valve's tail once prepared (it follows a switch once adopted), else the requested one's
+    Float64 GetTailTime() AUSDK_RTSAFE override {
+        return tail_seconds(engine_.prepared() ? engine_.active_valve() : engine_.valve_target());
+    }
     bool SupportsTail() AUSDK_RTSAFE override { return true; }
 
     // ---- parameters ------------------------------------------------------------------------------------------
@@ -136,26 +129,22 @@ public:
         for (int i = 0; i < count; ++i) CFRelease(names[i]);
         return noErr;
     }
-    // ---- scheduled parameters: realtime-safe, no event list (see the header comment) ---------------------------
-    [[nodiscard]] bool CanScheduleParameters() const AUSDK_RTSAFE override { return false; }
+    // ---- scheduled parameters: AUBase's, within the reserved capacity (see the header comment) -----------------
     OSStatus ScheduleParameter(const AudioUnitParameterEvent* events, UInt32 count) AUSDK_RTSAFE override {
         if (!events && count > 0) return kAudio_ParamError;
+        auto& list = GetParamEventList();
         for (UInt32 i = 0; i < count; ++i) {
             const AudioUnitParameterEvent& e = events[i];   // NOLINT subscript
-            const AudioUnitParameterValue v =
-                e.eventType == kParameterEvent_Ramped ? e.eventValues.ramp.endValue : e.eventValues.immediate.value;   // NOLINT union
-            SetParameter(e.parameter, e.scope, e.element, v, 0);
+            if (e.eventType != kParameterEvent_Immediate) continue;   // a ramp: see the header comment
+            if (list.size() < list.capacity()) {
+                Base::ScheduleParameter(&e, 1);             // push_back within capacity: no allocation
+            } else {
+                SetParameter(e.parameter, e.scope, e.element, e.eventValues.immediate.value, 0);   // NOLINT union
+            }
         }
         return noErr;
     }
 
-    using Base::SetParameter;
-    OSStatus SetParameter(AudioUnitParameterID id, AudioUnitScope scope, AudioUnitElement element,
-                          AudioUnitParameterValue value, UInt32 offset) AUSDK_RTSAFE override {
-        const OSStatus r = Base::SetParameter(id, scope, element, value, offset);
-        if (r == noErr && scope == kAudioUnitScope_Global) push_parameter(id, value);   // atomics only
-        return r;
-    }
     // Our key next to AUBase's: marks a state as #114's layout (map_params.h, "saved state").
     OSStatus SaveState(CFPropertyListRef* outData) override {
         const OSStatus r = Base::SaveState(outData);
@@ -171,10 +160,11 @@ public:
     }
     // Every parameter starts from its default, so the restored state does not depend on what was set before; a state
     // without our key is from before #114 (the 12AX7 plugin) and loads on the 12AX7 path (set before AUBase restores,
-    // so its PresentPreset notification already sees the final Valve). If AUBase refuses the state, the previous
-    // values come back. Restored values are sanitized (a preset can hold NaN or any float). The parameter store is
-    // shared with render, so the whole restore is bracketed by restore_seq_: render keeps the engine's previous targets
-    // while it runs, and the final values reach the engine once, at the end.
+    // so its PresentPreset notification already sees the final Valve). Restored values are sanitized (a preset can
+    // hold NaN or any float). If AUBase refuses the state, or throws while decoding it (AUBase::GetScope on a bad
+    // scope), the previous values come back. The parameter store is shared with render, so the restore is bracketed
+    // by restore_seq_ (odd while it runs; RestoreScope ends it on every exit): render publishes nothing meanwhile, and
+    // publishes the final values at its next slice. RestoreState itself does not push to the engine.
     OSStatus RestoreState(CFPropertyListRef plist) override {
         bool ours = false;
         if (plist && CFGetTypeID(plist) == CFDictionaryGetTypeID()) {
@@ -182,23 +172,15 @@ public:
             ours = CFDictionaryContainsKey(static_cast<CFDictionaryRef>(plist), key);
             CFRelease(key);
         }
-        restore_seq_.fetch_add(1, std::memory_order_relaxed);   // odd: a restore is in progress
-        std::atomic_thread_fence(std::memory_order_release);
-        AudioUnitParameterValue before[kNumParams];
-        for (AudioUnitParameterID id = 0; id < kNumParams; ++id) {
-            before[id] = Globals()->GetParameter(id);
+        RestoreScope scope(*this);
+        for (AudioUnitParameterID id = 0; id < kNumParams; ++id)
             Globals()->SetParameter(id, AudioUnitParameterValue(default_plain(id)));
-        }
         if (!ours) Globals()->SetParameter(kValve, AudioUnitParameterValue(kValveLegacy));
-        const OSStatus r = Base::RestoreState(plist);
-        if (r != noErr) {
-            for (AudioUnitParameterID id = 0; id < kNumParams; ++id) Globals()->SetParameter(id, before[id]);
-        } else {
-            for (AudioUnitParameterID id = 0; id < kNumParams; ++id)
-                Globals()->SetParameter(id, AudioUnitParameterValue(sanitize_plain(id, double(Globals()->GetParameter(id)))));
-            push_parameters();
-        }
-        restore_seq_.fetch_add(1, std::memory_order_release);   // even: done
+        const OSStatus r = Base::RestoreState(plist);   // may throw: ~RestoreScope rolls back
+        if (r != noErr) return r;                         // ~RestoreScope rolls back
+        for (AudioUnitParameterID id = 0; id < kNumParams; ++id)
+            Globals()->SetParameter(id, AudioUnitParameterValue(sanitize_plain(id, double(Globals()->GetParameter(id)))));
+        scope.commit();
         return r;
     }
 
@@ -256,7 +238,7 @@ private:
         }
     }
     // render thread: a consistent snapshot of the parameter store, or nothing (seqlock reader: a restore was running
-    // or ran meanwhile; the engine keeps its targets, and the restore pushes its final values itself)
+    // or ran meanwhile; the engine keeps its targets until the next slice publishes the restored values)
     void push_parameters_rt() AUSDK_RTSAFE {
         const unsigned seq = restore_seq_.load(std::memory_order_acquire);
         if (seq & 1u) return;
@@ -270,11 +252,29 @@ private:
         for (AudioUnitParameterID id = 0; id < kNumParams; ++id) push_parameter(id, Globals()->GetParameter(id));
     }
 
-    struct Token {
-        std::mutex m;
-        GyreAU* au = nullptr;
+    // RestoreState's bracket: odd on entry; on every exit (return or exception) even again, and unless committed the
+    // parameter store as it was on entry
+    class RestoreScope {
+    public:
+        explicit RestoreScope(GyreAU& au) : au_(au) {
+            for (AudioUnitParameterID id = 0; id < kNumParams; ++id) before_[id] = au_.Globals()->GetParameter(id);
+            au_.restore_seq_.fetch_add(1, std::memory_order_relaxed);
+            std::atomic_thread_fence(std::memory_order_release);
+        }
+        ~RestoreScope() {
+            if (!committed_)
+                for (AudioUnitParameterID id = 0; id < kNumParams; ++id) au_.Globals()->SetParameter(id, before_[id]);
+            au_.restore_seq_.fetch_add(1, std::memory_order_release);
+        }
+        void commit() { committed_ = true; }
+        RestoreScope(const RestoreScope&) = delete;
+        RestoreScope& operator=(const RestoreScope&) = delete;
+
+    private:
+        GyreAU& au_;
+        AudioUnitParameterValue before_[kNumParams];
+        bool committed_ = false;
     };
-    std::shared_ptr<Token> token_ = std::make_shared<Token>();
     std::atomic<unsigned> restore_seq_{0};             // odd while RestoreState runs (main thread)
     Engine engine_;
 };

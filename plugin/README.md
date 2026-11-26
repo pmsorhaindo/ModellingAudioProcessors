@@ -100,14 +100,19 @@ IDs are what hosts store; 0–4 are the pre-#114 IDs, unchanged, and 5–8 are n
 | 1 | 12AX7 Bias | 12AX7 | 0.5–2.0 × Rk (1) | cathode resistor scale (1.0 = 1.5 kΩ); 20 ms ramp in the core (`set_bias`, #73) |
 | 2 | Output | both | 0–4 × (1) | linear gain after the stage (20 ms ramp in the wrapper) |
 | 3 | Quality | both | Eco / Standard / HQ (Standard) | 12AX7: 4× / 8× / 16× (`dkcore::ECO`, `STANDARD`, `HQ`). 6AS6: 8× / 8× / 16×: it has no eco (`dk6as6::STANDARD`, `HQ`) |
-| 4 | Bypass | both | off / on | wrapper-level, 10 ms crossfade to the dry input delayed by the latency (the host's AU bypass property and the VST 3 `kIsBypass` parameter both drive it) |
+| 4 | Bypass | both | off / on | wrapper-level, 10 ms crossfade to the dry input delayed by the reported latency (the host's AU bypass property and the VST 3 `kIsBypass` parameter both drive it) |
 | 5 | Valve | — | 6AS6 DK / 12AX7 DK (6AS6 DK) | the path ([Valve paths](#valve-paths-114)) |
 | 6 | 6AS6 Bias | 6AS6 | 0.1–0.6 mA (0.45) | target DC cathode current (#110); the core solves the Rk that draws it. **T caps it at 0.5 mA** |
 | 7 | 6AS6 Mode | 6AS6 | P1 / T / P2 (experimental) (P1) | the Distortion switch (#111) |
 | 8 | 6AS6 Filter | 6AS6 | Off / 4k / 7k (Off) | the post-distortion low-pass (#103), 15 ms crossfade in the core |
 
-Latency at 44.1 kHz / elsewhere: 12AX7 113 / 69 (Eco), 116 / 72 (Standard), 117 / 73 (HQ) (#96); 6AS6 with its k140
-resampler 127 / 79 (Standard, and Eco), 130 / 82 (HQ).
+**Latency: one constant per sample rate**, whatever valve and quality run: **130 samples at 44.1 kHz, 82 elsewhere**
+(the 48 kHz-rate geometry), the largest stage latency there (6AS6 HQ). The stages' own latencies are 12AX7 113 / 69
+(Eco), 116 / 72 (Standard), 117 / 73 (HQ) (#96) and 6AS6 with its k140 resampler 127 / 79 (Standard, and Eco), 130 /
+82 (HQ); the engine delays each stage's output by the difference (an exact integer pad, at most 17 samples, 0.39 ms, for
+12AX7 Eco at 44.1 kHz). So no switch ever changes what the host compensates: nothing has to tell the host, nothing can
+leave its delay compensation stale, and nothing depends on a host passing a notification on. The pre-#114 12AX7-only
+plugin reported the stage's own latency, so its latency grows by that pad.
 
 - **12AX7 Bias range.** The core's reference vectors cover bias 1.0 and 1.5. The range ends 0.5 and 2.0 build a pack and
   solve the DC point (checked in `engine_test`), but have not been validated further. A bias whose build fails is
@@ -173,16 +178,21 @@ same sound, and a session reopens on the path it was saved on.
 - AU: AUBase's ClassInfo plus a `gyre-state-version` key (a pre-#114 build ignores the key and the IDs it lacks).
   RestoreState first sets every parameter to its default, so a preset defines all of them; a ClassInfo without the key
   is from before #114 and loads on the 12AX7 path (set before AUBase announces the preset); NaN and out-of-range values
-  are sanitized (`sanitize_plain`). If AUBase refuses the preset, the previous values stay. Render never takes values
-  from a restore in progress (a seqlock around RestoreState); the final values reach the engine once.
-- AU scheduled parameters (`AudioUnitScheduleParameters`) are applied at once, an immediate event's value or a ramp's
-  end value, without AUBase's event list, which is a `std::vector` that grows on the render thread. The engine reads
-  its targets once per 256-sample chunk and ramps Drive and Output itself, so it has no use for sub-block slices.
+  are sanitized (`sanitize_plain`). If AUBase refuses the preset, or throws while decoding it, the previous values come
+  back (an RAII scope). Render is the only place that publishes parameters to the engine (and Initialize, before
+  prepare), so no older snapshot can overwrite a newer one, and it publishes nothing while a restore runs (a seqlock
+  that the same scope always ends).
+- AU scheduled parameters (`AudioUnitScheduleParameters`) keep AUBase's slicing: an immediate event takes effect at its
+  buffer offset. AUBase's event list is a `std::vector`; Initialize reserves 1024 entries, and an immediate event past
+  that in one render cycle is applied at once instead of appended (its offset is lost), so the render thread never
+  grows it. Ramped events are dropped: the pinned SDK sets nothing for them anyway, but would split slices at them and
+  log a warning through `os_log` on the render thread for each slice a ramp covers.
 - A new instance starts on the 6AS6 path (Gyre's v1 stage), with each path's defaults. User-view presets are #144.
 
 **Rates the 6AS6 core refuses.** Its post-filter cannot run at an internal rate below about 32 kHz (host rates below
 about 4 kHz at Standard; the Steinberg validator activates at 1234.5678 Hz). There the engine runs the 12AX7 path
-instead of failing activation (`active_valve()`, `build_status()`), and both formats report that path's latency.
+instead of failing activation (`active_valve()`, `build_status()`); the reported latency is the rate's constant, as
+everywhere.
 
 ## Host full scale ↔ volts (provisional)
 
@@ -215,15 +225,9 @@ cores' own drive and output stay 1.0.
 **Quality, valve and 6AS6 mode / bias changes without stopping the host.** `prepare()` of a stage must not run while
 that stage is processed, so the engine owns two slots ([Valve paths](#valve-paths-114)). The worker builds the idle one
 and publishes it. The audio thread then fades out for 5 ms, switches at a block boundary, acknowledges and fades back
-in for 5 ms. The worker reuses a slot only after that acknowledgement. Latency reporting:
-- **AU:** `kAudioUnitProperty_Latency` follows the running slot. The worker sends the property notification once the
-  switch is in effect.
-- **VST 3:** `getLatencySamples()` returns the latency of the running slot once active (before activation: what the
-  requested valve and quality will have). When the running latency changes, the processor writes it to a hidden,
-  read-only output parameter (`Latency`, ID 1000, not saved); the host hands that to the controller on its own
-  thread, and the controller calls `restartComponent(kLatencyChanged)`. So the host is told once the switch is in
-  effect, however the change arrived (controller edit, processor automation, state). A Quality / Valve edit in the
-  controller also asks at once, so a host that reactivates on `kLatencyChanged` prepares the new stage right away.
+in for 5 ms. The worker reuses a slot only after that acknowledgement. Latency reporting: `kAudioUnitProperty_Latency`
+and `getLatencySamples()` return the rate's constant (above), before and after activation, so neither format notifies
+the host of anything. The AU tail time and VST 3 `getTailSamples()` follow the running valve.
 
 ## Known limits
 
@@ -239,9 +243,6 @@ in for 5 ms. The worker reuses a slot only after that acknowledgement. Latency r
 - Quality, valve and 6AS6 mode / bias changes reach the stage through the worker. They land about 5 ms (wall clock)
   plus the build time after the parameter changes, also in an offline render that runs faster than real time. 12AX7
   Bias changes are sample-aligned (since #73).
-- VST 3: between a Quality / Valve change and its adoption (the worker's build plus 10 ms of fades) the host
-  compensates the old latency, which is the one the audio still has; a host that does not pass output parameter
-  changes to the controller is only told by the controller's immediate request, and then reads the old value.
 - Reported tail: latency + 0.2 s on the 12AX7 path, about 6 × the slowest time constant of its circuit values
   (Ck · Rk = 33 ms); latency + 0.8 s on the 6AS6 path, about 6 × its slowest coupling RC (Cout · (Ra + Rl) =
   100 nF · 1.27 MΩ = 0.127 s, `dk6as6/circuit.py`, inferred values). Provisional choices, not measured decays.
