@@ -1,14 +1,17 @@
-/* null_common.h -- shared by the null tests (#22): the test signal, the direct-core reference, the comparison.
+/* null_common.h -- shared by the null tests (#22, #114): the test signal, the direct-core references, the comparison.
  *
- * The reference is dkcore::StereoStage called directly with the same settings: prepare(fs, quality, bias),
- * set_drive(drive * kVoltsPerFullScale), set_output(output * kFullScalePerVolt), float I/O, one call for the whole
- * signal. The plugin side goes through the host API (AU render / VST 3 process) and the wrapper's engine, in blocks
- * of varying size. Both carry the same latency, so they are compared sample by sample with no alignment.
+ * The reference is the path's core called directly with the same settings, set_drive(drive * kVoltsPerFullScale),
+ * set_output(output * kFullScalePerVolt), float I/O, one call for the whole signal:
+ *   12AX7  dkcore::StereoStage::prepare(fs, quality, bias)
+ *   6AS6   one dk6as6::Stage per channel, Stage::prepare(fs, quality, settings) with the settings written out here from
+ *          #114's rules, not taken from the engine: Eco runs STANDARD, T at most 0.5 mA, P2 experimental, the filter.
+ * The plugin side goes through the host API (AU render / VST 3 process) and the wrapper's engine, in blocks of varying
+ * size. Both carry the same latency, so they are compared sample by sample with no alignment.
  */
 #ifndef MAP_NULL_COMMON_H
 #define MAP_NULL_COMMON_H
 
-#include "dk_core.h"
+#include "dk6as6_core.h"
 #include "map_engine.h"
 #include "map_params.h"
 
@@ -17,6 +20,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -27,7 +31,21 @@ struct Settings {
     int quality = mapvs::kStandard;
     double drive = 2.0, bias = 1.25, output = 1.25;     // plain values
     double seconds = 2.0;
+    int valve = mapvs::k12AX7;                          // the pre-#114 nulls' path
+    double bias6 = 0.3;                                 // 6AS6 path, mA
+    int mode6 = mapvs::kP1, filter6 = mapvs::kFilterOff;
 };
+
+// The 6AS6 settings #114 asks for, written out independently of the engine's mapping
+inline dk6as6::Settings settings_6as6(const Settings& s) {
+    dk6as6::Settings set;
+    set.mode = s.mode6 == mapvs::kT ? dk6as6::Mode::T : (s.mode6 == mapvs::kP2 ? dk6as6::Mode::P2 : dk6as6::Mode::P1);
+    set.bias_ma = (s.mode6 == mapvs::kT && s.bias6 > 0.5) ? 0.5 : s.bias6;   // T capped at 0.5 mA
+    set.lpf = s.filter6 == mapvs::kFilter4k ? dk6as6::Lpf::k4 : (s.filter6 == mapvs::kFilter7k ? dk6as6::Lpf::k7 : dk6as6::Lpf::off);
+    set.experimental = s.mode6 == mapvs::kP2;           // P2: experimental only
+    return set;
+}
+inline dkcore::Quality quality_6as6(int q) { return q == mapvs::kHQ ? dk6as6::HQ : dk6as6::STANDARD; }   // no eco
 
 // L: two tones with a slow swell (0 .. 0.9 FS); R: deterministic white noise (LCG), 0.5 FS peak, plus a quiet
 // 50 Hz tone. Both channels differ, so a channel swap or mono collapse would not null.
@@ -48,6 +66,20 @@ inline void make_signal(const Settings& s, std::vector<float>& L, std::vector<fl
 
 inline bool reference(const Settings& s, const std::vector<float>& L, const std::vector<float>& R,
                       std::vector<float>& oL, std::vector<float>& oR, int& latency) {
+    if (s.valve == mapvs::k6AS6) {
+        auto ref = std::make_unique<dk6as6::Stage[]>(2);
+        const dk6as6::Settings set = settings_6as6(s);
+        oL.assign(L.size(), 0.0f);
+        oR.assign(R.size(), 0.0f);
+        for (int c = 0; c < 2; ++c) {
+            if (ref[c].prepare(s.fs, quality_6as6(s.quality), set) != dk6as6::Status::ok) return false;
+            ref[c].set_drive(s.drive * mapvs::kVoltsPerFullScale);
+            ref[c].set_output(s.output * mapvs::kFullScalePerVolt);
+            ref[c].process((c == 0 ? L : R).data(), (c == 0 ? oL : oR).data(), L.size());
+        }
+        latency = ref[0].latency_samples();
+        return true;
+    }
     dkcore::StereoStage ref;
     if (ref.prepare(s.fs, mapvs::Engine::core_quality(s.quality), s.bias) != dkcore::BuildStatus::ok) return false;
     ref.set_drive(s.drive * mapvs::kVoltsPerFullScale);
@@ -79,6 +111,18 @@ inline Diff compare(const std::vector<float>& a, const std::vector<float>& b) {
 }
 
 inline const char* quality_name(int q) { return mapvs::kQualityNames[mapvs::clamp_quality(q)]; }
+inline const char* valve_name(int v) { return mapvs::kValveNames[mapvs::clamp_index(v, mapvs::kNumValves)]; }
+inline std::string describe(const Settings& s) {
+    char buf[256];
+    if (s.valve == mapvs::k6AS6)
+        std::snprintf(buf, sizeof buf, "%s %s, bias %.6g mA, %s, %.0f Hz, %s", valve_name(s.valve),
+                      mapvs::kMode6Names[mapvs::clamp_index(s.mode6, mapvs::kNumModes6)], s.bias6,
+                      mapvs::kFilter6Names[mapvs::clamp_index(s.filter6, mapvs::kNumFilters6)], s.fs, quality_name(s.quality));
+    else
+        std::snprintf(buf, sizeof buf, "%s bias %.6g x Rk, %.0f Hz, %s", valve_name(s.valve), s.bias, s.fs,
+                      quality_name(s.quality));
+    return buf;
+}
 
 inline void parse_args(int argc, char** argv, Settings& s) {
     for (int i = 1; i + 1 < argc; i += 2) {
@@ -90,6 +134,10 @@ inline void parse_args(int argc, char** argv, Settings& s) {
         else if (k == "--bias") s.bias = v;
         else if (k == "--output") s.output = v;
         else if (k == "--seconds") s.seconds = v;
+        else if (k == "--valve") s.valve = int(v);
+        else if (k == "--bias6") s.bias6 = v;
+        else if (k == "--mode6") s.mode6 = int(v);
+        else if (k == "--filter6") s.filter6 = int(v);
         else { std::fprintf(stderr, "unknown option %s\n", argv[i]); std::exit(2); }
     }
 }

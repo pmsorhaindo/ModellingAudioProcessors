@@ -5,7 +5,7 @@
 #   map_au        AU v2 bundle   (Apple AudioUnitSDK, Apache-2.0; C++23 for its std::expected)
 #   map_engine    static library (the DK core + the shared realtime engine, our MIT code)
 #   validator     Steinberg's VST 3 validator (built from the SDK, a test tool, not shipped)
-#   map_engine_test, map_smoothing_test, map_null_vst3, map_null_au   our tests (tests/)
+#   map_engine_test, map_smoothing_test, map_null_vst3, map_null_au   our tests (tests/; map_rt_hooks: a test dylib)
 #
 #   cmake -S plugin -B plugin/build -DCMAKE_BUILD_TYPE=Release
 #   cmake --build plugin/build -j
@@ -146,8 +146,11 @@ target_link_options(map_au PRIVATE "LINKER:-exported_symbol,_${MAP_AU_FACTORY}")
 set(MAP_AU_BUNDLE "${CMAKE_BINARY_DIR}/AU/${MAP_BUNDLE_FILE}.component")
 
 # ---- tests (not shipped) --------------------------------------------------------------------------------------
+# test-only dylib: counts locks, waits, allocations and common syscalls on the armed thread (dyld interposing)
+add_library(map_rt_hooks SHARED tests/rt_hooks.cpp)
+target_compile_features(map_rt_hooks PRIVATE cxx_std_17)
 add_executable(map_engine_test tests/engine_test.cpp)
-target_link_libraries(map_engine_test PRIVATE map_engine)
+target_link_libraries(map_engine_test PRIVATE map_engine map_rt_hooks)
 
 add_executable(map_smoothing_test tests/smoothing_test.cpp)       # #73: Drive / Output / Bias smoothing
 target_link_libraries(map_smoothing_test PRIVATE map_engine)
@@ -172,7 +175,7 @@ target_compile_definitions(map_null_vst3 PRIVATE MAP_TEST_VST3_PATH="${MAP_VST3_
 add_dependencies(map_null_vst3 map_vst3)
 
 # the validator is EXCLUDE_FROM_ALL with the SDK; build it with the default target
-add_custom_target(map_all ALL DEPENDS map_vst3 map_au validator map_engine_test map_smoothing_test map_null_au
+add_custom_target(map_all ALL DEPENDS map_vst3 map_au validator map_engine_test map_rt_hooks map_smoothing_test map_null_au
     map_null_vst3)
 message(STATUS "[MAP] VST 3 bundle: ${MAP_VST3_PACKAGE}")
 message(STATUS "[MAP] AU bundle:    ${MAP_AU_BUNDLE}")

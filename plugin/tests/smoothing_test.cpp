@@ -81,6 +81,7 @@ static Params step_at_n0(std::size_t i, const Params& a, const Params& b) { retu
 // The engine at host blocks of `block`; the host sets the parameters curve(block start) before each block.
 static void run_engine(mapvs::Engine& e, const Signal& x, const Params& a, const Params& b, Curve curve,
                        std::size_t block, Vec& oL, Vec& oR) {
+    e.set_valve(mapvs::k12AX7);                         // #73 is the 12AX7 path's smoothing (6AS6: #115)
     e.set_drive(a.drive); e.set_bias(a.bias); e.set_output(a.output);
     e.set_quality(mapvs::kStandard);
     e.set_bypass(false);

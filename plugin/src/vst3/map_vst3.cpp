@@ -1,4 +1,4 @@
-/* map_vst3.cpp -- VST 3 processor, controller and factory for the DK stage (#22).
+/* map_vst3.cpp -- VST 3 processor, controller and factory for the DK stages (#22; two valve paths, #114).
  *
  * Thin glue over mapvs::Engine (../map_engine.h): parameters in, audio through, latency out. Generic host UI only
  * (no IPlugView). Built directly against the Steinberg VST 3 SDK (MIT, 3.8.x); no VSTGUI.
@@ -27,26 +27,31 @@ namespace mapvs {
 static const FUID kProcessorUID(MAP_VST3_PROCESSOR_UID);
 static const FUID kControllerUID(MAP_VST3_CONTROLLER_UID);
 
-static double default_norm(ParamID id) {
-    switch (id) {
-    case kDrive: return to_norm(kDriveRange, kDriveRange.def);
-    case kBias: return to_norm(kBiasRange, kBiasRange.def);
-    case kOutput: return to_norm(kOutputRange, kOutputRange.def);
-    case kQuality: return quality_to_norm(kQualityDefault);
-    default: return 0.0;
-    }
-}
-
-// state: kStateVersion, then kNumParams normalized doubles (map_params.h)
+// state: int32 version, then that version's normalized doubles (map_params.h, "saved state"). Refused (false, norm
+// untouched) for an unknown version, a short stream or a NaN / inf value.
 static bool read_state(IBStream* s, double (&norm)[kNumParams]) {
     IBStreamer st(s, kLittleEndian);
     int32 version = 0;
-    if (!st.readInt32(version) || version != kStateVersion) return false;
+    if (!st.readInt32(version)) return false;
+    const int count = state_value_count(version);
+    if (count == 0) return false;
     double v[kNumParams];
-    for (double& x : v)
-        if (!st.readDouble(x) || !std::isfinite(x)) return false;
-    for (int i = 0; i < kNumParams; ++i) norm[i] = clamp01(v[i]);
-    return true;
+    for (int i = 0; i < count; ++i)
+        if (!st.readDouble(v[i])) return false;
+    return decode_state(version, v, count, norm);
+}
+
+static void add_list(ParameterContainer& params, const char16* title, Steinberg::Vst::ParamID id,
+                     const char* const* names, int count, int def) {
+    auto* p = new StringListParameter(title, id, nullptr, ParameterInfo::kCanAutomate | ParameterInfo::kIsList);
+    for (int k = 0; k < count; ++k) {
+        String128 s{};
+        for (int i = 0; names[k][i] && i < 127; ++i) s[i] = char16(names[k][i]);   // ASCII names
+        p->appendString(s);
+    }
+    p->getInfo().defaultNormalizedValue = index_to_norm(def, count);
+    p->setNormalized(index_to_norm(def, count));
+    params.addParameter(p);
 }
 
 // ---- processor ---------------------------------------------------------------------------------------------------
@@ -85,11 +90,11 @@ public:
     uint32 PLUGIN_API getLatencySamples() override {
         // Hosts may query after setupProcessing and before activation/Engine::prepare.
         const double fs = processSetup.sampleRate > 0.0 ? processSetup.sampleRate : 48000.0;
-        return uint32(Engine::latency_for(engine_.quality_target(), fs));
+        return uint32(Engine::latency_for(engine_.valve_target(), engine_.quality_target(), fs));
     }
     uint32 PLUGIN_API getTailSamples() override {
         const double fs = processSetup.sampleRate > 0.0 ? processSetup.sampleRate : 48000.0;
-        return uint32(getLatencySamples() + std::lround(kTailSeconds * fs));
+        return uint32(getLatencySamples() + std::lround(tail_seconds(engine_.valve_target()) * fs));
     }
 
     // non-RT, never concurrently with process(): the host's activation is the one place where prepare() runs
@@ -157,6 +162,10 @@ private:
         case kOutput: engine_.set_output(to_plain(kOutputRange, n)); break;
         case kQuality: engine_.set_quality(quality_from_norm(n)); break;
         case kBypass: engine_.set_bypass(n >= 0.5); break;
+        case kValve: engine_.set_valve(index_from_norm(n, kNumValves)); break;
+        case kBias6: engine_.set_bias6(to_plain(kBias6Range, n)); break;
+        case kMode6: engine_.set_mode6(index_from_norm(n, kNumModes6)); break;
+        case kFilter6: engine_.set_filter6(index_from_norm(n, kNumFilters6)); break;
         default: break;
         }
     }
@@ -174,25 +183,23 @@ public:
     tresult PLUGIN_API initialize(FUnknown* context) override {
         const tresult r = EditController::initialize(context);
         if (r != kResultOk) return r;
+        // ParamID order (map_params.h); the 6AS6 / 12AX7 prefix says which path a control acts on (README)
         parameters.addParameter(new RangeParameter(STR16("Drive"), kDrive, STR16("x"), kDriveRange.min,
                                                    kDriveRange.max, kDriveRange.def, 0, ParameterInfo::kCanAutomate));
-        parameters.addParameter(new RangeParameter(STR16("Bias"), kBias, STR16("x Rk"), kBiasRange.min,
+        parameters.addParameter(new RangeParameter(STR16("12AX7 Bias"), kBias, STR16("x Rk"), kBiasRange.min,
                                                    kBiasRange.max, kBiasRange.def, 0, ParameterInfo::kCanAutomate));
         parameters.addParameter(new RangeParameter(STR16("Output"), kOutput, STR16("x"), kOutputRange.min,
                                                    kOutputRange.max, kOutputRange.def, 0,
                                                    ParameterInfo::kCanAutomate));
-        auto* quality = new StringListParameter(STR16("Quality"), kQuality, nullptr,
-                                                ParameterInfo::kCanAutomate | ParameterInfo::kIsList);
-        for (const char* name : kQualityNames) {
-            String128 s{};
-            for (int i = 0; name[i] && i < 127; ++i) s[i] = char16(name[i]);   // ASCII names
-            quality->appendString(s);
-        }
-        quality->getInfo().defaultNormalizedValue = quality_to_norm(kQualityDefault);
-        quality->setNormalized(quality_to_norm(kQualityDefault));
-        parameters.addParameter(quality);
+        add_list(parameters, STR16("Quality"), kQuality, kQualityNames, kNumQualities, kQualityDefault);
         parameters.addParameter(STR16("Bypass"), nullptr, 1, 0.0,
                                 ParameterInfo::kCanAutomate | ParameterInfo::kIsBypass, kBypass);
+        add_list(parameters, STR16("Valve"), kValve, kValveNames, kNumValves, kValveDefault);
+        // T caps the built bias at kTBiasCapMa (0.5 mA): above it, T runs 0.5 mA
+        parameters.addParameter(new RangeParameter(STR16("6AS6 Bias"), kBias6, STR16("mA"), kBias6Range.min,
+                                                   kBias6Range.max, kBias6Range.def, 0, ParameterInfo::kCanAutomate));
+        add_list(parameters, STR16("6AS6 Mode"), kMode6, kMode6Names, kNumModes6, kMode6Default);
+        add_list(parameters, STR16("6AS6 Filter"), kFilter6, kFilter6Names, kNumFilters6, kFilter6Default);
         return kResultOk;
     }
 
@@ -203,13 +210,23 @@ public:
         return kResultOk;
     }
 
-    // A quality change moves the latency: ask the host to re-read it (UI / main thread, not the audio thread).
+    // A quality or valve change moves the latency: ask the host to re-read it (UI / main thread, not the audio
+    // thread). The latency is that of the requested valve and quality (Engine::latency_for).
     tresult PLUGIN_API setParamNormalized(Steinberg::Vst::ParamID tag, ParamValue value) override {
-        const int before = tag == kQuality ? quality_from_norm(getParamNormalized(tag)) : 0;
+        const bool moves = tag == kQuality || tag == kValve;
+        const int before = moves ? latency_index() : 0;
         const tresult r = EditController::setParamNormalized(tag, value);
-        if (r == kResultOk && tag == kQuality && quality_from_norm(value) != before && componentHandler)
+        if (r == kResultOk && moves && latency_index() != before && componentHandler)
             componentHandler->restartComponent(kLatencyChanged);
         return r;
+    }
+
+private:
+    // (valve, quality) as the engine maps them to a latency: on the 6AS6 path Eco and Standard are the same
+    int latency_index() {
+        const int v = index_from_norm(getParamNormalized(kValve), kNumValves);
+        const int q = quality_from_norm(getParamNormalized(kQuality));
+        return v * kNumQualities + (v == k6AS6 ? quality_6as6(q) : q);
     }
 };
 

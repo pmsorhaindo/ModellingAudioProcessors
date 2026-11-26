@@ -10,7 +10,21 @@ namespace {
 constexpr double kRampSeconds = 0.020, kBypassSeconds = 0.010, kSwitchSeconds = 0.005;
 constexpr auto kWorkerPeriod = std::chrono::milliseconds(5);
 int seconds_to_samples(double s, double fs) { return int(std::lround(s * fs)); }
+// A build status that is not one of the cores' (a latency the dry ring cannot hold); never 0.
+constexpr int kStatusLatencyTooLong = 100;
 }  // namespace
+
+// The plugin's 6AS6 ranges are the core's (map_params.h restates them so the wrappers need not include the core).
+static_assert(kBias6Range.def == dk6as6::BIAS_MA && kBias6Range.min == dk6as6::BIAS_RANGE_MA[1] &&
+              kBias6Range.max == dk6as6::BIAS_RANGE_MA[0], "6AS6 bias range is the core's");
+static_assert(int(dk6as6::Mode::P1) == kP1 && int(dk6as6::Mode::T) == kT && int(dk6as6::Mode::P2) == kP2,
+              "Mode6 order is dk6as6::Mode's");
+static_assert(int(dk6as6::Lpf::off) == kFilterOff && int(dk6as6::Lpf::k4) == kFilter4k &&
+              int(dk6as6::Lpf::k7) == kFilter7k, "Filter6 order is dk6as6::Lpf's");
+// No lock on the audio thread: every atomic it touches must be lock-free (a non-lock-free atomic takes a lock).
+static_assert(std::atomic<double>::is_always_lock_free && std::atomic<int>::is_always_lock_free &&
+              std::atomic<bool>::is_always_lock_free && std::atomic<std::uint8_t>::is_always_lock_free,
+              "the audio thread's atomics are lock-free");
 
 dkcore::Quality Engine::core_quality(int q) {
     switch (clamp_quality(q)) {
@@ -20,49 +34,118 @@ dkcore::Quality Engine::core_quality(int q) {
     }
 }
 
-int Engine::latency_for(int q, double sample_rate) {
-    return dkcore::fir_geometry(core_quality(q).os, sample_rate).latency_samples;
+dkcore::Quality Engine::core_quality_6as6(int q) { return quality_6as6(q) == kHQ ? dk6as6::HQ : dk6as6::STANDARD; }
+
+int Engine::latency_for(int valve, int q, double sample_rate) {
+    if (clamp_index(valve, kNumValves) == k12AX7)
+        return dkcore::fir_geometry(core_quality(q).os, sample_rate).latency_samples;
+    return dkcore::fir_geometry(core_quality_6as6(q).os, sample_rate, dk6as6::DEFAULT_FIR).latency_samples;
+}
+
+dk6as6::Settings Engine::settings_6as6(const Config& c, int filter6) {
+    dk6as6::Settings s;                                 // grid current on (the default hardness), k140, Newton defaults
+    s.mode = dk6as6::Mode(clamp_index(c.mode6, kNumModes6));
+    s.bias_ma = bias6_effective(c.mode6, c.bias6);
+    s.lpf = dk6as6::Lpf(clamp_index(filter6, kNumFilters6));
+    s.experimental = s.mode == dk6as6::Mode::P2;        // P2 is never supported: built only as experimental
+    return s;
+}
+
+Engine::Config Engine::target_config() const {
+    Config c;
+    c.valve = valve_target();
+    c.quality = quality_target();
+    if (c.valve == k12AX7) {
+        c.mode6 = 0;
+        c.bias6 = 0.0;
+    } else {
+        c.quality = quality_6as6(c.quality);
+        c.mode6 = mode6_t_.load(std::memory_order_relaxed);
+        c.bias6 = bias6_effective(c.mode6, bias6_t_.load(std::memory_order_relaxed));
+    }
+    return c;
 }
 
 Engine::Engine() {
-    slot_[0] = std::make_unique<dkcore::StereoStage>();
-    slot_[1] = std::make_unique<dkcore::StereoStage>();
-    for (auto& s : slot_) s->set_bias_range(kBiasRange.min, kBiasRange.max);   // the bias line (#73), per prepare
-    for (int q = 0; q < kNumQualities; ++q) target_latency_[q].store(latency_for(q, 48000.0));
+    slot_[0] = std::make_unique<Slot>();
+    slot_[1] = std::make_unique<Slot>();
+    for (auto& s : slot_) s->tri.set_bias_range(kBiasRange.min, kBiasRange.max);   // the bias line (#73), per prepare
+    for (int v = 0; v < kNumValves; ++v)
+        for (int q = 0; q < kNumQualities; ++q) target_latency_[v][q].store(latency_for(v, q, 48000.0));
     active_latency_.store(latency_samples(), std::memory_order_relaxed);
 }
 
 Engine::~Engine() { release(); }
+
+int Engine::build(Slot& s, const Config& c, double bias12) {
+    if (c.valve == k12AX7) {
+        const dkcore::BuildStatus st = s.tri.prepare(fs_, core_quality(c.quality), bias12);
+        if (st != dkcore::BuildStatus::ok) return int(st);
+        s.tri.set_drive(1.0);                           // the wrapper applies drive and output
+        s.tri.set_output(1.0);
+        s.tri.set_bias_ramp(kRampSeconds);              // the core ramps bias (#73), like the wrapper's gain ramps
+        s.latency = s.tri.latency_samples();
+        s.experimental = false;
+    } else {
+        // one pack (Rk solve, matrices, DC point) for both channels: the same as Stage::prepare() on each
+        const dk6as6::Settings set = settings_6as6(c, filter6_t_.load(std::memory_order_relaxed));
+        const dkcore::Quality q = core_quality_6as6(c.quality);
+        dk6as6::Pack p;
+        dk6as6::Status st = dk6as6::build_pack(p, fs_ * q.os, set);
+        if (st != dk6as6::Status::ok) return int(st);
+        for (auto& stage : s.pen) {
+            st = stage.prepare_pack(fs_, q.os, p, set.lpf, set.fir);
+            if (st != dk6as6::Status::ok) return int(st);
+            stage.set_drive(1.0);
+            stage.set_output(1.0);
+        }
+        s.latency = s.pen[0].latency_samples();
+        s.experimental = !p.supported;
+    }
+    if (s.latency > kRing - kChunk) return kStatusLatencyTooLong;
+    s.cfg = c;
+    return 0;
+}
 
 bool Engine::prepare(double sample_rate) {
     stop_worker();
     prepared_.store(false, std::memory_order_relaxed);
     if (!(sample_rate > 0.0) || !std::isfinite(sample_rate)) return false;
     fs_ = sample_rate;
-    for (int q = 0; q < kNumQualities; ++q)
-        target_latency_[q].store(latency_for(q, sample_rate), std::memory_order_relaxed);
-    const int q = quality_target();
+    for (int v = 0; v < kNumValves; ++v)
+        for (int q = 0; q < kNumQualities; ++q)
+            target_latency_[v][q].store(latency_for(v, q, sample_rate), std::memory_order_relaxed);
+    const Config want = target_config();
     double b = bias_t_.load(std::memory_order_relaxed);
-    dkcore::BuildStatus st = slot_[0]->prepare(fs_, core_quality(q), b);
-    if (st != dkcore::BuildStatus::ok) {                // e.g. a bias whose DC point does not solve: fall back to 1
-        bias_status_.store(int(st), std::memory_order_relaxed);
+    int st = build(*slot_[0], want, b);
+    build_status_.store(st, std::memory_order_relaxed);
+    build_status_valve_.store(want.valve, std::memory_order_relaxed);
+    if (st != 0) {
+        // 1. the path's default setting (e.g. a 12AX7 bias whose DC point does not solve);
+        // 2. then the 12AX7 path's: the 6AS6 core refuses host rates whose internal rate its post-filter cannot run at
+        //    (below about 4 kHz at Standard; the Steinberg validator activates at 1234.5678 Hz). The host gets audio
+        //    rather than a failed activation; active_valve() and build_status() say what happened.
+        Config d;
+        d.valve = want.valve;
+        d.quality = want.quality;
+        if (d.valve == k12AX7) { d.mode6 = 0; d.bias6 = 0.0; }
         b = kBiasRange.def;
-        st = slot_[0]->prepare(fs_, core_quality(q), b);
-        if (st != dkcore::BuildStatus::ok) return false;
-    }
-    for (auto& s : slot_) {
-        s->set_drive(1.0);                              // the wrapper applies drive and output
-        s->set_output(1.0);
-        s->set_bias_ramp(kRampSeconds);                 // the core ramps bias (#73), like the wrapper's gain ramps
+        if (build(*slot_[0], d, b) != 0) {
+            if (d.valve == k12AX7) return false;
+            d.valve = k12AX7;
+            d.quality = quality_target();
+            d.mode6 = 0;
+            d.bias6 = 0.0;
+            if (build(*slot_[0], d, b) != 0) return false;
+        }
     }
     active_ = designated_ = 0;
-    des_quality_ = q;
+    des_cfg_ = want;                                    // a failed request is not retried every poll
     applied_bias_.store(b, std::memory_order_relaxed);
     pending_.store(-1, std::memory_order_relaxed);
     audio_slot_.store(0, std::memory_order_relaxed);
-    active_quality_.store(q, std::memory_order_relaxed);
-    active_latency_.store(slot_[0]->latency_samples(), std::memory_order_relaxed);
-    notified_latency_ = slot_[0]->latency_samples();
+    adopt(0);
+    notified_latency_ = slot_[0]->latency;
     ramp_len_ = seconds_to_samples(kRampSeconds, fs_);
     bypass_len_ = seconds_to_samples(kBypassSeconds, fs_);
     switch_len_ = seconds_to_samples(kSwitchSeconds, fs_);
@@ -79,20 +162,38 @@ void Engine::release() {
 }
 
 std::uint64_t Engine::nonconverged_total() const {
-    return slot_[audio_slot_.load(std::memory_order_relaxed)]->nonconverged_total();
+    const Slot& s = *slot_[audio_slot_.load(std::memory_order_relaxed)];
+    if (s.cfg.valve == k12AX7) return s.tri.nonconverged_total();
+    return s.pen[0].stats().nonconverged + s.pen[1].stats().nonconverged;
 }
 
 // ---- audio thread ----------------------------------------------------------------------------------------------
 
+// The audio thread runs `slot` from now on (also prepare(), with the worker stopped). Reads only the slot's plain
+// fields, which the worker wrote before its release store of pending_; stores relaxed atomics. No ack here.
+void Engine::adopt(int slot) noexcept {
+    active_ = slot;
+    const Slot& s = *slot_[slot];
+    dry_delay_ = s.latency;
+    active_latency_.store(s.latency, std::memory_order_relaxed);
+    active_valve_.store(s.cfg.valve, std::memory_order_relaxed);
+    active_quality_.store(s.cfg.quality, std::memory_order_relaxed);
+    active_mode6_.store(s.cfg.mode6, std::memory_order_relaxed);
+    active_bias6_.store(s.cfg.bias6, std::memory_order_relaxed);
+    active_experimental_.store(s.experimental, std::memory_order_relaxed);
+}
+
 void Engine::reset_audio_state() noexcept {
-    slot_[active_]->reset();
+    Slot& s = *slot_[active_];
+    if (s.cfg.valve == k12AX7) s.tri.reset();
+    else for (auto& stage : s.pen) stage.reset();
     drive_.snap(drive_t_.load(std::memory_order_relaxed) * kVoltsPerFullScale);
     output_.snap(output_t_.load(std::memory_order_relaxed) * kFullScalePerVolt);
     const bool byp = bypass_t_.load(std::memory_order_relaxed) || host_bypass_t_.load(std::memory_order_relaxed);
     bypass_.snap(byp ? 1.0 : 0.0);
     sw_env_.snap(1.0);
     sw_ = Switch::idle;
-    dry_delay_ = slot_[active_]->latency_samples();
+    dry_delay_ = s.latency;
     ring_pos_ = 0;
     for (auto& ch : ring_)
         for (double& v : ch) v = 0.0;
@@ -101,7 +202,7 @@ void Engine::reset_audio_state() noexcept {
 void Engine::begin_chunk() noexcept {
     if (reset_req_.exchange(false, std::memory_order_relaxed)) reset_audio_state();
 
-    // quality switch: idle -> fade_out -> (swap at the block boundary) -> fade_in -> idle
+    // slot switch (quality, valve, 6AS6 mode / bias): idle -> fade_out -> (swap at the block boundary) -> fade_in
     if (sw_ == Switch::idle) {
         const int p = pending_.load(std::memory_order_acquire);
         if (p >= 0 && p != active_) {
@@ -111,10 +212,7 @@ void Engine::begin_chunk() noexcept {
     }
     if (sw_ == Switch::fade_out && !sw_env_.moving()) {
         const int p = pending_.load(std::memory_order_acquire);
-        active_ = p;
-        dry_delay_ = slot_[active_]->latency_samples();
-        active_latency_.store(dry_delay_, std::memory_order_relaxed);
-        active_quality_.store(-1, std::memory_order_relaxed);   // the worker knows the quality; see worker_poll
+        adopt(p);
         pending_.store(-1, std::memory_order_relaxed);
         audio_slot_.store(active_, std::memory_order_release);  // ack: the old slot is free for the worker
         sw_ = Switch::fade_in;
@@ -123,13 +221,17 @@ void Engine::begin_chunk() noexcept {
         sw_ = Switch::idle;
     }
 
-    // bias (#73): the target goes straight to the running stage, which ramps along its bias line per base sample on
-    // this thread (no rebuild, no lock); read here, once per chunk, like the gain targets
-    const double b = bias_t_.load(std::memory_order_relaxed);
-    if (std::isfinite(b)) {
-        const double bc = b < kBiasRange.min ? kBiasRange.min : (b > kBiasRange.max ? kBiasRange.max : b);
-        slot_[active_]->set_bias(bc);
-        applied_bias_.store(bc, std::memory_order_relaxed);
+    Slot& s = *slot_[active_];
+    if (s.cfg.valve == k12AX7) {
+        // bias (#73): the target goes straight to the running stage, which ramps along its bias line per base sample
+        // on this thread (no rebuild, no lock); read here, once per chunk, like the gain targets. The setter clamps.
+        const double b = bias_t_.load(std::memory_order_relaxed);
+        s.tri.set_bias(b);
+        applied_bias_.store(b, std::memory_order_relaxed);
+    } else {
+        // the 6AS6 post-filter position (#103): the core crossfades 15 ms on a change (relaxed atomic in the core)
+        const auto f = dk6as6::Lpf(filter6_t_.load(std::memory_order_relaxed));
+        for (auto& stage : s.pen) stage.set_lpf(f);
     }
     drive_.set(drive_t_.load(std::memory_order_relaxed) * kVoltsPerFullScale, ramp_len_);
     output_.set(output_t_.load(std::memory_order_relaxed) * kFullScalePerVolt, ramp_len_);
@@ -166,14 +268,21 @@ void Engine::process_chunk(const float* const* in, float* const* out, int nch, i
         ring_[0][w] = std::isfinite(xl) ? xl : 0.0;
         ring_[1][w] = std::isfinite(xr) ? xr : 0.0;
         const double d = drive_.next();
-        bufL_[i] = xl * d;                              // NaN / inf stay non-finite: the core replaces them by 0
+        bufL_[i] = xl * d;                              // NaN / inf stay non-finite: the cores replace them by 0
         bufR_[i] = xr * d;
     }
 
-    // 2. the stage (core drive and output are 1.0); in place on the scratch buffers
-    slot_[active_]->process(bufL_, bufR_, bufL_, bufR_, std::size_t(n));
+    // 2. the stage (core drive and output are 1.0); in place on the scratch buffers. The 6AS6 path has one stage per
+    // channel: mono runs the left one only.
+    Slot& s = *slot_[active_];
+    if (s.cfg.valve == k12AX7) {
+        s.tri.process(bufL_, bufR_, bufL_, bufR_, std::size_t(n));
+    } else {
+        s.pen[0].process(bufL_, bufL_, std::size_t(n));
+        if (nch > 1) s.pen[1].process(bufR_, bufR_, std::size_t(n));
+    }
 
-    // 3. output gain, bypass crossfade, quality-switch envelope
+    // 3. output gain, bypass crossfade, switch envelope
     float* outL = out[0] + off;
     float* outR = nch > 1 ? out[1] + off : nullptr;
     const bool plain = sw_ == Switch::idle && !bypass_.moving() && bypass_.cur == 0.0;
@@ -230,27 +339,24 @@ void Engine::worker_poll() {
     if (audio_slot_.load(std::memory_order_acquire) != designated_) return;
 
     // the audio thread runs designated_; tell listeners once its latency is in effect
-    if (active_quality_.load(std::memory_order_relaxed) < 0) active_quality_.store(des_quality_, std::memory_order_relaxed);
     const int lat = active_latency_.load(std::memory_order_relaxed);
     if (lat != notified_latency_) {
         notified_latency_ = lat;
         if (latency_listener_) latency_listener_();
     }
 
-    const int q = quality_target();
-    const double b = bias_t_.load(std::memory_order_relaxed);
-    if (q != des_quality_) {
-        const int idle = 1 - designated_;               // not processed: the audio thread acknowledged leaving it
-        const dkcore::BuildStatus st = slot_[idle]->prepare(fs_, core_quality(q), b);
-        des_quality_ = q;                               // also on failure: do not retry the same request every poll
-        if (st != dkcore::BuildStatus::ok) { bias_status_.store(int(st), std::memory_order_relaxed); return; }
-        slot_[idle]->set_drive(1.0);
-        slot_[idle]->set_output(1.0);
-        designated_ = idle;
-        bias_status_.store(0, std::memory_order_relaxed);
-        pending_.store(idle, std::memory_order_release);
-    }
-    // Bias needs no worker since #73: the audio thread passes the target to the running stage (begin_chunk).
+    const Config t = target_config();
+    if (t == des_cfg_) return;
+    des_cfg_ = t;                                       // also on failure: do not retry the same request every poll
+    if (t == slot_[designated_]->cfg) return;           // back to what is running (e.g. after a failed build)
+    const int idle = 1 - designated_;                   // not processed: the audio thread acknowledged leaving it
+    const int st = build(*slot_[idle], t, bias_t_.load(std::memory_order_relaxed));
+    build_status_.store(st, std::memory_order_relaxed);
+    build_status_valve_.store(t.valve, std::memory_order_relaxed);
+    if (st != 0) return;
+    designated_ = idle;
+    pending_.store(idle, std::memory_order_release);
+    // The 12AX7 bias and the 6AS6 filter need no worker: the audio thread passes them to the running stage.
 }
 
 }  // namespace mapvs
