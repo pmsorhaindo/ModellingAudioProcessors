@@ -6,7 +6,8 @@
  *   6AS6   one dk6as6::Stage per channel, Stage::prepare(fs, quality, settings) with the settings written out here from
  *          #114's rules, not taken from the engine: Eco runs STANDARD, T at most 0.5 mA, P2 experimental, the filter.
  * The plugin side goes through the host API (AU render / VST 3 process) and the wrapper's engine, in blocks of varying
- * size. Both carry the same latency, so they are compared sample by sample with no alignment.
+ * size. The plugin's output is the core's delayed by an exact integer pad (delayed() below), so they are compared sample
+ * by sample after that shift.
  */
 #ifndef MAP_NULL_COMMON_H
 #define MAP_NULL_COMMON_H
@@ -95,6 +96,15 @@ inline bool reference(const Settings& s, const std::vector<float>& L, const std:
 inline const std::vector<int>& block_pattern() {
     static const std::vector<int> b{512, 1, 37, 256, 257, 1000, 64, 4096, 3, 128};
     return b;
+}
+
+/* The plugin reports one latency per rate (Engine::reported_latency_for) and pads each stage to it; the core reference
+ * carries the stage's own latency. delayed(ref, pad) is the reference as the plugin outputs it: pad zero samples, then
+ * the reference, cut to the same length (pad = reported - the core's latency, an exact integer delay). */
+inline std::vector<float> delayed(const std::vector<float>& x, int pad) {
+    std::vector<float> y(x.size(), 0.0f);
+    for (std::size_t i = std::size_t(pad < 0 ? 0 : pad); i < x.size(); ++i) y[i] = x[i - std::size_t(pad)];
+    return y;
 }
 
 struct Diff { double max_abs = 0.0; std::size_t at = 0; std::size_t nonfinite = 0; double peak_ref = 0.0; };

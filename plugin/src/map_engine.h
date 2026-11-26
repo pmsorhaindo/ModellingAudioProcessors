@@ -30,8 +30,12 @@
  * cores' own drive and output stay 1.0, so the host-to-volts mapping (map_params.h) is folded into the ramp targets,
  * in one place, and is the same for both paths.
  *
- * Bypass (parameter or host bypass): a 10 ms crossfade to the dry input delayed by the active latency, so the
- * bypassed signal lines up with the reported latency. The stage keeps running while bypassed.
+ * Latency: one constant per sample rate (reported_latency_for(): the largest of every valve and quality there), so no
+ * switch changes what the host compensates and nothing has to tell the host anything. Each slot's output is delayed by
+ * an exact integer pad (reported - the stage's own latency) in a wet delay line, cleared when a slot is adopted.
+ *
+ * Bypass (parameter or host bypass): a 10 ms crossfade to the dry input delayed by the reported latency, so the
+ * bypassed signal lines up with the wet one. The stage keeps running while bypassed.
  */
 #ifndef MAP_ENGINE_H
 #define MAP_ENGINE_H
@@ -42,7 +46,6 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
-#include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -52,7 +55,7 @@ namespace mapvs {
 class Engine {
 public:
     static constexpr int kChunk = 256;          // internal block: the scratch buffers live in the object
-    static constexpr int kRing = 512;           // dry delay ring, >= kChunk + max latency (130 at 44.1 kHz, 6AS6 HQ)
+    static constexpr int kRing = 512;           // dry / wet delay rings, >= kChunk + the reported latency (130 at 44.1 kHz)
     static constexpr int kMaxChannels = 2;
 
     // What a slot is built for. On the 12AX7 path mode6 and bias6 are not used (0); on the 6AS6 path quality is never
@@ -78,9 +81,6 @@ public:
     // then outputs silence).
     bool prepare(double sample_rate);
     void release();                                     // stops the worker; process() outputs silence afterwards
-    // Called by the worker thread after the audio thread adopted a slot with a different latency (AU uses it to
-    // send kAudioUnitProperty_Latency). Set before prepare().
-    void set_latency_listener(std::function<void()> f) { latency_listener_ = std::move(f); }
 
     // ---- any thread -------------------------------------------------------------------------------------------
     // Plain values. NaN is ignored (the last value stays); anything else is clamped to the parameter's range.
@@ -99,12 +99,10 @@ public:
     int quality_target() const { return quality_t_.load(std::memory_order_relaxed); }
     int valve_target() const { return valve_t_.load(std::memory_order_relaxed); }
     Config target_config() const;                       // what the worker builds for the current targets
-    // latency of the requested valve and quality (what the host should compensate once the switch is done)
-    int latency_samples() const {
-        return target_latency_[valve_target()][quality_target()].load(std::memory_order_relaxed);
-    }
-    // the running slot: latency, valve, quality (6AS6: Eco reads Standard), 6AS6 mode and bias as built (mA), and
-    // whether it is outside the supported envelope (only P2 can be: experimental)
+    // the latency the output has, whatever runs: reported_latency_for(the prepared rate; 48 kHz before prepare())
+    int latency_samples() const { return reported_latency_.load(std::memory_order_relaxed); }
+    // the running slot: its stage's own latency (before the pad), valve, quality (6AS6: Eco reads Standard), 6AS6 mode
+    // and bias as built (mA), and whether it is outside the supported envelope (only P2 can be: experimental)
     int active_latency_samples() const { return active_latency_.load(std::memory_order_relaxed); }
     int active_valve() const { return active_valve_.load(std::memory_order_relaxed); }
     int active_quality() const { return active_quality_.load(std::memory_order_relaxed); }
@@ -120,8 +118,9 @@ public:
     int build_status_valve() const { return build_status_valve_.load(std::memory_order_relaxed); }
     int bias_status() const { return build_status(); }  // the pre-#114 name
     double applied_bias() const { return applied_bias_.load(std::memory_order_relaxed); }
-    static int latency_for(int valve, int quality, double sample_rate);
+    static int latency_for(int valve, int quality, double sample_rate);      // a stage's own latency
     static int latency_for(int quality, double sample_rate) { return latency_for(k12AX7, quality, sample_rate); }
+    static int reported_latency_for(double sample_rate);                     // max of latency_for over valves, qualities
     static dkcore::Quality core_quality(int quality);               // 12AX7
     static dkcore::Quality core_quality_6as6(int quality);          // 6AS6: STANDARD or HQ
     // the 6AS6 settings the engine builds for a config and filter position (also what the tests' reference uses)
@@ -194,7 +193,7 @@ private:
         active_mode6_{kMode6Default};
     std::atomic<double> active_bias6_{kBias6Range.def};
     std::atomic<bool> active_experimental_{false};
-    std::atomic<int> target_latency_[kNumValves][kNumQualities]{};   // populated off the audio thread
+    std::atomic<int> reported_latency_{0};
     std::atomic<int> build_status_{0}, build_status_valve_{kValveDefault};
     std::atomic<double> applied_bias_{kBiasRange.def};
     std::atomic<bool> prepared_{false};
@@ -204,17 +203,16 @@ private:
     Switch sw_ = Switch::idle;
     Ramp drive_, output_, bypass_, sw_env_;
     int ramp_len_ = 0, bypass_len_ = 0, switch_len_ = 0;
-    int dry_delay_ = 0;
-    std::uint32_t ring_pos_ = 0;
+    int dry_delay_ = 0, pad_ = 0;                       // dry delay = the reported latency; pad = reported - stage's
+    std::uint32_t ring_pos_ = 0, wet_pos_ = 0;
     double ring_[kMaxChannels][kRing] = {};
+    double wet_[kMaxChannels][kRing] = {};
     double bufL_[kChunk] = {}, bufR_[kChunk] = {};
 
     // worker-side state (worker thread, or prepare() with the worker stopped)
     double fs_ = 0.0;
     int designated_ = 0;
     Config des_cfg_;                                    // the config last requested of a build (also if it failed)
-    int notified_latency_ = 0;
-    std::function<void()> latency_listener_;
     std::thread worker_;
     std::mutex wmu_;
     std::condition_variable wcv_;

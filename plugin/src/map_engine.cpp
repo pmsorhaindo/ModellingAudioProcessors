@@ -42,6 +42,16 @@ int Engine::latency_for(int valve, int q, double sample_rate) {
     return dkcore::fir_geometry(core_quality_6as6(q).os, sample_rate, dk6as6::DEFAULT_FIR).latency_samples;
 }
 
+int Engine::reported_latency_for(double sample_rate) {
+    int m = 0;
+    for (int v = 0; v < kNumValves; ++v)
+        for (int q = 0; q < kNumQualities; ++q) {
+            const int l = latency_for(v, q, sample_rate);
+            m = l > m ? l : m;
+        }
+    return m;
+}
+
 dk6as6::Settings Engine::settings_6as6(const Config& c, int filter6) {
     dk6as6::Settings s;                                 // grid current on (the default hardness), k140, Newton defaults
     s.mode = dk6as6::Mode(clamp_index(c.mode6, kNumModes6));
@@ -70,9 +80,8 @@ Engine::Engine() {
     slot_[0] = std::make_unique<Slot>();
     slot_[1] = std::make_unique<Slot>();
     for (auto& s : slot_) s->tri.set_bias_range(kBiasRange.min, kBiasRange.max);   // the bias line (#73), per prepare
-    for (int v = 0; v < kNumValves; ++v)
-        for (int q = 0; q < kNumQualities; ++q) target_latency_[v][q].store(latency_for(v, q, 48000.0));
-    active_latency_.store(latency_samples(), std::memory_order_relaxed);
+    reported_latency_.store(reported_latency_for(48000.0), std::memory_order_relaxed);
+    active_latency_.store(latency_for(kValveDefault, kQualityDefault, 48000.0), std::memory_order_relaxed);
 }
 
 Engine::~Engine() { release(); }
@@ -112,9 +121,9 @@ bool Engine::prepare(double sample_rate) {
     prepared_.store(false, std::memory_order_relaxed);
     if (!(sample_rate > 0.0) || !std::isfinite(sample_rate)) return false;
     fs_ = sample_rate;
-    for (int v = 0; v < kNumValves; ++v)
-        for (int q = 0; q < kNumQualities; ++q)
-            target_latency_[v][q].store(latency_for(v, q, sample_rate), std::memory_order_relaxed);
+    const int reported = reported_latency_for(sample_rate);
+    if (reported > kRing - kChunk) return false;        // never at the rates the cores have geometry for (<= 130)
+    reported_latency_.store(reported, std::memory_order_relaxed);
     const Config want = target_config();
     double b = bias_t_.load(std::memory_order_relaxed);
     int st = build(*slot_[0], want, b);
@@ -145,7 +154,6 @@ bool Engine::prepare(double sample_rate) {
     pending_.store(-1, std::memory_order_relaxed);
     audio_slot_.store(0, std::memory_order_relaxed);
     adopt(0);
-    notified_latency_ = slot_[0]->latency;
     ramp_len_ = seconds_to_samples(kRampSeconds, fs_);
     bypass_len_ = seconds_to_samples(kBypassSeconds, fs_);
     switch_len_ = seconds_to_samples(kSwitchSeconds, fs_);
@@ -174,7 +182,11 @@ std::uint64_t Engine::nonconverged_total() const {
 void Engine::adopt(int slot) noexcept {
     active_ = slot;
     const Slot& s = *slot_[slot];
-    dry_delay_ = s.latency;
+    pad_ = latency_samples() - s.latency;               // >= 0: reported is the max over every stage at this rate
+    if (pad_ < 0) pad_ = 0;
+    wet_pos_ = 0;                                       // the old stage's delayed tail does not leak into the new one
+    for (auto& ch : wet_)
+        for (double& v : ch) v = 0.0;
     active_latency_.store(s.latency, std::memory_order_relaxed);
     active_valve_.store(s.cfg.valve, std::memory_order_relaxed);
     active_quality_.store(s.cfg.quality, std::memory_order_relaxed);
@@ -193,9 +205,13 @@ void Engine::reset_audio_state() noexcept {
     bypass_.snap(byp ? 1.0 : 0.0);
     sw_env_.snap(1.0);
     sw_ = Switch::idle;
-    dry_delay_ = s.latency;
-    ring_pos_ = 0;
+    dry_delay_ = latency_samples();
+    pad_ = dry_delay_ - s.latency;
+    if (pad_ < 0) pad_ = 0;
+    ring_pos_ = wet_pos_ = 0;
     for (auto& ch : ring_)
+        for (double& v : ch) v = 0.0;
+    for (auto& ch : wet_)
         for (double& v : ch) v = 0.0;
 }
 
@@ -281,23 +297,39 @@ void Engine::process_chunk(const float* const* in, float* const* out, int nch, i
         s.pen[0].process(bufL_, bufL_, std::size_t(n));
         if (nch > 1) s.pen[1].process(bufR_, bufR_, std::size_t(n));
     }
+    // 3. output gain, on the stage's own timeline (as before the pad existed: an Output move lines up with the same
+    // stage samples), then the pad from the stage's latency up to the reported one: an exact integer delay
+    for (int i = 0; i < n; ++i) {
+        const double g = output_.next();
+        bufL_[i] *= g;
+        bufR_[i] *= g;
+    }
+    if (pad_ > 0) {
+        for (int i = 0; i < n; ++i) {
+            const std::uint32_t w = (wet_pos_ + std::uint32_t(i)) & mask, r = (w - std::uint32_t(pad_)) & mask;
+            wet_[0][w] = bufL_[i];
+            wet_[1][w] = bufR_[i];
+            bufL_[i] = wet_[0][r];
+            bufR_[i] = wet_[1][r];
+        }
+        wet_pos_ = (wet_pos_ + std::uint32_t(n)) & mask;
+    }
 
-    // 3. output gain, bypass crossfade, switch envelope
+    // 4. bypass crossfade (against the dry input delayed by the reported latency), switch envelope
     float* outL = out[0] + off;
     float* outR = nch > 1 ? out[1] + off : nullptr;
     const bool plain = sw_ == Switch::idle && !bypass_.moving() && bypass_.cur == 0.0;
     if (plain) {
         for (int i = 0; i < n; ++i) {
-            const double g = output_.next();
-            outL[i] = float(g * bufL_[i]);
-            if (outR) outR[i] = float(g * bufR_[i]);
+            outL[i] = float(bufL_[i]);
+            if (outR) outR[i] = float(bufR_[i]);
         }
     } else {
         for (int i = 0; i < n; ++i) {
-            const double g = output_.next(), b = bypass_.next(), e = sw_env_.next();
+            const double b = bypass_.next(), e = sw_env_.next();
             const std::uint32_t r = (ring_pos_ + std::uint32_t(i) - std::uint32_t(dry_delay_)) & mask;
-            outL[i] = float(((1.0 - b) * (g * bufL_[i]) + b * ring_[0][r]) * e);
-            if (outR) outR[i] = float(((1.0 - b) * (g * bufR_[i]) + b * ring_[1][r]) * e);
+            outL[i] = float(((1.0 - b) * bufL_[i] + b * ring_[0][r]) * e);
+            if (outR) outR[i] = float(((1.0 - b) * bufR_[i] + b * ring_[1][r]) * e);
         }
     }
     ring_pos_ = (ring_pos_ + std::uint32_t(n)) & mask;
@@ -337,13 +369,6 @@ void Engine::worker_poll() {
     // Wait while the audio thread has not adopted the last prepared slot: the idle slot is not known to be free.
     if (pending_.load(std::memory_order_acquire) >= 0) return;
     if (audio_slot_.load(std::memory_order_acquire) != designated_) return;
-
-    // the audio thread runs designated_; tell listeners once its latency is in effect
-    const int lat = active_latency_.load(std::memory_order_relaxed);
-    if (lat != notified_latency_) {
-        notified_latency_ = lat;
-        if (latency_listener_) latency_listener_();
-    }
 
     const Config t = target_config();
     if (t == des_cfg_) return;

@@ -3,10 +3,10 @@
  * Loads the .vst3 module, instantiates processor + controller with the SDK's PlugProvider, sets the state before
  * activation (so prepare() sees the settings), renders in varying blocks through IAudioProcessor::process, and
  * compares to the path's core (null_common.h). Then, through process() parameter changes only (the controller is not
- * told), a live quality / bias change and then a valve switch: getLatencySamples() is the running stage's, so it only
- * changes once the processor has adopted the switch; the processor reports that through its read-only Latency output
- * parameter; handed to the controller, it makes the controller call restartComponent(kLatencyChanged); and after a
- * reset the new path nulls exactly against its own core. Then NaN host values (processor queue and controller) are
+ * told), a live quality / bias change and then a valve switch: getLatencySamples() stays the rate's constant
+ * throughout (the engine pads every stage to it, so delay compensation never goes stale and nothing needs a restart);
+ * getTailSamples() follows the running valve, which shows the adoption; and after a reset the new path nulls exactly
+ * against its own core. Then NaN host values (processor queue and controller) are
  * ignored and the saved state still reloads; the controller's list displays agree with the processor's index for
  * values between entries. Then the saved state (#114): getState after the switch carries every value of both paths and
  * is readable by the pre-#114 reader (version 1, five values); a pre-#114 state loads on the 12AX7 path with the 6AS6
@@ -43,31 +43,6 @@ namespace {
 
 constexpr int32 kMaxBlock = 4096;
 
-// output parameter changes the processor wrote, in order (id, last value of the block)
-std::vector<std::pair<ParamID, ParamValue>> g_outputs;
-constexpr ParamID kLatencyParam = 1000;                 // map_vst3.cpp
-constexpr double kLatencyScale = 1024.0;
-
-class Handler : public IComponentHandler {              // counts what the controller asks of the host
-public:
-    int latency_restarts = 0;
-    tresult PLUGIN_API beginEdit(ParamID) override { return kResultOk; }
-    tresult PLUGIN_API performEdit(ParamID, ParamValue) override { return kResultOk; }
-    tresult PLUGIN_API endEdit(ParamID) override { return kResultOk; }
-    tresult PLUGIN_API restartComponent(int32 flags) override {
-        if (flags & kLatencyChanged) ++latency_restarts;
-        return kResultOk;
-    }
-    tresult PLUGIN_API queryInterface(const TUID iid, void** obj) override {
-        QUERY_INTERFACE(iid, obj, FUnknown::iid, IComponentHandler)
-        QUERY_INTERFACE(iid, obj, IComponentHandler::iid, IComponentHandler)
-        *obj = nullptr;
-        return kNoInterface;
-    }
-    uint32 PLUGIN_API addRef() override { return 1; }
-    uint32 PLUGIN_API release() override { return 1; }
-};
-
 int render(IAudioProcessor* proc, HostProcessData& data, const std::vector<float>& L, const std::vector<float>& R,
            std::vector<float>& oL, std::vector<float>& oR, std::size_t n, ParameterChanges* changes,
            bool realtime_pace) {
@@ -82,17 +57,7 @@ int render(IAudioProcessor* proc, HostProcessData& data, const std::vector<float
             for (int32 i = 0; i < frames; ++i) dst[i] = pos + std::size_t(i) < src.size() ? src[pos + std::size_t(i)] : 0.0f;
         }
         data.inputParameterChanges = (changes && pos == 0) ? changes : nullptr;
-        ParameterChanges outs;
-        data.outputParameterChanges = &outs;
         if (proc->process(data) != kResultOk) { std::fprintf(stderr, "FAIL: process\n"); return 1; }
-        data.outputParameterChanges = nullptr;
-        for (int32 q = 0; q < outs.getParameterCount(); ++q) {   // what a host hands to the controller
-            IParamValueQueue* queue = outs.getParameterData(q);
-            ParamValue v = 0.0;
-            int32 off = 0;
-            if (queue && queue->getPointCount() > 0 && queue->getPoint(queue->getPointCount() - 1, off, v) == kResultTrue)
-                g_outputs.push_back({queue->getParameterId(), v});
-        }
         for (int c = 0; c < 2; ++c) {
             const float* src = data.outputs[0].channelBuffers32[c];
             float* dst = (c == 0 ? oL.data() : oR.data()) + pos;
@@ -205,7 +170,7 @@ int main(int argc, char** argv) {
     for (double fs : {48000.0, 44100.0, 96000.0, s.fs}) {
         setup.sampleRate = fs;
         if (proc->setupProcessing(setup) != kResultOk) { std::fprintf(stderr, "FAIL: setupProcessing\n"); return 1; }
-        const int want = mapvs::Engine::latency_for(s.valve, s.quality, fs);
+        const int want = mapvs::Engine::reported_latency_for(fs);
         const int tail = want + int(std::lround(mapvs::tail_seconds(s.valve) * fs));
         if (int(proc->getLatencySamples()) != want || int(proc->getTailSamples()) != tail) {
             std::fprintf(stderr, "FAIL: pre-activation latency/tail at %.0f Hz\n", fs); return 1;
@@ -224,21 +189,20 @@ int main(int argc, char** argv) {
     if (render(proc, data, L, R, pL, pR, L.size(), nullptr, false)) return 1;
     int ref_latency = 0;
     if (!reference(s, L, R, rL, rR, ref_latency)) { std::fprintf(stderr, "FAIL: reference prepare\n"); return 1; }
-    const Diff dl = compare(pL, rL), dr = compare(pR, rR);
     const uint32 lat = proc->getLatencySamples();
+    const int reported = mapvs::Engine::reported_latency_for(s.fs), pad = reported - ref_latency;
+    const Diff dl = compare(pL, delayed(rL, pad)), dr = compare(pR, delayed(rR, pad));
     std::printf("VST 3 \"%s\" (%s)\n", name.c_str(), path.c_str());
     std::printf("settings: %s, drive %.17g, output %.17g, %zu samples (%.3g s), stereo, float32, blocks cycling "
                 "1..4096\n", describe(s).c_str(), s.drive, s.output, L.size(), s.seconds);
-    std::printf("latency: getLatencySamples %u; core %d samples\n", unsigned(lat), ref_latency);
+    std::printf("latency: getLatencySamples %u = the rate's constant %d = core %d + pad %d samples\n", unsigned(lat),
+                reported, ref_latency, pad);
     std::printf("null L: max abs diff %.3g (at %zu, ref peak %.4g), nonfinite %zu\n", dl.max_abs, dl.at, dl.peak_ref,
                 dl.nonfinite);
     std::printf("null R: max abs diff %.3g (at %zu, ref peak %.4g), nonfinite %zu\n", dr.max_abs, dr.at, dr.peak_ref,
                 dr.nonfinite);
     bool ok = dl.max_abs == 0.0 && dr.max_abs == 0.0 && dl.nonfinite == 0 && dr.nonfinite == 0 &&
-              int(lat) == ref_latency;
-
-    Handler handler;
-    ctrl->setComponentHandler(&handler);
+              int(lat) == reported;
 
     // 2. live, through process() parameter changes only, realtime-paced so the worker runs
     const int target_q = s.quality == mapvs::kHQ ? mapvs::kEco : mapvs::kHQ;
@@ -260,30 +224,24 @@ int main(int argc, char** argv) {
             if (auto* q = changes.addParameterData(mapvs::kValve, idx)) q->addPoint(0, live_norm[mapvs::kValve], idx);
         }
         const int valve = step == 0 ? s.valve : other_valve;
-        const int want = mapvs::Engine::latency_for(valve, target_q, s.fs);
+        // the tail follows the running valve (0.2 s 12AX7, 0.8 s 6AS6): it shows when the processor has adopted it
+        const int tail_want = reported + int(std::lround(mapvs::tail_seconds(valve) * s.fs));
         const int before = int(proc->getLatencySamples());
-        g_outputs.clear();
-        const int restarts0 = handler.latency_restarts;
+        bool constant = true;
         if (render(proc, data, L, R, qL, qR, nlive, &changes, true)) return 1;
-        for (int k = 0; k < 20 && int(proc->getLatencySamples()) != want; ++k)   // adoption: worker build + 10 ms fades
+        for (int k = 0; k < 40 && int(proc->getTailSamples()) != tail_want; ++k) {   // worker build + 10 ms fades
             if (render(proc, data, L, R, qL, qR, std::size_t(0.02 * s.fs), nullptr, true)) return 1;
+            constant = constant && int(proc->getLatencySamples()) == reported;
+        }
         const int lat2 = int(proc->getLatencySamples());
         std::size_t bad = 0;
         for (std::size_t i = 0; i < nlive; ++i) bad += !std::isfinite(qL[i]) || !std::isfinite(qR[i]);
-        // the output parameter the processor reported, handed to the controller as a host does
-        double reported = -1.0;
-        for (auto& [id, v] : g_outputs)
-            if (id == kLatencyParam) {
-                reported = v;
-                ctrl->setParamNormalized(id, v);
-            }
-        const bool moved = want != before;
-        const bool told = !moved || (std::lround(reported * kLatencyScale) == want && handler.latency_restarts > restarts0);
-        std::printf("live (processor queue only): quality -> %s, bias -> 1.5%s%s: getLatencySamples %d -> %d (want %d), "
-                    "reported %ld, restartComponent(kLatencyChanged) x%d, nonfinite %zu\n",
-                    quality_name(target_q), step ? ", valve -> " : "", step ? valve_name(valve) : "", before, lat2, want,
-                    std::lround(reported * kLatencyScale), handler.latency_restarts - restarts0, bad);
-        ok = ok && lat2 == want && told && bad == 0;
+        const bool adopted = int(proc->getTailSamples()) == tail_want;
+        std::printf("live (processor queue only): quality -> %s, bias -> 1.5%s%s: getLatencySamples %d -> %d (the rate's "
+                    "constant %d throughout: %s), running valve %s, nonfinite %zu\n",
+                    quality_name(target_q), step ? ", valve -> " : "", step ? valve_name(valve) : "", before, lat2,
+                    reported, constant ? "yes" : "NO", adopted ? "adopted" : "NOT adopted", bad);
+        ok = ok && before == reported && lat2 == reported && constant && adopted && bad == 0;
     }
     {   // the switched-to path nulls exactly against its own core (setProcessing resets the running stage)
         Settings t = s;
@@ -296,10 +254,10 @@ int main(int argc, char** argv) {
         if (render(proc, data, L, R, tL, tR, L.size(), nullptr, false)) return 1;
         int lat3 = 0;
         if (!reference(t, L, R, xL, xR, lat3)) { std::fprintf(stderr, "FAIL: reference prepare\n"); return 1; }
-        const Diff a = compare(tL, xL), b = compare(tR, xR);
-        std::printf("null after the live switch to %s: max abs diff L %.3g R %.3g, latency %u (core %d)\n",
-                    describe(t).c_str(), a.max_abs, b.max_abs, unsigned(proc->getLatencySamples()), lat3);
-        ok = ok && a.max_abs == 0.0 && b.max_abs == 0.0 && a.nonfinite == 0 && int(proc->getLatencySamples()) == lat3;
+        const Diff a = compare(tL, delayed(xL, reported - lat3)), b = compare(tR, delayed(xR, reported - lat3));
+        std::printf("null after the live switch to %s: max abs diff L %.3g R %.3g, latency %u (core %d + pad %d)\n",
+                    describe(t).c_str(), a.max_abs, b.max_abs, unsigned(proc->getLatencySamples()), lat3, reported - lat3);
+        ok = ok && a.max_abs == 0.0 && b.max_abs == 0.0 && a.nonfinite == 0 && int(proc->getLatencySamples()) == reported;
     }
 
     // 3. NaN host values are ignored: processor queue (Valve, 6AS6 Bias, Mode, Drive) and controller

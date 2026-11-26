@@ -27,15 +27,6 @@ namespace mapvs {
 static const FUID kProcessorUID(MAP_VST3_PROCESSOR_UID);
 static const FUID kControllerUID(MAP_VST3_CONTROLLER_UID);
 
-/* Read-only, hidden output parameter: the processor writes the latency of the stage it is running (normalized:
- * samples / kLatencyScale) into the host's output parameter changes whenever that changes, and the controller, which
- * the host hands those changes to on its own thread, asks the host to re-read the latency. So a switch reaches delay
- * compensation however the change arrived (controller edit, processor automation, state) and only once it is in
- * effect. Not part of the saved state. */
-static constexpr Steinberg::Vst::ParamID kLatencyParam = 1000;
-static constexpr double kLatencyScale = 1024.0;   // > any latency the engine runs (Engine::kRing - kChunk)
-static_assert(Engine::kRing - Engine::kChunk < int(kLatencyScale), "latency fits the output parameter");
-
 // state (map_params.h, "saved state"): the pre-#114 head (version 1, 5 values), then the #114 extension if present.
 // Refused (false, norm untouched) for another head version, a short stream or a NaN / inf value.
 static bool read_state(IBStream* s, double (&norm)[kNumParams]) {
@@ -122,13 +113,12 @@ public:
     tresult PLUGIN_API canProcessSampleSize(int32 size) override {
         return size == kSample32 ? kResultTrue : kResultFalse;
     }
-    // Active: the latency of the stage the engine is running (what the output is delayed by), including a fallback
-    // path. Before activation (hosts query after setupProcessing): the latency the requested valve and quality will
-    // have at the set-up rate.
+    // One constant per sample rate, whatever valve and quality run (Engine::reported_latency_for; the engine pads every
+    // stage to it), so a switch never changes what the host compensates and needs no restartComponent. Hosts may
+    // query after setupProcessing and before activation.
     uint32 PLUGIN_API getLatencySamples() override {
-        if (engine_.prepared()) return uint32(engine_.active_latency_samples());
         const double fs = processSetup.sampleRate > 0.0 ? processSetup.sampleRate : 48000.0;
-        return uint32(Engine::latency_for(engine_.valve_target(), engine_.quality_target(), fs));
+        return uint32(Engine::reported_latency_for(fs));
     }
     uint32 PLUGIN_API getTailSamples() override {
         const double fs = processSetup.sampleRate > 0.0 ? processSetup.sampleRate : 48000.0;
@@ -140,7 +130,6 @@ public:
     tresult PLUGIN_API setActive(TBool state) override {
         if (state) {
             if (!engine_.prepare(processSetup.sampleRate)) return kResultFalse;
-            reported_latency_ = engine_.active_latency_samples();   // what getLatencySamples() now returns
         } else {
             engine_.release();
         }
@@ -164,14 +153,12 @@ public:
                 if (np > 0 && queue->getPoint(np - 1, offset, v) == kResultTrue) apply(queue->getParameterId(), v);
             }
         }
-        report_latency(data);
         if (data.numSamples <= 0 || data.numInputs < 1 || data.numOutputs < 1) return kResultOk;
         AudioBusBuffers& in = data.inputs[0];
         AudioBusBuffers& out = data.outputs[0];
         const int32 nch = in.numChannels < out.numChannels ? in.numChannels : out.numChannels;
         if (nch < 1 || !in.channelBuffers32 || !out.channelBuffers32) return kResultOk;
         engine_.process(in.channelBuffers32, out.channelBuffers32, int(nch), int(data.numSamples));
-        report_latency(data);                           // a switch adopted in this block
         // channels beyond what the engine handles (none with the arrangements above) stay silent
         for (int32 c = nch; c < out.numChannels; ++c)
             for (int32 i = 0; i < data.numSamples; ++i) out.channelBuffers32[c][i] = 0.0f;
@@ -194,18 +181,6 @@ public:
     }
 
 private:
-    // audio thread: tell the controller (through the host's output parameter changes, preallocated by the host) when
-    // the running latency differs from the one last reported; retried next block if the host gave no container
-    void report_latency(ProcessData& data) {
-        const int lat = engine_.active_latency_samples();
-        if (lat == reported_latency_ || !data.outputParameterChanges) return;
-        int32 index = 0;
-        if (IParamValueQueue* q = data.outputParameterChanges->addParameterData(kLatencyParam, index)) {
-            int32 point = 0;
-            if (q->addPoint(0, double(lat) / kLatencyScale, point) == kResultTrue) reported_latency_ = lat;
-        }
-    }
-
     // any thread; realtime-safe (atomics only). A NaN / inf value from a host is ignored: it is neither applied nor
     // stored, so it cannot reach the saved state or an integer conversion.
     void apply(Steinberg::Vst::ParamID id, double n) {
@@ -228,7 +203,6 @@ private:
 
     Engine engine_;
     std::atomic<double> norm_[kNumParams]{};
-    int reported_latency_ = -1;                         // audio thread, or setActive() (never concurrently)
 };
 
 // ---- controller --------------------------------------------------------------------------------------------------
@@ -257,8 +231,6 @@ public:
                                                    kBias6Range.max, kBias6Range.def, 0, ParameterInfo::kCanAutomate));
         add_list(parameters, STR16("6AS6 Mode"), kMode6, kMode6Names, kNumModes6, kMode6Default);
         add_list(parameters, STR16("6AS6 Filter"), kFilter6, kFilter6Names, kNumFilters6, kFilter6Default);
-        parameters.addParameter(STR16("Latency"), STR16("samples"), 0, 0.0,
-                                ParameterInfo::kIsReadOnly | ParameterInfo::kIsHidden, kLatencyParam);
         return kResultOk;
     }
 
@@ -269,29 +241,10 @@ public:
         return kResultOk;
     }
 
-    // Ask the host to re-read the latency (UI / main thread, not the audio thread):
-    //   - when the processor reports that the running latency changed (kLatencyParam: the switch is in effect);
-    //   - when a Quality / Valve edit will move it, so a host that reactivates on kLatencyChanged prepares the new
-    //     stage at once (a host that only re-reads then sees the running latency, and is told again on adoption).
-    // A NaN / inf value is refused.
+    // A NaN / inf value is refused. (The latency does not depend on any parameter: nothing to restart.)
     tresult PLUGIN_API setParamNormalized(Steinberg::Vst::ParamID tag, ParamValue value) override {
         if (!std::isfinite(value)) return kResultFalse;
-        const bool moves = tag == kQuality || tag == kValve;
-        const int before = moves ? latency_index() : 0;
-        const ParamValue lat_before = tag == kLatencyParam ? getParamNormalized(tag) : 0.0;
-        const tresult r = EditController::setParamNormalized(tag, value);
-        if (r != kResultOk || !componentHandler) return r;
-        if ((moves && latency_index() != before) || (tag == kLatencyParam && getParamNormalized(tag) != lat_before))
-            componentHandler->restartComponent(kLatencyChanged);
-        return r;
-    }
-
-private:
-    // (valve, quality) as the engine maps them to a latency: on the 6AS6 path Eco and Standard are the same
-    int latency_index() {
-        const int v = index_from_norm(getParamNormalized(kValve), kNumValves);
-        const int q = quality_from_norm(getParamNormalized(kQuality));
-        return v * kNumQualities + (v == k6AS6 ? quality_6as6(q) : q);
+        return EditController::setParamNormalized(tag, value);
     }
 };
 

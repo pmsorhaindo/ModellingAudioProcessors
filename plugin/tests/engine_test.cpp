@@ -1,12 +1,14 @@
 /* engine_test.cpp -- tests of mapvs::Engine, the realtime part both wrappers share (#22, #114).
  *
- *   1. null against the direct core, each path (exact, the existing convention):
+ *   1. null against the direct core, each path (exact, the existing convention, after the engine's integer pad from the
+ *      stage's latency to the reported one):
  *      12AX7  3 qualities x 44.1 / 48 / 96 kHz, stereo and mono, varying blocks
  *      6AS6   3 qualities (Eco runs Standard) x 44.1 / 48 / 96 kHz, stereo and mono; and at 48 kHz T at 0.6 mA (built
  *             at the 0.5 mA cap), T with the 4k filter, P2 (experimental) with the 7k filter, P1 0.6 mA with 7k
  *   2. bypass, each path: fully bypassed output == input delayed by the reported latency (exact); crossfade finite
  *   3. live switches through the worker, realtime-paced: 12AX7 quality / bias, valve 12AX7 -> 6AS6, 6AS6 mode / bias /
- *      quality / filter, 6AS6 -> 12AX7. Each is adopted, the latency follows, the output stays finite, and process()
+ *      quality / filter, 6AS6 -> 12AX7. Each is adopted, the reported latency stays the rate's constant (the stage's
+ *      own changes), the output stays finite, and process()
  *      neither allocates (operator new counted) nor locks, waits or makes a listed syscall (rt_hooks.cpp)
  *   4. after a live path switch, each path nulls against its own core again (after request_reset); a filter-only
  *      change on the running 6AS6 stage nulls against the core switched at the same block
@@ -114,18 +116,20 @@ static void null_case(mapvs::Engine& e, const Settings& s, const std::string& la
     e.set_bypass(false);
     e.prepare(s.fs);
     run_engine(e, L, R, pL, pR, 2);
-    const Diff dl = compare(pL, rL), dr = compare(pR, rR);
-    check(dl.max_abs == 0.0 && dr.max_abs == 0.0 && dl.nonfinite == 0 && dr.nonfinite == 0 && e.latency_samples() == lat &&
-              e.active_latency_samples() == lat && e.active_valve() == s.valve && e.build_status() == 0,
+    const int reported = mapvs::Engine::reported_latency_for(s.fs), pad = reported - lat;
+    const Diff dl = compare(pL, delayed(rL, pad)), dr = compare(pR, delayed(rR, pad));
+    check(dl.max_abs == 0.0 && dr.max_abs == 0.0 && dl.nonfinite == 0 && dr.nonfinite == 0 &&
+              e.latency_samples() == reported && e.active_latency_samples() == lat && e.active_valve() == s.valve &&
+              e.build_status() == 0,
           "null stereo " + label,
-          fmt("max abs diff L %.3g R %.3g, latency %.0f", dl.max_abs, dr.max_abs, double(e.latency_samples())) +
-              fmt(" (core %.0f), ref peak %.3g", double(lat), dl.peak_ref));
+          fmt("max abs diff L %.3g R %.3g, reported latency %.0f", dl.max_abs, dr.max_abs, double(e.latency_samples())) +
+              fmt(" = core %.0f + pad %.0f", double(lat), double(pad)));
     // mono: the left channel through the mono path equals the reference's left channel fed L on both lanes
     std::vector<float> rLm, rRm;
     reference(s, L, L, rLm, rRm, lat);
     e.prepare(s.fs);
     run_engine(e, L, L, pL, pR, 1);
-    const Diff dm = compare(pL, rLm);
+    const Diff dm = compare(pL, delayed(rLm, pad));
     check(dm.max_abs == 0.0 && dm.nonfinite == 0, "null mono   " + label, fmt("max abs diff %.3g", dm.max_abs));
 }
 
@@ -268,8 +272,8 @@ int main() {
         e.set_bias(2.0);
         bool ok = run_until(e, L, R, pL, pR, finite, [&] { return e.active_quality() == mapvs::kHQ && e.applied_bias() == 2.0; });
         check(ok && finite && e.active_latency_samples() == Engine::latency_for(mapvs::k12AX7, mapvs::kHQ, fs) &&
-                  e.latency_samples() == e.active_latency_samples() && e.build_status() == 0,
-              "live 12AX7: quality -> HQ, bias -> 2.0 adopted, latency follows, finite" + at);
+                  e.latency_samples() == Engine::reported_latency_for(fs) && e.build_status() == 0,
+              "live 12AX7: quality -> HQ, bias -> 2.0 adopted, stage latency follows, reported constant, finite" + at);
 
         e.set_valve(mapvs::k6AS6);
         e.set_mode6(mapvs::kP1);
@@ -278,8 +282,8 @@ int main() {
         ok = run_until(e, L, R, pL, pR, finite, [&] { return e.active_valve() == mapvs::k6AS6; });
         check(ok && finite && e.active_quality() == mapvs::kStandard &&
                   e.active_latency_samples() == Engine::latency_for(mapvs::k6AS6, mapvs::kStandard, fs) &&
-                  e.latency_samples() == e.active_latency_samples() && e.build_status() == 0,
-              "live valve 12AX7 -> 6AS6 adopted, latency follows, finite" + at,
+                  e.latency_samples() == Engine::reported_latency_for(fs) && e.build_status() == 0,
+              "live valve 12AX7 -> 6AS6 adopted, stage latency follows, reported constant, finite" + at,
               fmt("latency %.0f -> %.0f", double(Engine::latency_for(mapvs::k12AX7, mapvs::kHQ, fs)),
                   double(e.active_latency_samples())));
 
@@ -301,7 +305,8 @@ int main() {
         // Eco on the 6AS6 path is Standard: a change between them builds nothing (same config)
         e.set_quality(mapvs::kEco);
         ok = run_until(e, L, R, pL, pR, finite, [&] { return e.active_quality() == mapvs::kStandard; });
-        check(ok && finite && e.latency_samples() == Engine::latency_for(mapvs::k6AS6, mapvs::kStandard, fs),
+        check(ok && finite && e.active_latency_samples() == Engine::latency_for(mapvs::k6AS6, mapvs::kStandard, fs) &&
+                  e.latency_samples() == Engine::reported_latency_for(fs),
               "live 6AS6 quality -> Eco runs Standard" + at);
 
         e.set_valve(mapvs::k12AX7);
@@ -309,8 +314,8 @@ int main() {
         ok = run_until(e, L, R, pL, pR, finite,
                        [&] { return e.active_valve() == mapvs::k12AX7 && e.active_quality() == mapvs::kEco && e.applied_bias() == 0.5; });
         check(ok && finite && e.active_latency_samples() == Engine::latency_for(mapvs::k12AX7, mapvs::kEco, fs) &&
-                  e.latency_samples() == e.active_latency_samples(),
-              "live valve 6AS6 -> 12AX7 (Eco, bias 0.5) adopted, latency follows, finite" + at);
+                  e.latency_samples() == Engine::reported_latency_for(fs),
+              "live valve 6AS6 -> 12AX7 (Eco, bias 0.5) adopted, stage latency follows, reported constant, finite" + at);
 
         check(g_allocs.load() == 0, "no allocation in process() through every switch" + at,
               fmt("%.0f allocations", double(g_allocs.load())));
@@ -339,8 +344,10 @@ int main() {
             int lat = 0;
             reference(t, L, R, rL, rR, lat);
             run_engine(e, L, R, pL, pR, 2);
-            const Diff dl = compare(pL, rL), dr = compare(pR, rR);
-            check(ok && dl.max_abs == 0.0 && dr.max_abs == 0.0 && e.active_latency_samples() == lat,
+            const int pad = e.latency_samples() - lat;
+            const Diff dl = compare(pL, delayed(rL, pad)), dr = compare(pR, delayed(rR, pad));
+            check(ok && dl.max_abs == 0.0 && dr.max_abs == 0.0 && e.active_latency_samples() == lat &&
+                      e.latency_samples() == Engine::reported_latency_for(fs),
                   "null after a live switch to " + describe(t), fmt("max abs diff L %.3g R %.3g", dl.max_abs, dr.max_abs));
         }
     }
@@ -384,10 +391,12 @@ int main() {
             ref[0].process(L.data() + pos, rL.data() + pos, n);
             ref[1].process(R.data() + pos, rR.data() + pos, n);
         }
-        const Diff dl = compare(pL, rL), dr = compare(pR, rR);
+        const int pad = e.latency_samples() - lat;
+        const Diff dl = compare(pL, delayed(rL, pad)), dr = compare(pR, delayed(rR, pad));
+        const std::vector<float> uLd = delayed(uL, pad);
         double moved = 0.0;
-        for (std::size_t i = at + std::size_t(0.015 * s.fs) + std::size_t(lat); i < L.size(); ++i)
-            moved = std::fmax(moved, std::fabs(double(pL[i]) - double(uL[i])));
+        for (std::size_t i = at + std::size_t(0.015 * s.fs) + std::size_t(e.latency_samples()); i < L.size(); ++i)
+            moved = std::fmax(moved, std::fabs(double(pL[i]) - double(uLd[i])));
         check(dl.max_abs == 0.0 && dr.max_abs == 0.0 && moved > 1e-3 && e.active_valve() == mapvs::k6AS6 &&
                   g_allocs.load() == 0 && map_rt_count() == 0,
               std::string("live 6AS6 filter-only change Off -> ") + mapvs::kFilter6Names[to] +
@@ -457,6 +466,20 @@ int main() {
                   finite && e.active_latency_samples() == Engine::latency_for(mapvs::k12AX7, s.quality, s.fs),
               "6AS6 at 1234.5678 Hz (the core refuses the rate): prepare succeeds on the 12AX7 path, finite",
               fmt("6AS6 status %.0f", double(e.build_status())));
+    }
+
+    // 6c. the reported latency: one constant per rate, the largest stage latency there (6AS6 HQ), so every stage fits
+    {
+        bool fits = true;
+        for (double fs : {44100.0, 48000.0, 96000.0, 1234.5678})
+            for (int v = 0; v < mapvs::kNumValves; ++v)
+                for (int q = 0; q < mapvs::kNumQualities; ++q)
+                    fits = fits && Engine::latency_for(v, q, fs) <= Engine::reported_latency_for(fs);
+        check(fits && Engine::reported_latency_for(48000.0) == 82 && Engine::reported_latency_for(44100.0) == 130 &&
+                  Engine::reported_latency_for(48000.0) == Engine::latency_for(mapvs::k6AS6, mapvs::kHQ, 48000.0),
+              "reported latency per rate: 82 at 48 kHz, 130 at 44.1 kHz (6AS6 HQ), every stage <= it",
+              fmt("12AX7 Eco pad at 48 kHz: %.0f samples", double(Engine::reported_latency_for(48000.0) -
+                                                                   Engine::latency_for(mapvs::k12AX7, mapvs::kEco, 48000.0))));
     }
 
     // 7. the 12AX7 Bias range ends; the T cap is the core's supported envelope
