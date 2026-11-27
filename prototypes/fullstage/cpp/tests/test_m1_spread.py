@@ -11,10 +11,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TIMING = os.path.join(ROOT, "m1_timing")
 
 
-def _row(ns, ns_min, on=1.0, pcore=1.0, quality="hq", inst=2, path=None, cycles=1000):
-    r = {"quality": quality, "os": 16, "variant": "P1_0.45mA", "level_v": 8.0, "block": 64, "instances": inst,
+def _row(ns, ns_min, on=1.0, pcore=1.0, quality="hq", inst=2, path=None, cycles=1000, os_=16, ghz=3.2):
+    r = {"quality": quality, "os": os_, "variant": "P1_0.45mA", "level_v": 8.0, "block": 64, "instances": inst,
          "ns_per_sample": ns, "ns_min": ns_min, "pct_core": ns * 48000 / 1e9 * 100, "cpu_on_fraction": on,
-         "p_core_fraction_min": pcore, "ghz_on_cpu": 3.2, "cycles_per_sample": cycles, "instr_per_sample": 2 * cycles}
+         "p_core_fraction_min": pcore, "ghz_on_cpu": ghz, "cycles_per_sample": cycles, "instr_per_sample": 2 * cycles}
     if path:
         r["path"] = path
     return r
@@ -30,7 +30,7 @@ def test_spread_known_values():
     # 20 000 ns per sample is 96 % of one core at 48 kHz; 25 000 is 120 %
     s = S.spread([_rec(_row(20000, 19000)), _rec(_row(25000, 18000)), _rec(_row(21000, 20000))])
     (k, v), = s.items()
-    assert k == ("hq", "P1_0.45mA", "x2", 8.0, 64)
+    assert k == ("hq", 16, "P1_0.45mA", "x2", 8.0, 64)
     assert v["pct_runs"] == pytest.approx([96.0, 120.0, 100.8])
     assert v["pct_median"] == pytest.approx(100.8)
     assert v["spread"] == pytest.approx(25000 / 20000)
@@ -45,12 +45,34 @@ def test_clean_needs_every_run_on_cpu_on_p_cores_and_repeatable():
     assert not next(iter(S.spread(preempted).values()))["clean"]
     e_core = [_rec(_row(10000, 9900, pcore=S.CLEAN_P_CORE - 0.01)), _rec(_row(10200, 10000))]
     assert not next(iter(S.spread(e_core).values()))["clean"]
+    slow_clock = [_rec(_row(10000, 9900, ghz=S.CLEAN_GHZ - 0.1)), _rec(_row(10200, 10000))]
+    assert not next(iter(S.spread(slow_clock).values()))["clean"]
+
+
+@pytest.mark.parametrize("missing", ("p_core_fraction_min", "ghz_on_cpu"))
+def test_clean_needs_residency_and_clock_data(missing):
+    # a record without the counters (e.g. Linux or a VM: null) is no evidence of P-core residency or clock
+    recs = [_rec(_row(10000, 9900)), _rec(_row(10200, 10000))]
+    for rec in recs:
+        rec["results"][0][missing] = None
+    assert not next(iter(S.spread(recs).values()))["clean"]
+
+
+def test_different_factors_are_never_combined():
+    # an 8x and a 16x row with every other field equal are two configurations, in one run or across runs
+    s = S.spread([_rec(_row(10000, 9900, os_=8), _row(20000, 19800, os_=16))])
+    assert sorted(v["os"] for v in s.values()) == [8, 16]
+    assert sorted(round(v["pct_median"], 1) for v in s.values()) == [48.0, 96.0]
+    with pytest.raises(ValueError):
+        S.spread([_rec(_row(10000, 9900, os_=8)), _rec(_row(10000, 9900, os_=16))])
+    with pytest.raises(ValueError):   # the same configuration twice in one run
+        S.spread([_rec(_row(10000, 9900), _row(10100, 9900))])
 
 
 def test_modes_are_separate_configurations():
     # the 12AX7 StereoStage (s2) and two mono stages (x2) at the same settings are different rows
     rec = _rec(_row(1000, 900, path="stereo_simd"), _row(1500, 1400, path="mono"))
-    assert {k[2] for k in S.spread([rec])} == {"s2", "x2"}
+    assert {k[3] for k in S.spread([rec])} == {"s2", "x2"}
 
 
 def test_runs_must_hold_the_same_configurations():

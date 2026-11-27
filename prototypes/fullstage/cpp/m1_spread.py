@@ -19,11 +19,14 @@ The figures (cpp/BENCHMARK.md, "Reported per configuration"):
               under load, E-core cycles (P-core min below 1) and cache effects can still move them. On the quiet
               record itself it reproduces the measured median (test_m1_spread.py checks it).
   clean       every run of the configuration had its thread on a CPU for >= CLEAN_CPU_ON of the wall time (median pass),
-              >= CLEAN_P_CORE of its cycles on P-cores in its worst pass, and the run medians spread by <= CLEAN_SPREAD
+              >= CLEAN_P_CORE of its cycles on P-cores in its worst pass, a clock of >= CLEAN_GHZ (ghz_on_cpu), all
+              three counted (a row without them is not clean), and the run medians spread by <= CLEAN_SPREAD
               (max / min). These are #143's method choices, not a standard: they say when a run was not preempted, not
               moved to an E-core and repeatable, which is when the median is the stage's cost on a quiet M1. They were
               set on the quiet 13 Nov 2026 record (cpp/bench_apple_m1_simd_math.json, load average 1.7, one run:
-              on-CPU >= 0.9965, worst-pass P-core >= 0.933), where 116 of its 126 configurations pass them.
+              on-CPU >= 0.9965, worst-pass P-core >= 0.933, 3.15-3.17 GHz), where 116 of its 126 configurations
+              pass them. A configuration is its quality and oversampling factor together: rows that differ in
+              either are never combined.
 """
 import argparse
 import json
@@ -34,6 +37,7 @@ FS = 48000
 CLEAN_CPU_ON = 0.98
 CLEAN_P_CORE = 0.95
 CLEAN_SPREAD = 1.05
+CLEAN_GHZ = 3.1     # the quiet record held 3.15-3.17 GHz on every row
 QUIET_GHZ = 3.16    # cpp/bench_apple_m1_simd_math.json: median ghz_on_cpu 3.165 (3.15-3.17), rounded down (higher %)
 
 
@@ -43,11 +47,12 @@ def mode(r):
 
 
 def key(r):
-    return (r["quality"], r.get("variant") or r.get("math", ""), mode(r), r["level_v"], r["block"])
+    """A configuration: quality and its oversampling factor, setting (6AS6 variant / 12AX7 maths), mode, peak, block."""
+    return (r["quality"], r["os"], r.get("variant") or r.get("math", ""), mode(r), r["level_v"], r["block"])
 
 
 def label(k):
-    q, var, m, v, b = k
+    q, _, var, m, v, b = k
     return f"{q} {var} {m} {v:g} V b{b}"
 
 
@@ -60,13 +65,23 @@ def pct_at(cycles, ghz=QUIET_GHZ):
 
 
 def row_clean(r):
-    pc = r.get("p_core_fraction_min")
-    return r["cpu_on_fraction"] >= CLEAN_CPU_ON and (pc is None or pc >= CLEAN_P_CORE)
+    """One run of a configuration was clean: on a CPU, on P-cores and at the quiet clock. Missing residency or clock
+    data (a record without counters) is not evidence of a clean run."""
+    pc, ghz = r.get("p_core_fraction_min"), r.get("ghz_on_cpu")
+    return (r["cpu_on_fraction"] >= CLEAN_CPU_ON and pc is not None and pc >= CLEAN_P_CORE
+            and ghz is not None and ghz >= CLEAN_GHZ)
 
 
 def spread(records):
     """{key: summary} over the runs; every run must hold the same configurations."""
-    runs = [{key(r): r for r in rec["results"]} for rec in records]
+    runs = []
+    for i, rec in enumerate(records, 1):
+        run = {}
+        for r in rec["results"]:
+            if key(r) in run:
+                raise ValueError(f"run {i} holds {label(key(r))} ({r['os']}x) twice")
+            run[key(r)] = r
+        runs.append(run)
     keys = list(runs[0])
     for i, run in enumerate(runs[1:], 2):
         if set(run) != set(keys):
@@ -76,7 +91,7 @@ def spread(records):
         rows = [run[k] for run in runs]
         med = [r["pct_core"] for r in rows]
         out[k] = {
-            "os": rows[0]["os"],
+            "os": k[1],
             "pct_runs": med,
             "pct_median": statistics.median(med),
             "spread": max(med) / min(med),
@@ -121,7 +136,7 @@ def table(records, names):
                      f"{pc} | {gh} | {cy} | {eq} | {'yes' if v['clean'] else 'no'} |")
     n_clean = sum(v["clean"] for v in s.values())
     lines += ["", f"{n_clean} of {len(s)} configurations clean (on-CPU >= {CLEAN_CPU_ON}, P-core >= {CLEAN_P_CORE}, "
-              f"spread <= {CLEAN_SPREAD})."]
+              f">= {CLEAN_GHZ} GHz, spread <= {CLEAN_SPREAD})."]
     return "\n".join(lines)
 
 

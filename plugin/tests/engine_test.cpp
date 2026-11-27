@@ -1,5 +1,7 @@
 /* engine_test.cpp -- tests of mapvs::Engine, the realtime part both wrappers share (#22, #114).
  *
+ *   0b. the shipping defaults (#143): every parameter's plain and normalized default, and a fresh engine with no
+ *      parameter set nulls against the 6AS6 core at Standard, P1 0.45 mA, filter off, Drive / Output 1
  *   1. null against the direct core, each path (exact, the existing convention, after the engine's integer pad from the
  *      stage's latency to the reported one):
  *      12AX7  3 qualities x 44.1 / 48 / 96 kHz, stereo and mono, varying blocks
@@ -171,22 +173,48 @@ int main() {
     }
 
     // 0b. the shipping defaults (#143, Michael's decision of 27 Nov 2026): a new instance runs the 6AS6 path at
-    // Standard (8x), P1 0.45 mA, filter off. Standard misses the #113 criterion at 8 V (cpp/m1_timing/README.md);
-    // HQ stereo does not fit one M1 core. The host-facing defaults (AU plain, VST 3 normalized) must say the same.
+    // Standard (8x), P1, 0.45 mA, filter off, Drive and Output 1, not bypassed (cpp/m1_timing/README.md has why).
+    // The host-facing defaults, AU plain and VST 3 normalized, must say the same for every parameter.
     {
         using namespace mapvs;
         check(default_plain(kValve) == k6AS6 && default_plain(kQuality) == kStandard && default_plain(kMode6) == kP1 &&
                   default_plain(kBias6) == 0.45 && default_plain(kFilter6) == kFilterOff &&
-                  default_norm(kValve) == index_to_norm(k6AS6, kNumValves) &&
-                  default_norm(kQuality) == quality_to_norm(kStandard) && mapvs::quality_6as6(kQualityDefault) == kStandard,
-              "defaults (#143): 6AS6, Standard, P1, 0.45 mA, filter off, in plain and normalized values");
+                  default_plain(kDrive) == 1.0 && default_plain(kOutput) == 1.0 && default_plain(kBypass) == 0.0,
+              "defaults (#143), plain: 6AS6, Standard, P1, 0.45 mA, filter off, Drive / Output 1, bypass off");
+        check(default_norm(kValve) == index_to_norm(k6AS6, kNumValves) &&
+                  default_norm(kQuality) == quality_to_norm(kStandard) &&
+                  default_norm(kMode6) == index_to_norm(kP1, kNumModes6) &&
+                  default_norm(kBias6) == to_norm(kBias6Range, 0.45) &&
+                  default_norm(kFilter6) == index_to_norm(kFilterOff, kNumFilters6) &&
+                  default_norm(kDrive) == to_norm(kDriveRange, 1.0) && default_norm(kOutput) == to_norm(kOutputRange, 1.0) &&
+                  default_norm(kBypass) == 0.0,
+              "defaults (#143), normalized: the same values");
+        // a fresh engine with no parameter set nulls against the 6AS6 core built from those values written out
+        // independently (null_common.h: P1, 0.45 mA, filter off, Standard), so quality, mode, bias, filter and gains
+        // are all the defaults; the prepared filter is checked through its output, as in the filter nulls below
+        Settings d;
+        d.valve = k6AS6;
+        d.quality = kStandard;
+        d.bias6 = 0.45;
+        d.mode6 = kP1;
+        d.filter6 = kFilterOff;
+        d.drive = d.output = 1.0;
+        d.seconds = 0.25;
+        std::vector<float> L, R, pL, pR, rL, rR;
+        make_signal(d, L, R);
+        int lat = 0;
+        const bool ref_ok = reference(d, L, R, rL, rR, lat);
         auto fresh = std::make_unique<Engine>();
-        const bool ok = fresh->prepare(48000.0);
-        check(ok && fresh->active_valve() == k6AS6 && fresh->active_quality() == kStandard &&
-                  fresh->active_mode6() == kP1 && fresh->active_bias6() == 0.45 && !fresh->active_experimental() &&
-                  fresh->active_latency_samples() == Engine::latency_for(k6AS6, kStandard, 48000.0),
-              "a fresh engine, no parameter set, runs 6AS6 Standard (8x) P1 0.45 mA",
-              fmt("valve %.0f quality %.0f", double(fresh->active_valve()), double(fresh->active_quality())));
+        const bool ok = fresh->prepare(d.fs);
+        run_engine(*fresh, L, R, pL, pR, 2);
+        const int pad = Engine::reported_latency_for(d.fs) - lat;
+        const Diff dl = compare(pL, delayed(rL, pad)), dr = compare(pR, delayed(rR, pad));
+        check(ref_ok && ok && dl.max_abs == 0.0 && dr.max_abs == 0.0 && dl.nonfinite == 0 && dr.nonfinite == 0 &&
+                  fresh->active_valve() == k6AS6 && fresh->active_quality() == kStandard &&
+                  fresh->active_mode6() == kP1 && fresh->active_bias6() == 0.45 &&
+                  fresh->active_latency_samples() == Engine::latency_for(k6AS6, kStandard, d.fs),
+              "a fresh engine, no parameter set, nulls against 6AS6 Standard (8x) P1 0.45 mA filter off",
+              fmt("max abs diff L %.3g R %.3g, quality %.0f", dl.max_abs, dr.max_abs, double(fresh->active_quality())));
         fresh->release();
     }
 
