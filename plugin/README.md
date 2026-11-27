@@ -140,6 +140,22 @@ plugin reported the stage's own latency, so its latency grows by that pad.
   upsampler. Against the same ramp applied per internal sample after the upsampler, the in-band difference is
   −99.5 dB or less (`tests/smoothing_test.cpp`, the 12AX7 path).
 
+## Default Quality and CPU (#143)
+
+The full record is `prototypes/fullstage/cpp/m1_timing/README.md`. On an Apple M1, one instance is estimated from
+cycles at the quiet clock, because the Mac was loaded and no run was clean:
+
+| path | Standard, stereo | HQ, stereo | HQ, mono |
+|---|---|---|---|
+| 12AX7 | 20–25 % | 39–44 % | 25–27 % |
+| 6AS6 | 58–70 % | **113–123 %** | 56–62 % |
+
+At the default setting (6AS6, P1 0.45 mA, filter off), only HQ meets the #113 inaudibility criterion. Standard fails
+it at 8 V by 18.7 / 12.7 dB (48 / 44.1 kHz). The recommended user-view default is therefore HQ. But 6AS6 HQ stereo
+does not fit one M1 core, so that default would drop out on a stereo track. Until #135 lowers the cost, choosing
+between HQ, Standard or a 12AX7 user-view default is Michael's decision (the record lists the options).
+`kQualityDefault` stays Standard until then.
+
 ## Valve paths (#114)
 
 One plugin, one parameter (Valve), as #75's "optional swap-in" and Michael's v0.1 slice ask: not a compile-time or
@@ -236,7 +252,7 @@ the host of anything. The AU tail time and VST 3 `getTailSamples()` follow the r
 - 6AS6 Bias and Mode changes are a 5 ms fade out / in around a rebuilt stage, not smoothed; a switch of path or mode
   is not click-free beyond those fades, and the paths differ in level. Both are #115 (and #22 for levels).
 - The 6AS6 path costs about 2.6× the 12AX7's instructions per sample and has no stereo SIMD kernel (README-6as6.md,
-  "CPU"); HQ stereo may not fit one core on every host. The default quality per mode is #143.
+  "CPU"); HQ stereo does not fit one Apple M1 core (113–123 %, estimated; [Default Quality and CPU](#default-quality-and-cpu-143)).
 - On the 6AS6 path a mono instance runs the left stage only; a host that changes from mono to stereo without
   re-activating would get a stale right stage until the next reset.
 - Sample rates other than 48 kHz are untested against the reference (#74). The plugin prepares at whatever rate the
