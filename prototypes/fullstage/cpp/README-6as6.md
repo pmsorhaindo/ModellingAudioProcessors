@@ -3,8 +3,8 @@
 Gyre's v1 distortion stage (#75): a port of the Python 6AS6 stage (`dk6as6/`: `stage.py`, `solver.py`,
 `circuit.py`, `pentode.py`, `lpf.py`) to the realtime C++ core. The Python stage stays the reference. The 12AX7
 stage (`dk_core.h`, [README.md](README.md)) stays in the core, unchanged, as the optional swap-in; how the plugin
-exposes the two is #114 (`plugin/README.md`, "Valve paths": one Valve parameter), and parameter smoothing / mode
-switching is #115.
+exposes the two is #114 (`plugin/README.md`, "Valve paths": one Valve parameter). Live Bias and Mode (#115) are
+`dk6as6::LiveStage` ("Live bias and mode" below; [RESULTS-smoothing-6as6.md](RESULTS-smoothing-6as6.md)).
 
 | file | what |
 |---|---|
@@ -17,6 +17,7 @@ switching is #115.
 | `matrix_rounding_6as6.py` | why the C++-built stage differs from Python where it does: matrix rounding (both builds), not the per-sample code |
 | `aliasing_6as6.py` → `aliasing_6as6.json`, `aliasing_6as6_baseline[_44100].json` | the aliasing sweep, the antialiasing decision and the per-tone guard |
 | `bench_6as6.cpp` (with `bench_common.h`, `bench.py --core 6as6`) → `bench_6as6_*.json` | the CPU benchmark, the #20 method (records: x86-64 CI runners, the loaded M1) |
+| `test_live_6as6.cpp`, `live_ref_6as6.h`, `tests/test_cpp_live_6as6.py`, [`RESULTS-smoothing-6as6.md`](RESULTS-smoothing-6as6.md) | #115: live bias (the bias line) and mode switching (`LiveStage`) measured against continuous references, and the results |
 
 ## What is ported
 
@@ -27,11 +28,11 @@ Every value keeps the source label it has in Python (copied into the header's co
   unbypassed rheostat to ground; there is no Ck. Every passive is inferred, none measured (`dk6as6/RESULTS.md`).
 - **Bias (#110, PR #120).** A target DC cathode current in mA, 0.1–0.6 mA, default 0.45. `prepare()` solves the Rk
   that draws it: Brent's method on log10 Rk over 10^2.7–10^6 Ω, xtol 1e-13, rtol 4 eps, a port of scipy's
-  `brentq` (`stage.cathode_resistor`). Rk is then fixed for the run (live bias changes are #115). `knob_bias()` /
+  `brentq` (`stage.cathode_resistor`). Rk is then fixed for a `Stage` run; `LiveStage` moves it live (#115, below). `knob_bias()` /
   `bias_knob()` port the knob law (our choice, #110). `Pack::rk`, `op.nodes[CATH]` (Vk = Rk Ik) and `op.ik` are
   what a bias meter needs (`stage.bias_point`).
 - **Modes (#111, PR #121).** P1 (default), T and P2, exactly `circuit.MODES`: the pins, the screen feed and where
-  CG3 goes. Fixed for the run (switching is #115). P2 is our hypothesis on the fit's weakest region and is never
+  CG3 goes. Fixed for a `Stage` run; `LiveStage` switches it live (#115, below). P2 is our hypothesis on the fit's weakest region and is never
   supported; `prepare()` refuses it and the other unsupported settings unless `Settings::experimental` is set
   (Python raises `UnsupportedSettingError`), and `Pack::supported` records which it is.
 - **Grid current (#112, PR #128).** The optional g1 current: Dempwolf & Zoelzer's 12AX7 law scaled by the fitted
@@ -92,6 +93,33 @@ once per block). `process()`, `process_internal()`, `reset()` on the audio threa
 (allocation counted in the tests), `noexcept`, holding `ScopedFlushDenormals` (FTZ / DAZ on x86, FPCR.FZ on AArch64,
 the caller's mode restored). Latency: the resampler's. With the default k140 design 79 base samples at standard /
 48 kHz, 127 at 44.1 kHz (hq 82 / 130); with the shipped design, the 12AX7 stage's 72 / 116 (hq 73 / 117).
+
+## Live bias and mode (#115)
+
+Not in the Python stage (it has no live controls); C++ only, measured against continuous references built from the
+core's own exact packs ([RESULTS-smoothing-6as6.md](RESULTS-smoothing-6as6.md)).
+
+- `BiasLine` (per mode, `build_line()` / `build_lines()`, non-RT, about 7 ms per mode on an M1, informal): the #73 bias line.
+  Rk is the one resistor from the cathode to ground, so every AC matrix and every DC rest constant is affine in a
+  Sherman–Morrison weight of 1/Rk; the two packs at the range ends give them exactly at any Rk between. A 65-node
+  table maps Ik to Rk; `exact()` makes it exact on the audio thread (Newton on log Rk, each step one DC solve).
+- `StageT::line_plan()` / `process_line()`: a move, one pack per internal sample, its Rk corrected to start on the
+  running pack and land on the exact one.
+- `LiveStage` (one per channel): two `StageT` voices, `set_bias()` (a 20 ms ramp), `set_mode()` (10 ms warm-up of
+  the new voice on the live input, then a 20 ms crossfade), `set_lpf()` (both voices), all read once per block, all
+  on the audio thread without allocation or locks, and sample-exact whatever the block size.
+
+```cpp
+dk6as6::Lines lines;                                // the three modes, at the internal rate (shared by channels)
+const dk6as6::LineRange r[3] = {{0.1, 0.6, false}, {0.1, 0.5, false}, {0.1, 0.6, true}};   // P1, T, P2 (experimental)
+dk6as6::build_lines(lines, 48000.0 * 8, dk6as6::Settings{}, r);
+dk6as6::Pack p;
+dk6as6::build_pack(p, 48000.0 * 8, set);            // where it starts (exact, as Stage::prepare)
+dk6as6::LiveStage ls;
+ls.prepare(48000.0, 8, lines, p);
+ls.set_bias(0.2); ls.set_mode(dk6as6::Mode::T);     // any thread
+ls.process(in, out, n);                             // audio thread
+```
 
 ## Resampler: #113's k140 by default
 
@@ -341,7 +369,8 @@ two-lane kernel are #135.
 ## Limitations
 
 - One valve parameter set tested (`DUAL_CONTROL`), the `circuit.VALUES` circuit, standard and hq. Eco does not exist.
-- Mode, bias and grid hardness are fixed for a prepared stage (#115). The post-filter position can change live.
+- Grid hardness is fixed for a prepared stage. Mode and bias move live only through `LiveStage` (#115); a `Stage`
+  keeps them for its run. The post-filter position can change live on both.
 - No stereo SIMD kernel; stereo is two mono stages (see CPU).
 - FIR resampler only. 44.1 and 48 kHz are the rates with aliasing measurements; others run with the 48 kHz-rate
   geometry and are only checked to prepare and run.

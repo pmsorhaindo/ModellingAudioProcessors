@@ -13,17 +13,19 @@
  *                                 thread: a stage's prepare() (matrix build, DC solve; the 6AS6 Rk solve).
  *
  * Slots. prepare() of a stage must not run while that stage is processed, so the engine owns two slots. Each slot
- * holds both kinds of stage (a StereoStage and two dk6as6::Stage), allocated once in the constructor, and the
- * configuration it was last built for (valve, quality, and on the 6AS6 path mode and bias). The worker builds the idle
- * slot whenever the requested configuration differs from the running one, and publishes its index with a release
- * store. The audio thread fades the output out (5 ms), switches slots at a block boundary, acknowledges, and fades
- * back in (5 ms). The worker only touches a slot after the audio thread has acknowledged that it left it. The same
- * mechanism carries a quality change, a valve change, and a 6AS6 mode or bias change (the 6AS6 core fixes mode and
- * Rk for a prepared stage; smoothing those is #115). Nothing on that path allocates, locks or waits on the audio thread.
+ * holds both kinds of stage (a StereoStage, and per channel a dk6as6::LiveStage with the three modes' bias lines it
+ * shares), allocated once in the constructor, and the configuration it was last built for (valve and quality; on the
+ * 6AS6 path also the mode and bias it was prepared at). The worker builds the idle slot whenever the requested valve
+ * or quality differs from the running one, and publishes its index with a release store. The audio thread fades the
+ * output out (5 ms), switches slots at a block boundary, acknowledges, and fades back in (5 ms). The worker only
+ * touches a slot after the audio thread has acknowledged that it left it. Nothing on that path allocates, locks or
+ * waits on the audio thread.
  *
  * Applied live by the audio thread, once per chunk, without the worker: Drive, Output, Bypass (both paths), the
- * 12AX7 Bias (StereoStage::set_bias, the core's 20 ms ramp, #73) and the 6AS6 Filter (Stage::set_lpf, the core's 15 ms
- * crossfade, #103).
+ * 12AX7 Bias (StereoStage::set_bias, the core's 20 ms ramp, #73), and on the 6AS6 path (#115, dk6as6::LiveStage) the
+ * Bias (a 20 ms ramp along the mode's bias line, one exact pack per internal sample, no matrix build), the Mode (a
+ * 30 ms switch: the new mode's voice warms up for 10 ms on the live input, then a 20 ms crossfade) and the Filter
+ * (the core's 15 ms crossfade, #103). Method and measurements: prototypes/fullstage/cpp/RESULTS-smoothing-6as6.md.
  *
  * Drive and Output: linear ramps over 20 ms in the wrapper, applied per sample at the host rate. Drive is applied to
  * the input before the stage, so before its upsampler (the drive-aliasing check in tests/smoothing_test.cpp). The
@@ -59,7 +61,8 @@ public:
     static constexpr int kMaxChannels = 2;
 
     // What a slot is built for. On the 12AX7 path mode6 and bias6 are not used (0); on the 6AS6 path quality is never
-    // Eco (quality_6as6) and bias6 is bias6_effective(). Two equal configs build the same stages.
+    // Eco (quality_6as6) and bias6 is bias6_effective(). Only valve and quality need a build (same_build()); the 6AS6
+    // mode and bias are where a build starts, and move live afterwards (#115).
     struct Config {
         int valve = kValveDefault, quality = kQualityDefault, mode6 = kMode6Default;
         double bias6 = kBias6Range.def;
@@ -67,6 +70,7 @@ public:
             return valve == o.valve && quality == o.quality && mode6 == o.mode6 && bias6 == o.bias6;
         }
         bool operator!=(const Config& o) const { return !(*this == o); }
+        bool same_build(const Config& o) const { return valve == o.valve && quality == o.quality; }
     };
 
     Engine();
@@ -102,7 +106,8 @@ public:
     // the latency the output has, whatever runs: reported_latency_for(the prepared rate; 48 kHz before prepare())
     int latency_samples() const { return reported_latency_.load(std::memory_order_relaxed); }
     // the running slot: its stage's own latency (before the pad), valve, quality (6AS6: Eco reads Standard), 6AS6 mode
-    // and bias as built (mA), and whether it is outside the supported envelope (only P2 can be: experimental)
+    // and bias the stage runs (mA; during a mode switch the old mode until its fade ends, the bias as it ramps), and
+    // whether that is outside the supported envelope (only P2 can be: experimental). 6AS6: updated once per chunk.
     int active_latency_samples() const { return active_latency_.load(std::memory_order_relaxed); }
     int active_valve() const { return active_valve_.load(std::memory_order_relaxed); }
     int active_quality() const { return active_quality_.load(std::memory_order_relaxed); }
@@ -118,6 +123,9 @@ public:
     int build_status_valve() const { return build_status_valve_.load(std::memory_order_relaxed); }
     int bias_status() const { return build_status(); }  // the pre-#114 name
     double applied_bias() const { return applied_bias_.load(std::memory_order_relaxed); }
+    // stage builds since construction (prepare() and the worker, successful or not): a 6AS6 mode or bias change must
+    // not add one (#115; engine_test 4c)
+    std::uint64_t build_count() const { return builds_.load(std::memory_order_relaxed); }
     static int latency_for(int valve, int quality, double sample_rate);      // a stage's own latency
     static int latency_for(int quality, double sample_rate) { return latency_for(k12AX7, quality, sample_rate); }
     static int reported_latency_for(double sample_rate);                     // max of latency_for over valves, qualities
@@ -157,7 +165,8 @@ private:
     // the slot is published, and read by the audio thread after it adopts it.
     struct Slot {
         dkcore::StereoStage tri;                        // 12AX7, both channels
-        dk6as6::Stage pen[kMaxChannels];                // 6AS6, one per channel
+        dk6as6::Lines lines6;                           // 6AS6: the three modes' bias lines, shared by both channels
+        dk6as6::LiveStage pen[kMaxChannels];            // 6AS6, one per channel (#115: live bias and mode)
         Config cfg;
         int latency = 0;
         bool experimental = false;
@@ -171,6 +180,7 @@ private:
     void process_chunk(const float* const* in, float* const* out, int nch, int off, int n) noexcept;
     void begin_chunk() noexcept;
     void adopt(int slot) noexcept;
+    void publish_6as6(const Slot& s) noexcept;
     void reset_audio_state() noexcept;
     void start_worker();
     void stop_worker();
@@ -196,6 +206,7 @@ private:
     std::atomic<int> reported_latency_{0};
     std::atomic<int> build_status_{0}, build_status_valve_{kValveDefault};
     std::atomic<double> applied_bias_{kBiasRange.def};
+    std::atomic<std::uint64_t> builds_{0};
     std::atomic<bool> prepared_{false};
 
     // audio-thread state

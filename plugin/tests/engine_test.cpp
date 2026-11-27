@@ -405,6 +405,77 @@ int main() {
                   dl.max_abs, dr.max_abs, moved));
     }
 
+    // 4c. #115: a 6AS6 mode and bias change on the running stage (no rebuild): the audio thread switches the mode (10 ms
+    // warm-up + 20 ms crossfade) and ramps the bias (20 ms), so both have landed after 40 ms of audio, whatever the
+    // worker does; no allocation, lock or syscall; reset there, the stage nulls (to the line's rounding) against a core
+    // stage prepared at the target. Tolerance 1e-6 FS: the core's TOL_BUILT_ABS (1e-5 V) at 1/64 FS per volt, plus
+    // float output rounding.
+    {
+        Settings s;
+        s.valve = mapvs::k6AS6;
+        s.seconds = 0.25;
+        s.drive = 4.0;
+        s.mode6 = mapvs::kP1;
+        s.bias6 = 0.45;
+        std::vector<float> L, R, pL, pR, rL, rR;
+        make_signal(s, L, R);
+        set_all(e, s);
+        e.set_bypass(false);
+        e.prepare(s.fs);
+        const int st0 = e.build_status();
+        const std::uint64_t builds0 = e.build_count();
+        e.set_mode6(mapvs::kT);
+        e.set_bias6(0.35);
+        g_allocs = 0;
+        map_rt_clear();
+        const std::size_t n40 = std::size_t(0.04 * s.fs);
+        std::vector<float> a(n40, 0.0f), b(n40, 0.0f), oa(n40), ob(n40);
+        for (std::size_t i = 0; i < n40; ++i) { a[i] = L[i]; b[i] = R[i]; }
+        for (std::size_t pos = 0; pos < n40; pos += 64) {
+            const int n = int(std::min<std::size_t>(64, n40 - pos));
+            const float* in[2] = {a.data() + pos, b.data() + pos};
+            float* out[2] = {oa.data() + pos, ob.data() + pos};
+            process_armed(e, in, out, 2, n);
+        }
+        const bool landed = e.active_mode6() == mapvs::kT && e.active_bias6() == 0.35 && e.active_valve() == mapvs::k6AS6 &&
+                            e.build_status() == st0 && !e.active_experimental();
+        const bool rt_clean = g_allocs.load() == 0 && map_rt_count() == 0;
+        // No build: give the worker time to see the new targets (paced blocks, many 5 ms polls), then count the builds.
+        // A redundant build that succeeds would leave build_status() as it was; the counter does not.
+        {
+            std::vector<float> wl, wr;
+            run_engine(e, L, R, wl, wr, 2, true);
+        }
+        const bool no_build = e.build_count() == builds0;
+        e.request_reset();
+        Settings t = s;
+        t.mode6 = mapvs::kT;
+        t.bias6 = 0.35;
+        int lat = 0;
+        reference(t, L, R, rL, rR, lat);
+        run_engine(e, L, R, pL, pR, 2);
+        const int pad = e.latency_samples() - lat;
+        const Diff dl = compare(pL, delayed(rL, pad)), dr = compare(pR, delayed(rR, pad));
+        check(landed && rt_clean && no_build && dl.max_abs <= 1e-6 && dr.max_abs <= 1e-6 && dl.nonfinite == 0 &&
+                  dr.nonfinite == 0,
+              "live 6AS6 mode P1 -> T and bias 0.45 -> 0.35 mA on the running stage: landed within 40 ms, no build "
+              "(counted, after the worker has polled), no allocation / lock / syscall; after reset nulls vs the core "
+              "prepared there",
+              fmt("mode %.0f, bias %.3g mA; max abs diff L %.3g", double(e.active_mode6()), e.active_bias6(), dl.max_abs) +
+                  fmt(" R %.3g (tol 1e-6); builds %.0f -> ", dr.max_abs, double(builds0)) +
+                  fmt("%.0f; %.0f allocations, ", double(e.build_count()), double(g_allocs.load())) +
+                  fmt("%.0f hooked calls ", double(map_rt_count())) + map_rt_last());
+        // the counter's positive control: a quality change does build
+        const std::uint64_t before_q = e.build_count();
+        e.set_quality(mapvs::kHQ);
+        bool fin = true;
+        std::vector<float> ql, qr;
+        const bool adopted = run_until(e, L, R, ql, qr, fin, [&] { return e.active_quality() == mapvs::kHQ; });
+        check(adopted && fin && e.build_count() == before_q + 1,
+              "the build counter sees a build: quality Standard -> HQ on the 6AS6 path adds exactly one",
+              fmt("builds %.0f -> %.0f", double(before_q), double(e.build_count())));
+    }
+
     // 5. non-finite input, each path
     for (int valve : {mapvs::k12AX7, mapvs::k6AS6}) {
         Settings s;

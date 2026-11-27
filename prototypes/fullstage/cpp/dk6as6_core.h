@@ -9,9 +9,9 @@
  * What is ported, with the settled behaviour of the merged queue:
  *   circuit   #102 values (circuit.VALUES: HT 200 V, Ra 270k, Rl 1M, Rg 1M, unbypassed cathode rheostat, no Ck)
  *   bias      #110: a target DC cathode current Ik in mA (0.1-0.6 mA documented, default 0.45); prepare() solves
- *             the rheostat Rk that draws it (Brent on log10 Rk, stage.cathode_resistor) and Rk is fixed for the run
- *             (live bias changes are #115)
- *   modes     #111: P1 (default), T, P2 (circuit.MODES), fixed for the run (switching is #115)
+ *             the rheostat Rk that draws it (Brent on log10 Rk, stage.cathode_resistor) and Rk is fixed for a Stage's
+ *             run; LiveStage moves it live (#115, "live bias" below: C++ only, not in the Python stage)
+ *   modes     #111: P1 (default), T, P2 (circuit.MODES), fixed for a Stage's run; LiveStage switches them live (#115)
  *   grid      #112: the optional g1 grid current (pentode.grid, Dempwolf & Zoelzer's 12AX7 law scaled by the fitted
  *             cathode-perveance ratio; UNVALIDATED, no 6AS6 grid-current data exists), as a third current port with a
  *             3x3 Newton step and the restart contract (solver.solve_grid_restarts)
@@ -32,6 +32,8 @@
  *   set_lpf()                       any thread (relaxed atomic, read once per block; a change starts PostFilter's
  *                                   XFADE_S crossfade, lpf.PostFilter.set_position)
  *   process() / process_internal() / reset()   the audio thread
+ *   build_line() / build_lines()    non-RT (#115); LiveStage: prepare() non-RT, set_bias() / set_mode() / set_lpf() /
+ *                                   set_drive() / set_output() any thread, process() / reset() the audio thread
  *
  * Non-convergence (#7, #112): the 2-current solve returns the best finite iterate at the cap, flagged; the 3-current
  * solve (with grid current) tries the extrapolated warm start, then the previous sample's currents, then the operating
@@ -876,17 +878,22 @@ struct Settings {
  * at fs, the DC operating point at that Rk, and the deviation form's rest constants. Non-RT, no allocation. */
 namespace detail {
 // Explicit grid fits are used by the offline #148 probe. The shipped prepare path supplies the nominal fit.
-inline Status build_pack_with_grid(Pack& out, double fs, const Settings& s, const GridParams* g) {
+// rk_given (#115): build at that Rk instead of solving it for s.bias_ma (build_pack_at_rk).
+inline Status build_pack_with_grid(Pack& out, double fs, const Settings& s, const GridParams* g,
+                                   const double* rk_given = nullptr) {
     if (!(fs > 0.0) || !std::isfinite(fs) || !(s.bias_ma > 0.0) || !std::isfinite(s.bias_ma) || !(s.grid_hardness >= 0.0)
         || !std::isfinite(s.grid_hardness) || s.newton.max_it < 1 || !(s.newton.tol_v >= 0.0) || !(s.newton.tol_f >= 0.0))
         return Status::bad_argument;
+    if (rk_given && !(*rk_given > 0.0 && std::isfinite(*rk_given))) return Status::bad_argument;
     Pack c{};
     c.fs = fs; c.bias_ma = s.bias_ma; c.mode = s.mode; c.par = s.par; c.newton = s.newton;
     c.grid = s.grid_hardness != 0.0;
     c.g = g ? *g : grid(s.grid_hardness, s.par);
     c.supported = supported(s.mode, s.bias_ma, s.grid_hardness);
     if (!c.supported && !s.experimental) return Status::unsupported_setting;
-    Status st = cathode_resistor(s.bias_ma, s.par, s.newton, s.mode, c.grid, c.g, s.values, c.rk);
+    Status st = Status::ok;
+    if (rk_given) c.rk = *rk_given;
+    else st = cathode_resistor(s.bias_ma, s.par, s.newton, s.mode, c.grid, c.g, s.values, c.rk);
     if (st != Status::ok) return st;
     detail::Full m;
     if (!detail::build_full(m, fs, c.rk, false, s.mode, c.grid, s.values)) return Status::singular_matrix;
@@ -925,6 +932,11 @@ inline Status build_pack_with_grid(Pack& out, double fs, const Settings& s, cons
 
 inline Status build_pack(Pack& out, double fs, const Settings& s) {
     return detail::build_pack_with_grid(out, fs, s, nullptr);
+}
+// The pack at a given Rk (ohm), everything else as build_pack: matrices, DC operating point, rest constants. bias_ma
+// is recorded as s.bias_ma (the caller's claim; the tests' continuous reference solves Rk for it, #115). Non-RT.
+inline Status build_pack_at_rk(Pack& out, double fs, const Settings& s, double rk) {
+    return detail::build_pack_with_grid(out, fs, s, nullptr, &rk);
 }
 
 // ---- the post-distortion low-pass (lpf.SVF, lpf.PostFilter) --------------------------------------------------------
@@ -996,6 +1008,299 @@ private:
     double g_from_[3] = {1.0, 0.0, 0.0}, g_to_[3] = {1.0, 0.0, 0.0};
 };
 
+// ---- live bias (#115): the bias line, the Rk table and the rest constants -----------------------------------------
+
+/* The #73 method (dk_core.h, "bias smoothing"; cpp/RESULTS-smoothing.md), ported to the 6AS6 stage's bias.
+ *
+ * The 6AS6 Bias is a target DC cathode current Ik (mA, #110); the stage realises it as the cathode rheostat Rk that
+ * draws that current (cathode_resistor: Brent on log10 Rk, each evaluation a source-stepped DC solve; about 0.6 ms).
+ * Rk is the one resistor from the cathode to ground, so, as in the 12AX7 stage, a bias change adds dg = 1/Rk - 1/Rk0 at
+ * S[k][k] of the MNA matrix and nothing else. By Sherman-Morrison every matrix A..K of a pack is affine in
+ * beta(g) = dg / (1 + dg Si(g0)[k][k]): the matrices at the two ends of the bias range give the exact matrices for any
+ * Rk in between (BiasLine::matrices). The same holds for the DC network (capacitors open), with its own Si: the DC node
+ * voltages for given valve currents i0 are affine in beta_dc(g), and with them the deviation form's rest constants
+ * (#70), which are linear in the DC node voltages:
+ *     x0 = Gx Nx nodes,   v0 = Nv nodes = Vs + Vi i0,   p_dc = v0 + K i0,   y_dc = No nodes = Ys + Yi i0
+ * (BiasLine::rest). The deviation form is exact for ANY reference currents i0 (x0 is then the fixed point of the pack's
+ * linear part), so during a move i0 stays fixed and only these are updated; no matrix is built or inverted.
+ *
+ * The 6AS6 stage has no cathode bypass capacitor: Rk is in the signal path, and a step of Rk steps the output at once
+ * (the 12AX7 stage's Ck smooths it). So the bias moves at every INTERNAL sample (the 12AX7 line moves per base sample),
+ * which a per-base-sample update would turn into an audible staircase (measured in cpp/RESULTS-smoothing-6as6.md).
+ *
+ * Rk(Ik) is a nonlinear DC problem. BiasLine keeps a table of it (NT nodes uniform in log Rk, each one source-stepped DC
+ * solve at prepare time) and interpolates log Rk against log Ik with a cubic Hermite. exact() makes it exact for one
+ * target on the audio thread: Newton on log Rk, each step one DC solve (the stage's own solver on the DC network at
+ * full supply, warm-started from the table's currents), which also recentres i0 on the operating point. A move plans
+ * its end point with exact() and corrects the table's Rk linearly along the move so that it starts at the pack's Rk and
+ * lands on the exact one (StageT::line_plan): no jump at either end. Bounded audio-thread work, no allocation, no lock:
+ * per internal sample of a move a table lookup, 208 + 72 multiply-adds; per plan at most EXACT_STEPS DC solves (each
+ * at most 3 x newton.max_it iterations with grid current, as one sample of the stage). */
+namespace detail {
+struct PackMats {
+    double A[NX][NX], B[NX][NU_MAX], C[NX][NI_MAX], D[NOUT][NX], E[NOUT][NU_MAX], F[NOUT][NI_MAX], G[NV][NX],
+           H[NV][NU_MAX], K[NV][NI_MAX];
+};
+// the DC rest maps: x0 = Xs + Xi i, v0 = Vs + Vi i (valve port voltages; the DC problem's K is -Vi), y0 = Ys + Yi i
+struct RestMaps {
+    double Xs[NX], Xi[NX][NI_MAX], Vs[NV], Vi[NV][NI_MAX], Ys[NOUT], Yi[NOUT][NI_MAX];
+};
+template <int R, int C> inline void m_axpy(double (&o)[R][C], const double (&a)[R][C], double w, const double (&d)[R][C]) {
+    for (int i = 0; i < R; ++i) for (int j = 0; j < C; ++j) o[i][j] = a[i][j] + w * d[i][j];
+}
+template <int R, int C> inline void m_sub(double (&o)[R][C], const double (&a)[R][C], const double (&b)[R][C]) {
+    for (int i = 0; i < R; ++i) for (int j = 0; j < C; ++j) o[i][j] = a[i][j] - b[i][j];
+}
+template <int R, int C> inline void m_copy(double (&o)[R][C], const double (&a)[R][C]) { std::memcpy(o, a, sizeof o); }
+template <int R> inline void v_sub(double (&o)[R], const double (&a)[R], const double (&b)[R]) {
+    for (int i = 0; i < R; ++i) o[i] = a[i] - b[i];
+}
+// RestMaps at Rk from the DC build m0 (caps open) and the AC build's companion conductances gx and incidence Nx
+inline void rest_maps(RestMaps& r, const Full& m0, const double (&gx)[NX], const DM& Nx, const double (&sup)[2], int ns) {
+    const int nsz = NNODES + m0.nu;
+    double rhs_s[NS_MAX] = {};
+    for (int j = 0; j < nsz; ++j) {
+        double a = 0.0;
+        for (int c = 0; c < ns; ++c) a += m0.Nup.a[1 + c][j] * sup[c];
+        rhs_s[j] = a;
+    }
+    double ns_v[NNODES], ni_v[NNODES][NI_MAX] = {};
+    for (int n = 0; n < NNODES; ++n) {
+        double a = 0.0;
+        for (int j = 0; j < nsz; ++j) a += m0.Si.a[n][j] * rhs_s[j];
+        ns_v[n] = a;
+        for (int k = 0; k < m0.ni; ++k) {
+            double b = 0.0;
+            for (int j = 0; j < nsz; ++j) b += m0.Si.a[n][j] * m0.Nip.a[k][j];
+            ni_v[n][k] = -b;
+        }
+    }
+    for (int i = 0; i < NX; ++i) {
+        double a = 0.0, b[NI_MAX] = {};
+        for (int n = 0; n < NNODES; ++n) {
+            a += Nx.a[i][n] * ns_v[n];
+            for (int k = 0; k < NI_MAX; ++k) b[k] += Nx.a[i][n] * ni_v[n][k];
+        }
+        r.Xs[i] = gx[i] * a;
+        for (int k = 0; k < NI_MAX; ++k) r.Xi[i][k] = gx[i] * b[k];
+    }
+    for (int q = 0; q < NV; ++q) {
+        double a = 0.0;
+        for (int c = 0; c < ns; ++c) a += m0.H.a[q][1 + c] * sup[c];
+        r.Vs[q] = a;
+        for (int k = 0; k < NI_MAX; ++k) r.Vi[q][k] = k < m0.ni ? -m0.K.a[q][k] : 0.0;
+    }
+    for (int q = 0; q < NOUT; ++q) {
+        double a = 0.0;
+        for (int c = 0; c < ns; ++c) a += m0.E.a[q][1 + c] * sup[c];
+        r.Ys[q] = a;
+        for (int k = 0; k < NI_MAX; ++k) r.Yi[q][k] = k < m0.ni ? m0.F.a[q][k] : 0.0;
+    }
+}
+}  // namespace detail
+
+/* One mode's bias line over [lo_ma, hi_ma]: the AC matrices and the DC rest maps at both ends (exact packs,
+ * build_pack), the Rk(Ik) table, and the exact pack at lo_ma (base: everything that is not on the line). Plain data;
+ * built by build_line() (non-RT), read-only afterwards, so any number of stages may share one. */
+struct BiasLine {
+    static constexpr int NT = 65;               // table nodes (its error: RESULTS-smoothing-6as6.md)
+    static constexpr int EXACT_STEPS = 6;       // Newton steps of exact(), at most
+    static constexpr double EXACT_TOL = 1e-13;  // |log(Ik / target)| at which exact() stops
+    bool ok = false;
+    double lo_ma = 0.0, hi_ma = 0.0;            // the range; targets are clamped to it
+    double g0 = 0.0, d0 = 0.0, beta1 = 0.0;     // 1/Rk at lo_ma; AC: Si(lo_ma)[k][k], beta at hi_ma
+    double d0dc = 0.0, beta1dc = 0.0;           // DC: the same
+    detail::PackMats m0{}, dm{};                // the AC matrices at lo_ma; (at hi_ma) - (at lo_ma)
+    detail::RestMaps r0{}, dr{};                // the DC rest maps at lo_ma; (at hi_ma) - (at lo_ma)
+    double t[NT] = {}, y[NT] = {}, d[NT] = {};  // log Rk (uniform, t[0] at hi_ma), log(Ik / mA) (decreasing), dt/dy
+    double cur[NT][NI_MAX] = {};                // the operating point's currents at each node (exact()'s warm start)
+    Pack base{};                                // the exact pack at lo_ma
+
+    double clamp(double ma) const { return ma < lo_ma ? lo_ma : (ma > hi_ma ? hi_ma : ma); }
+    // the AC and DC weights of Rk = rk: 0 at lo_ma, 1 at hi_ma
+    void weights(double rk, double& wac, double& wdc) const {
+        const double dg = 1.0 / rk - g0;
+        wac = dg / (1.0 + dg * d0) / beta1;
+        wdc = dg / (1.0 + dg * d0dc) / beta1dc;
+    }
+    // c.A..K and c.rk at Rk = rk, AC weight wac (the rest of c untouched). 208 multiply-adds.
+    void matrices(Pack& c, double rk, double wac) const noexcept {
+        detail::m_axpy(c.A, m0.A, wac, dm.A); detail::m_axpy(c.B, m0.B, wac, dm.B); detail::m_axpy(c.C, m0.C, wac, dm.C);
+        detail::m_axpy(c.D, m0.D, wac, dm.D); detail::m_axpy(c.E, m0.E, wac, dm.E); detail::m_axpy(c.F, m0.F, wac, dm.F);
+        detail::m_axpy(c.G, m0.G, wac, dm.G); detail::m_axpy(c.H, m0.H, wac, dm.H); detail::m_axpy(c.K, m0.K, wac, dm.K);
+        c.rk = rk;
+    }
+    // c's rest constants for reference currents i0 at DC weight wdc (c.K already at this Rk): x_dc, i_dc, p_dc, y_dc
+    void rest(Pack& c, double wdc, const double (&i0)[NI_MAX]) const noexcept {
+        for (int i = 0; i < NX; ++i) {
+            double a = r0.Xs[i] + wdc * dr.Xs[i];
+            for (int k = 0; k < NI_MAX; ++k) a += (r0.Xi[i][k] + wdc * dr.Xi[i][k]) * i0[k];
+            c.x_dc[i] = a;
+        }
+        for (int q = 0; q < NV; ++q) {
+            double a = r0.Vs[q] + wdc * dr.Vs[q];
+            for (int k = 0; k < NI_MAX; ++k) a += (r0.Vi[q][k] + wdc * dr.Vi[q][k] + c.K[q][k]) * i0[k];
+            c.p_dc[q] = a;
+        }
+        for (int q = 0; q < NOUT; ++q) {
+            double a = r0.Ys[q] + wdc * dr.Ys[q];
+            for (int k = 0; k < NI_MAX; ++k) a += (r0.Yi[q][k] + wdc * dr.Yi[q][k]) * i0[k];
+            c.y_dc[q] = a;
+        }
+        for (int k = 0; k < NI_MAX; ++k) c.i_dc[k] = k < c.ni ? i0[k] : 0.0;
+    }
+    // The DC operating point at DC weight wdc: the stage's solver on v = Vs - (-Vi) i, from guess, then i0
+    Solution dc_solve(double wdc, const double (&guess)[NI_MAX], const double (&i0)[NI_MAX]) const noexcept {
+        double p[NV], K[NV][NI_MAX];
+        for (int q = 0; q < NV; ++q) {
+            p[q] = r0.Vs[q] + wdc * dr.Vs[q];
+            for (int k = 0; k < NI_MAX; ++k) K[q][k] = -(r0.Vi[q][k] + wdc * dr.Vi[q][k]);
+        }
+        if (base.grid) {
+            const double starts[3][3] = {{guess[0], guess[1], guess[2]}, {i0[0], i0[1], i0[2]}, {guess[0], guess[1], guess[2]}};
+            return solve_grid_restarts(p, K, starts, base.par, base.g, base.newton);
+        }
+        return solve(p, K, guess[0], guess[1], base.par, base.newton);
+    }
+    // the table: log Rk for ma (clamped), and optionally d(log Rk)/d(log Ik) there and the interpolated currents
+    double log_rk(double ma, double* dtdy = nullptr, double (*i)[NI_MAX] = nullptr) const noexcept {
+        const double yy = std::log(clamp(ma));
+        int lo = 0, hi = NT - 1;
+        while (hi - lo > 1) {
+            const int mid = (lo + hi) / 2;
+            if (y[mid] >= yy) lo = mid;
+            else hi = mid;
+        }
+        const int j = lo;
+        const double h = y[j + 1] - y[j], u = (yy - y[j]) / h, u2 = u * u, u3 = u2 * u;
+        const double tt = (2 * u3 - 3 * u2 + 1) * t[j] + (u3 - 2 * u2 + u) * h * d[j] + (-2 * u3 + 3 * u2) * t[j + 1] +
+                          (u3 - u2) * h * d[j + 1];
+        if (dtdy)
+            *dtdy = ((6 * u2 - 6 * u) * t[j] + (3 * u2 - 4 * u + 1) * h * d[j] + (-6 * u2 + 6 * u) * t[j + 1] +
+                     (3 * u2 - 2 * u) * h * d[j + 1]) / h;
+        if (i)
+            for (int k = 0; k < NI_MAX; ++k) (*i)[k] = cur[j][k] + u * (cur[j + 1][k] - cur[j][k]);
+        return tt;
+    }
+    /* c (a copy of base, or any pack of this line) at ma (clamped), with the Rk that draws it: Newton on log Rk from the
+     * table's value, each step one DC solve (start: the table's currents, then i0). Stops at EXACT_TOL or after
+     * EXACT_STEPS. On return c's matrices and rest constants are at that Rk, referenced to its operating point (c.op:
+     * v, i, ik and the nodes out, g, k, a, gl; the others are base's), and i0 is that point's currents. converged: every
+     * DC solve converged; if one does not, c is at the last Rk whose solve did (the table's if none), referenced to i0
+     * as given (the deviation form is exact for any i0). False: a non-finite result; c may be partly written.
+     * Audio-thread safe (bounded, no allocation). */
+    bool exact(Pack& c, double ma, double (&i0)[NI_MAX], bool& converged, int& steps) const noexcept {
+        const double b = clamp(ma), ly = std::log(b);
+        double dtdy = 0.0, g[NI_MAX];
+        double tt = log_rk(b, &dtdy, &g), t_ok = tt;
+        Solution best{};
+        bool have = false;
+        converged = true;
+        steps = 0;
+        for (int k = 0; k < EXACT_STEPS; ++k) {
+            double wac, wdc;
+            weights(std::exp(tt), wac, wdc);
+            const Solution s = dc_solve(wdc, g, i0);
+            ++steps;
+            bool fin = s.ok;
+            for (int q = 0; q < NI_MAX; ++q) fin = fin && std::isfinite(s.i[q]);
+            if (!fin) { converged = false; break; }
+            best = s; have = true; t_ok = tt;
+            for (int q = 0; q < NI_MAX; ++q) g[q] = s.i[q];
+            const double ik = base.grid ? s.i[0] + s.i[1] + s.i[2] : s.i[0] + s.i[1];
+            const double f = std::log(ik * 1e3) - ly;
+            if (!(std::fabs(f) > EXACT_TOL)) break;
+            tt -= f * dtdy;
+        }
+        const double rk = std::exp(t_ok);
+        double wac, wdc;
+        weights(rk, wac, wdc);
+        matrices(c, rk, wac);
+        if (have) for (int q = 0; q < NI_MAX; ++q) i0[q] = q < base.ni ? best.i[q] : 0.0;
+        rest(c, wdc, i0);
+        if (have) {
+            for (int q = 0; q < NV; ++q) c.op.v[q] = best.v[q];
+            for (int q = 0; q < NI_MAX; ++q) c.op.i[q] = c.i_dc[q];
+            c.op.ik = base.grid ? i0[0] + i0[1] + i0[2] : i0[0] + i0[1];
+            c.op.nodes[OUT] = c.y_dc[0]; c.op.nodes[GRID] = c.y_dc[1]; c.op.nodes[CATH] = c.y_dc[2];
+            c.op.nodes[ANODE] = c.y_dc[3]; c.op.nodes[GL] = c.y_dc[4];
+        }
+        c.bias_ma = b;
+        c.supported = supported(c.mode, b, c.g.hardness);
+        bool fin = std::isfinite(rk);
+        for (double v : c.x_dc) fin = fin && std::isfinite(v);
+        for (double v : c.p_dc) fin = fin && std::isfinite(v);
+        for (double v : c.y_dc) fin = fin && std::isfinite(v);
+        return fin;
+    }
+};
+
+/* Build line l for mode s.mode over [lo_ma, hi_ma] at internal rate fs (s.experimental as build_pack: both ends must
+ * build). Non-RT, no allocation: two build_pack, four build_full and NT source-stepped DC solves (about 7 ms per
+ * mode on an M1, informal). bias_out_of_range also if the table is not strictly monotonic. */
+inline Status build_line(BiasLine& l, double fs, const Settings& s, double lo_ma, double hi_ma) {
+    l.ok = false;
+    if (!(lo_ma > 0.0) || !(hi_ma > lo_ma) || !std::isfinite(hi_ma)) return Status::bad_argument;
+    Settings a = s;
+    a.bias_ma = lo_ma;
+    Pack plo, phi;
+    Status st = build_pack(plo, fs, a);
+    if (st != Status::ok) return st;
+    a.bias_ma = hi_ma;
+    if ((st = build_pack(phi, fs, a)) != Status::ok) return st;
+    detail::Full alo, ahi, dlo, dhi;
+    if (!detail::build_full(alo, fs, plo.rk, false, s.mode, plo.grid, s.values) ||
+        !detail::build_full(ahi, fs, phi.rk, false, s.mode, plo.grid, s.values) ||
+        !detail::build_full(dlo, 1.0, plo.rk, true, s.mode, plo.grid, s.values) ||
+        !detail::build_full(dhi, 1.0, phi.rk, true, s.mode, plo.grid, s.values))
+        return Status::singular_matrix;
+    l.lo_ma = lo_ma; l.hi_ma = hi_ma;
+    l.g0 = 1.0 / plo.rk;
+    l.d0 = alo.Si.a[CATH][CATH];
+    l.d0dc = dlo.Si.a[CATH][CATH];
+    const double dg1 = 1.0 / phi.rk - l.g0;
+    l.beta1 = dg1 / (1.0 + dg1 * l.d0);
+    l.beta1dc = dg1 / (1.0 + dg1 * l.d0dc);
+    if (!std::isfinite(l.beta1) || l.beta1 == 0.0 || !std::isfinite(l.beta1dc) || l.beta1dc == 0.0)
+        return Status::singular_matrix;
+    detail::m_copy(l.m0.A, plo.A); detail::m_copy(l.m0.B, plo.B); detail::m_copy(l.m0.C, plo.C);
+    detail::m_copy(l.m0.D, plo.D); detail::m_copy(l.m0.E, plo.E); detail::m_copy(l.m0.F, plo.F);
+    detail::m_copy(l.m0.G, plo.G); detail::m_copy(l.m0.H, plo.H); detail::m_copy(l.m0.K, plo.K);
+    detail::m_sub(l.dm.A, phi.A, plo.A); detail::m_sub(l.dm.B, phi.B, plo.B); detail::m_sub(l.dm.C, phi.C, plo.C);
+    detail::m_sub(l.dm.D, phi.D, plo.D); detail::m_sub(l.dm.E, phi.E, plo.E); detail::m_sub(l.dm.F, phi.F, plo.F);
+    detail::m_sub(l.dm.G, phi.G, plo.G); detail::m_sub(l.dm.H, phi.H, plo.H); detail::m_sub(l.dm.K, phi.K, plo.K);
+    detail::RestMaps rhi;
+    const int ns = detail::n_supplies(s.mode);
+    detail::rest_maps(l.r0, dlo, alo.gx, alo.Nx, plo.supplies, ns);
+    detail::rest_maps(rhi, dhi, ahi.gx, ahi.Nx, plo.supplies, ns);
+    detail::v_sub(l.dr.Xs, rhi.Xs, l.r0.Xs); detail::m_sub(l.dr.Xi, rhi.Xi, l.r0.Xi);
+    detail::v_sub(l.dr.Vs, rhi.Vs, l.r0.Vs); detail::m_sub(l.dr.Vi, rhi.Vi, l.r0.Vi);
+    detail::v_sub(l.dr.Ys, rhi.Ys, l.r0.Ys); detail::m_sub(l.dr.Yi, rhi.Yi, l.r0.Yi);
+    l.base = plo;
+    const double t0 = std::log(phi.rk), t1 = std::log(plo.rk);
+    constexpr int NT = BiasLine::NT;
+    for (int j = 0; j < NT; ++j) {
+        l.t[j] = j == 0 ? t0 : j == NT - 1 ? t1 : t0 + (t1 - t0) * double(j) / double(NT - 1);
+        OperatingPoint op{};
+        st = detail::operating_point(std::exp(l.t[j]), s.par, s.newton, s.mode, plo.grid, plo.g, s.values, op);
+        if (st != Status::ok) return st;
+        l.y[j] = std::log(op.ik * 1e3);
+        for (int k = 0; k < NI_MAX; ++k) l.cur[j][k] = k < plo.ni ? op.i[k] : 0.0;
+        if (!std::isfinite(l.y[j]) || (j > 0 && !(l.y[j] < l.y[j - 1]))) return Status::bias_out_of_range;
+    }
+    // dt/dy at the nodes: three-point differences on the non-uniform y grid (one-sided at the ends)
+    for (int j = 0; j < NT; ++j) {
+        const int a0 = j == 0 ? 0 : j == NT - 1 ? NT - 3 : j - 1;
+        const double h1 = l.y[a0 + 1] - l.y[a0], h2 = l.y[a0 + 2] - l.y[a0 + 1];
+        const double s1 = (l.t[a0 + 1] - l.t[a0]) / h1, s2 = (l.t[a0 + 2] - l.t[a0 + 1]) / h2;
+        if (j == 0) l.d[j] = ((2 * h1 + h2) * s1 - h1 * s2) / (h1 + h2);
+        else if (j == NT - 1) l.d[j] = ((2 * h2 + h1) * s2 - h2 * s1) / (h1 + h2);
+        else l.d[j] = (h2 * s1 + h1 * s2) / (h1 + h2);
+    }
+    l.ok = true;
+    return Status::ok;
+}
+
 // ---- the stage ---------------------------------------------------------------------------------------------------
 
 struct Stats {                            // audio-thread side; since reset()
@@ -1008,6 +1313,9 @@ struct Stats {                            // audio-thread side; since reset()
     std::uint64_t nonfinite_inputs = 0;   // input samples that were NaN / inf after the drive gain, replaced by 0
     std::uint64_t recoveries = 0;         // samples whose state went non-finite: the state went back to the op point
     std::uint64_t nonfinite_outputs = 0;  // output samples whose gained value overflowed the destination type: 0 written
+    std::uint64_t line_updates = 0;       // bias-line packs adopted (#115: one per base sample while the bias moves)
+    std::uint64_t line_unconverged = 0;   // ... of which an end-of-ramp DC solve did not converge (i0 kept)
+    std::uint64_t line_failures = 0;      // ... not adopted (singular I - A or a non-finite result; the pack stayed)
     std::uint32_t nonconv_block = 0, out_of_law_block = 0;   // ... in the last process() / process_internal() call
     int max_iterations = 0;
     std::uint64_t histogram[HIST] = {};
@@ -1061,9 +1369,9 @@ public:
     // Base rate in, base rate out, oversampled. Stateful; the output lags the input by latency_samples(). in may equal
     // out. rec (optional): internal-rate signals.
     void process(const double* in, double* out, std::size_t n, const Record* rec = nullptr) noexcept {
-        process_t(in, out, n, rec);
+        process_t(in, out, n, rec, nullptr, -1);
     }
-    void process(const float* in, float* out, std::size_t n) noexcept { process_t(in, out, n, nullptr); }
+    void process(const float* in, float* out, std::size_t n) noexcept { process_t(in, out, n, nullptr, nullptr, -1); }
 
     /* The stage alone at the internal rate (lpf.Stage.process_internal: the stage, then the post-filter): no
      * resampler, no drive / output gain. For tests and analysis. */
@@ -1080,6 +1388,16 @@ public:
         }
     }
 
+    /* Audio thread: run p from the next sample, keeping the absolute capacitor histories x_dc + x and the currents (a
+     * pot moved between two samples). p must be of this stage's mode and internal rate (else false, nothing changes);
+     * any bias line is detached. For tests and analysis: the continuous reference of cpp/test_live_6as6.cpp. */
+    bool adopt_pack(const Pack& p) noexcept {
+        if (!prepared_ || p.mode != pack_.mode || p.fs != pack_.fs || p.ni != pack_.ni) return false;
+        for (int i = 0; i < NX; ++i) x_[i] = x_[i] + (pack_.x_dc[i] - p.x_dc[i]);
+        pack_ = p;
+        line_ = nullptr;
+        return true;
+    }
     bool prepared() const { return prepared_; }
     const Pack& pack() const { return pack_; }            // also the bias meter: rk, op.nodes[CATH] = Vk, op.ik
     int oversampling() const { return rs_.os(); }
@@ -1087,6 +1405,84 @@ public:
     int up_delay_internal() const { return rs_.up_delay_internal(); }
     const Resampler& resampler() const { return rs_; }
     const Stats& stats() const { return stats_; }           // audio thread, or while stopped
+    // the bias line pack() moves on (#115, LiveStageT), or null, and pack()'s bias on it (mA)
+    const BiasLine* line() const { return line_; }
+    double line_bias() const { return b_line_; }
+    bool line_exact() const { return at_exact_; }         // pack() is the exact pack at line_bias() (not mid-move)
+
+    // ---- the bias line (#115): LiveStageT's interface -------------------------------------------------------------
+    // Non-RT, after prepare / prepare_pack: the line the prepared pack lies on. False (nothing changes) if l is not
+    // built for this pack's mode and internal rate, or pack().bias_ma is outside its range.
+    bool attach_line(const BiasLine* l) {
+        if (!l || !l->ok || l->base.mode != pack_.mode || l->base.fs != pack_.fs || l->clamp(pack_.bias_ma) != pack_.bias_ma)
+            return false;
+        line_ = l;
+        b_line_ = pack_.bias_ma;
+        planned_ = false;
+        at_exact_ = true;
+        return true;
+    }
+    /* Audio thread: run line l's pack at ma (clamped to l; BiasLine::exact: the Rk that draws it, recentred), then
+     * reset() (state to that operating point, resampler and post-filter states cleared, stats cleared). For a mode
+     * change, on a stage prepared at the same internal rate. False, and nothing changes, if l does not fit this stage
+     * or the pack is unusable. Bounded: a pack copy and exact(). */
+    bool install_line(const BiasLine& l, double ma) noexcept {
+        if (!prepared_ || !l.ok || l.base.fs != pack_.fs) return false;
+        const double b = l.clamp(ma);
+        work_ = l.base;
+        double i0[NI_MAX];
+        l.log_rk(b, nullptr, &i0);
+        bool conv = false;
+        int steps = 0;
+        if (!l.exact(work_, b, i0, conv, steps)) return false;
+        pack_ = work_;
+        line_ = &l;
+        b_line_ = b;
+        planned_ = false;
+        at_exact_ = true;
+        reset();
+        return true;
+    }
+    /* Audio thread: plan a move along line() from the current bias to `to` (mA, clamped to the line): its end point
+     * is made exact now (BiasLine::exact, into a scratch pack), and the table's Rk is corrected linearly along the move
+     * so that it starts at pack()'s Rk and lands on the exact one. The move itself is driven by process_line()'s bias
+     * values; the pack becomes the exact one when the bias reaches `to`. A later plan replaces this one. False (no plan:
+     * the bias stays where it is) if the end point is unusable; counted in Stats::line_failures. */
+    bool line_plan(double to) noexcept {
+        if (!line_) return false;
+        const double b = line_->clamp(to);
+        planned_ = false;
+        if (b == b_line_ && at_exact_) return true;      // already there
+        final_ = line_->base;
+        double i0[NI_MAX];
+        line_->log_rk(b, nullptr, &i0);
+        bool conv = false;
+        int steps = 0;
+        if (!line_->exact(final_, b, i0, conv, steps)) { ++stats_.line_failures; return false; }
+        if (!conv) ++stats_.line_unconverged;
+        if (b == b_line_) {                              // stopped between two points (a re-plan back): exact now
+            for (int i = 0; i < NX; ++i) x_[i] = x_[i] + (pack_.x_dc[i] - final_.x_dc[i]);
+            pack_ = final_;
+            at_exact_ = true;
+            ++stats_.line_updates;
+            return true;
+        }
+        for (int k = 0; k < NI_MAX; ++k) ref_i_[k] = pack_.i_dc[k];
+        b_from_ = b_line_;
+        b_to_ = b;
+        off_from_ = std::log(pack_.rk) - line_->log_rk(b_from_);
+        off_to_ = std::log(final_.rk) - line_->log_rk(b_to_);
+        planned_ = true;
+        return true;
+    }
+    /* Audio thread: process() with the bias moving along line() (after line_plan): bias[i] (mA) is the bias at the
+     * end of base sample i, b_start the bias before the first; the internal samples between step linearly (one pack per
+     * internal sample: the 6AS6 stage has no cathode bypass capacitor, so the bias is in the signal path). bias may be
+     * null (no move). No line attached or no plan: as process(). */
+    void process_line(const double* in, double* out, std::size_t n, const double* bias, double b_start) noexcept {
+        b_start_ = b_start;
+        process_t(in, out, n, nullptr, line_ && planned_ ? bias : nullptr, 0);
+    }
     const double* state_x() const { return x_; }            // deviation from the operating point's x_dc (#70)
     const double* state_i() const { return i_; }
     Lpf lpf_position() const { return lpf_.position(); }
@@ -1096,6 +1492,7 @@ private:
     friend struct AdaptiveOsProbe;  // #148 research access to prepared packs and histories, separate from #115.
 
     Status install(double fs_base, int os, const Pack& p, Lpf lpf, const FirDesign& fir) {
+        line_ = nullptr;
         if (!rs_.prepare(os, fs_base, fir)) return Status::bad_argument;
         if (!lpf_.prepare(p.fs, lpf)) return Status::bad_argument;
         pack_ = p;
@@ -1172,14 +1569,48 @@ private:
         return y;
     }
 
-    template <bool GRID, class S> void run(const S* in, S* out, std::size_t n, double drive, double og, const Record* rec) noexcept {
+    // One internal sample's bias on the line (#115, after line_plan): the matrices and the rest constants at bias b
+    // (clamped), referenced to the plan's currents, the table's Rk corrected along the move; x re-expressed so that the
+    // absolute history x_dc + x is kept, as #73 does. At the plan's end the exact pack (final_). Nothing when there.
+    void line_follow(double b) noexcept {
+        const double bl = line_->clamp(b);
+        if (bl == b_line_) return;
+        double xo[NX];
+        for (int i = 0; i < NX; ++i) xo[i] = pack_.x_dc[i];
+        if (bl == b_to_) {
+            pack_ = final_;
+            planned_ = false;
+            at_exact_ = true;
+        } else {
+            const double lam = (bl - b_from_) / (b_to_ - b_from_);
+            const double rk = std::exp(line_->log_rk(bl) + (1.0 - lam) * off_from_ + lam * off_to_);
+            double wac, wdc;
+            line_->weights(rk, wac, wdc);
+            line_->matrices(pack_, rk, wac);
+            line_->rest(pack_, wdc, ref_i_);
+            pack_.bias_ma = bl;
+            pack_.supported = supported(pack_.mode, bl, pack_.g.hardness);
+            at_exact_ = false;
+        }
+        for (int i = 0; i < NX; ++i) x_[i] = x_[i] + (xo[i] - pack_.x_dc[i]);
+        b_line_ = bl;
+        ++stats_.line_updates;
+    }
+
+    template <bool GRID, class S> void run(const S* in, S* out, std::size_t n, double drive, double og, const Record* rec,
+                                           const double* bias, long) noexcept {
         double u[MaxOs], y[MaxOs];
         const int os = rs_.os();
         for (std::size_t i = 0; i < n; ++i) {
+            double b0 = 0.0, db = 0.0;
+            if (bias) { b0 = i ? bias[i - 1] : b_start_; db = bias[i] - b0; }
             double x = drive * double(in[i]);            // checked after the gain: a finite sample times a gain can overflow
             if (!std::isfinite(x)) { x = 0.0; ++stats_.nonfinite_inputs; }
             rs_.up(x, u);
-            for (int j = 0; j < os; ++j) y[j] = lpf_.tick(tick<GRID>(u[j], rec, i * std::size_t(os) + std::size_t(j)));
+            for (int j = 0; j < os; ++j) {
+                if (bias && planned_) line_follow(j == os - 1 ? bias[i] : b0 + db * double(j + 1) / double(os));
+                y[j] = lpf_.tick(tick<GRID>(u[j], rec, i * std::size_t(os) + std::size_t(j)));
+            }
             const double yd = rs_.down(y);
             // an input finite but far outside any signal (e.g. the largest double) can still drive the solve to inf /
             // NaN; it must not stay in the state: back to the operating point, filters cleared, this sample silent
@@ -1206,13 +1637,14 @@ private:
         lpf_.clear_states();
         ++stats_.recoveries;
     }
-    template <class S> void process_t(const S* in, S* out, std::size_t n, const Record* rec) noexcept {
+    template <class S> void process_t(const S* in, S* out, std::size_t n, const Record* rec, const double* bias,
+                                      long last) noexcept {
         dkcore::ScopedFlushDenormals ftz;
         begin_block();
         if (!prepared_) { for (std::size_t i = 0; i < n; ++i) out[i] = S(0); return; }
         const double drive = drive_.load(std::memory_order_relaxed), og = output_.load(std::memory_order_relaxed);
-        if (pack_.grid) run<true>(in, out, n, drive, og, rec);
-        else run<false>(in, out, n, drive, og, rec);
+        if (pack_.grid) run<true>(in, out, n, drive, og, rec, bias, last);
+        else run<false>(in, out, n, drive, og, rec, bias, last);
     }
 
     // audio-thread state
@@ -1224,11 +1656,252 @@ private:
     Lpf lpf_seen_ = Lpf::off;
     double fs_base_ = 0.0;
     bool prepared_ = false;
+    // the bias line (#115): the line, pack_'s bias on it, whether pack_ is referenced to its own operating point, and
+    // the scratch pack the next one is built in (so a failed update leaves pack_ as it was)
+    // the line, pack_'s bias on it, the plan of a move (its end pack, ends, Rk corrections and reference currents), and
+    // the scratch pack an install is built in (so a failed one leaves pack_ as it was)
+    const BiasLine* line_ = nullptr;
+    double b_line_ = 0.0, b_start_ = 0.0;
+    bool planned_ = false, at_exact_ = true;       // a move is planned; pack_ is the exact pack at b_line_
+    double b_from_ = 0.0, b_to_ = 0.0, off_from_ = 0.0, off_to_ = 0.0, ref_i_[NI_MAX] = {};
+    Pack work_{}, final_{};
     // shared
     std::atomic<double> drive_{1.0}, output_{1.0};
     std::atomic<std::uint8_t> lpf_req_{0};
 };
 using Stage = StageT<dkcore::MAX_OS>;
+
+// ---- live bias and mode (#115): two voices, one bias ramp, a crossfaded mode switch --------------------------------
+
+/* The defaults (cpp/RESULTS-smoothing-6as6.md): the bias ramp is #73's (and the plugin's Drive / Output ramps') 20 ms;
+ * a mode switch warms the new voice up for LIVE_WARM_S on the live input, at zero weight, then crossfades linearly
+ * over LIVE_FADE_S. */
+inline constexpr double LIVE_RAMP_S = 0.020, LIVE_WARM_S = 0.010, LIVE_FADE_S = 0.020;
+
+// The three modes' bias lines (index = Mode), built for one internal rate; shared, read-only, by any number of stages.
+struct LineRange { double lo_ma, hi_ma; bool experimental; };
+struct Lines {
+    bool ok = false;
+    BiasLine line[3];
+    double lo_ma = 0.0, hi_ma = 0.0;     // the union of the three ranges: where the bias target is clamped
+};
+// Non-RT: line[m] over r[m] with base's other settings (base.mode, bias_ma and experimental are replaced).
+inline Status build_lines(Lines& out, double fs, const Settings& base, const LineRange (&r)[3]) {
+    out.ok = false;
+    out.lo_ma = r[0].lo_ma;
+    out.hi_ma = r[0].hi_ma;
+    for (int m = 0; m < 3; ++m) {
+        Settings s = base;
+        s.mode = Mode(m);
+        s.experimental = r[m].experimental;
+        const Status st = build_line(out.line[m], fs, s, r[m].lo_ma, r[m].hi_ma);
+        if (st != Status::ok) return st;
+        out.lo_ma = std::fmin(out.lo_ma, r[m].lo_ma);
+        out.hi_ma = std::fmax(out.hi_ma, r[m].hi_ma);
+    }
+    out.ok = true;
+    return Status::ok;
+}
+
+/* One channel of the 6AS6 stage with live Bias and Mode (#115), on the audio thread without the worker:
+ *   Bias  set_bias(mA) is read once per block; the bias ramps linearly to it over LIVE_RAMP_S of base-rate time, one
+ *         pack per base sample along the mode's BiasLine (no build_pack, no matrix inversion, no lock, no allocation),
+ *         and lands on the exact pack (BiasLine::exact). A new target re-plans the ramp from where it is. The ramp is
+ *         in the union of the modes' ranges; each voice clamps it to its own mode's (T: to 0.5 mA in the plugin).
+ *   Mode  set_mode() is read once per block. A switch installs the idle voice at the new mode and the current bias
+ *         (StageT::install_line: a pack copy and exact(), bounded), runs it for LIVE_WARM_S on the live input at zero
+ *         weight (its resampler and valve states fill from rest), then crossfades the two voices linearly over
+ *         LIVE_FADE_S; afterwards the old voice stops. A mode change during a switch waits for it to finish. Twice the
+ *         CPU while switching (30 ms).
+ *   Filter set_lpf() goes to both voices (StageT's 15 ms crossfade, #103).
+ * Every step happens at a base sample of the stream, never at a block boundary of the host's choosing, so the output
+ * is the same for any block size when the targets change at a sample common to the block sizes. */
+template <int MaxOs> class LiveStageT {
+public:
+    using Voice = StageT<MaxOs>;
+    static constexpr int SUB = 64;       // processing sub-block (scratch buffers live in the object)
+
+    // ---- non-RT, never concurrently with process() ------------------------------------------------------------
+    /* Run `start` (an exact pack: build_pack at the mode and bias, at lines' internal rate) on lines, which must stay
+     * alive and unchanged while this stage runs. The bias target starts at start.bias_ma, the mode target at
+     * start.mode. Times in seconds (non-finite or negative: 0; the ramp and fade at least one sample). */
+    Status prepare(double fs_base, int os, const Lines& lines, const Pack& start, Lpf lpf = Lpf::off,
+                   const FirDesign& fir = DEFAULT_FIR, double ramp_s = LIVE_RAMP_S, double warm_s = LIVE_WARM_S,
+                   double fade_s = LIVE_FADE_S) {
+        prepared_ = false;
+        if (!lines.ok || int(start.mode) > 2) return Status::bad_argument;
+        for (Voice& v : voice_) {
+            const Status st = v.prepare_pack(fs_base, os, start, lpf, fir);
+            if (st != Status::ok) return st;
+            if (!v.attach_line(&lines.line[int(start.mode)])) return Status::bad_argument;
+        }
+        lines_ = &lines;
+        auto len = [&](double s, int min) {
+            const double n = s > 0.0 && std::isfinite(s) ? std::nearbyint(s * fs_base) : 0.0;
+            return n < double(min) ? min : (n > 1e9 ? 1000000000 : int(n));
+        };
+        ramp_len_ = len(ramp_s, 1);
+        warm_len_ = len(warm_s, 0);
+        fade_len_ = len(fade_s, 1);
+        bias_t_.store(start.bias_ma, std::memory_order_relaxed);
+        mode_t_.store(std::uint8_t(start.mode), std::memory_order_relaxed);
+        lpf_t_.store(std::uint8_t(lpf), std::memory_order_relaxed);
+        cur_ = 0;
+        phase_ = Phase::idle;
+        b_ = b_tgt_ = seen_b_ = start.bias_ma;
+        b_left_ = 0;
+        want_ = seen_mode_ = start.mode;
+        failed_ = false;
+        retired_nonconv_ = switches_ = switch_failures_ = 0;
+        prepared_ = true;
+        return Status::ok;
+    }
+
+    // ---- any thread ---------------------------------------------------------------------------------------------
+    void set_bias(double ma) { if (std::isfinite(ma)) bias_t_.store(ma, std::memory_order_relaxed); }   // mA
+    void set_mode(Mode m) { if (int(m) <= 2) mode_t_.store(std::uint8_t(m), std::memory_order_relaxed); }
+    void set_lpf(Lpf p) { lpf_t_.store(std::uint8_t(p), std::memory_order_relaxed); }
+    void set_drive(double g) { for (Voice& v : voice_) v.set_drive(g); }
+    void set_output(double g) { for (Voice& v : voice_) v.set_output(g); }
+
+    // ---- audio thread -----------------------------------------------------------------------------------------
+    // Settle: the bias jumps to its target, a switch in progress completes, the mode target is taken, and the voice
+    // in charge goes to its operating point (StageT::reset: stats cleared). The pack is rebuilt only if mode or bias
+    // changed (so a stage reset at its prepared setting runs the prepared, exact pack).
+    void reset() noexcept {
+        if (!prepared_) return;
+        read_targets();
+        b_ = b_tgt_;
+        b_left_ = 0;
+        if (phase_ != Phase::idle) { cur_ ^= 1; phase_ = Phase::idle; }
+        Voice& v = voice_[cur_];
+        const BiasLine& l = lines_->line[int(want_)];
+        if (v.pack().mode != want_ || v.line_bias() != l.clamp(b_) || !v.line_exact()) {
+            if (!v.install_line(l, b_)) { ++switch_failures_; v.reset(); }
+        } else {
+            v.reset();
+        }
+        retired_nonconv_ = 0;
+        voice_[cur_ ^ 1].reset();
+    }
+    void process(const double* in, double* out, std::size_t n) noexcept {
+        dkcore::ScopedFlushDenormals ftz;
+        if (!prepared_) { for (std::size_t i = 0; i < n; ++i) out[i] = 0.0; return; }
+        read_targets();
+        for (std::size_t off = 0; off < n;) {
+            if (phase_ == Phase::idle && want_ != voice_[cur_].pack().mode && !failed_) start_switch();
+            std::size_t len = n - off < std::size_t(SUB) ? n - off : std::size_t(SUB);
+            if (phase_ != Phase::idle && std::size_t(left_) < len) len = std::size_t(left_);
+            const double* bp = nullptr;
+            const double b_start = b_;
+            if (b_left_ > 0) {                           // the bias at the end of each base sample of this sub-block
+                for (std::size_t i = 0; i < len; ++i) {
+                    if (b_left_ > 0) {
+                        --b_left_;
+                        b_ = b_left_ == 0 ? b_tgt_ : b_ + b_step_;
+                    }
+                    bias_[i] = b_;
+                }
+                bp = bias_;
+            }
+            Voice& a = voice_[cur_];
+            if (phase_ == Phase::idle) {
+                a.process_line(in + off, out + off, len, bp, b_start);
+            } else {
+                Voice& b = voice_[cur_ ^ 1];
+                a.process_line(in + off, ya_, len, bp, b_start);
+                b.process_line(in + off, yb_, len, bp, b_start);
+                if (phase_ == Phase::warm) {
+                    for (std::size_t i = 0; i < len; ++i) out[off + i] = ya_[i];
+                } else {
+                    const int k0 = fade_len_ - left_;
+                    for (std::size_t i = 0; i < len; ++i) {
+                        const double w = double(k0 + int(i) + 1) / double(fade_len_);
+                        out[off + i] = (1.0 - w) * ya_[i] + w * yb_[i];
+                    }
+                }
+                left_ -= int(len);
+                if (left_ == 0) {
+                    if (phase_ == Phase::warm) { phase_ = Phase::fade; left_ = fade_len_; }
+                    else { cur_ ^= 1; phase_ = Phase::idle; ++switches_; }
+                }
+            }
+            off += len;
+        }
+    }
+
+    // ---- state (audio thread, or while stopped) -----------------------------------------------------------------
+    bool prepared() const { return prepared_; }
+    const Voice& voice() const { return voice_[cur_]; }          // the voice in charge (the old one until a fade ends)
+    const Voice& voice(int k) const { return voice_[k & 1]; }
+    int current() const { return cur_; }
+    Mode mode() const { return voice_[cur_].pack().mode; }
+    double bias() const { return voice_[cur_].line_bias(); }     // mA, the voice in charge's (clamped to its mode)
+    double bias_ramp() const { return b_; }                      // the ramp's position (unclamped), mA
+    bool bias_moving() const { return b_left_ > 0; }
+    bool switching() const { return phase_ != Phase::idle; }
+    bool supported() const { return voice_[cur_].pack().supported; }
+    int latency_samples() const { return voice_[0].latency_samples(); }
+    int oversampling() const { return voice_[0].oversampling(); }
+    int ramp_samples() const { return ramp_len_; }
+    int warm_samples() const { return warm_len_; }
+    int fade_samples() const { return fade_len_; }
+    std::uint64_t switches() const { return switches_; }
+    std::uint64_t switch_failures() const { return switch_failures_; }
+    // non-converged samples since reset(), over both voices (a voice's count is kept when it is re-installed)
+    std::uint64_t nonconverged() const {
+        return retired_nonconv_ + voice_[0].stats().nonconverged + voice_[1].stats().nonconverged;
+    }
+
+private:
+    enum class Phase : std::uint8_t { idle, warm, fade };
+    void read_targets() noexcept {
+        const double t = bias_t_.load(std::memory_order_relaxed);
+        if (t != seen_b_) {
+            seen_b_ = t;
+            const double b = t < lines_->lo_ma ? lines_->lo_ma : (t > lines_->hi_ma ? lines_->hi_ma : t);
+            if (!(b == b_tgt_ && (b_left_ > 0 || b == b_))) {        // not already there, or going there
+                b_tgt_ = b;
+                b_left_ = ramp_len_;
+                b_step_ = (b - b_) / double(b_left_);
+                voice_[cur_].line_plan(b);
+                if (phase_ != Phase::idle) voice_[cur_ ^ 1].line_plan(b);
+            }
+        }
+        const Mode m = Mode(mode_t_.load(std::memory_order_relaxed));
+        if (m != seen_mode_) { seen_mode_ = m; failed_ = false; }
+        want_ = m;
+        const Lpf f = Lpf(lpf_t_.load(std::memory_order_relaxed));
+        for (Voice& v : voice_) v.set_lpf(f);
+    }
+    void start_switch() noexcept {
+        Voice& b = voice_[cur_ ^ 1];
+        retired_nonconv_ += b.stats().nonconverged;
+        if (!b.install_line(lines_->line[int(want_)], b_)) { failed_ = true; ++switch_failures_; return; }
+        if (b_left_ > 0) b.line_plan(b_tgt_);
+        phase_ = warm_len_ > 0 ? Phase::warm : Phase::fade;
+        left_ = warm_len_ > 0 ? warm_len_ : fade_len_;
+    }
+
+    Voice voice_[2];
+    const Lines* lines_ = nullptr;
+    bool prepared_ = false;
+    // audio-thread state
+    int cur_ = 0;
+    Phase phase_ = Phase::idle;
+    int left_ = 0;                                  // samples left in the warm / fade phase
+    int ramp_len_ = 1, warm_len_ = 0, fade_len_ = 1;
+    double b_ = 0.0, b_tgt_ = 0.0, b_step_ = 0.0, seen_b_ = 0.0;   // the bias ramp (mA)
+    int b_left_ = 0;
+    Mode want_ = Mode::P1, seen_mode_ = Mode::P1;
+    bool failed_ = false;                           // the last install of want_ failed: not retried until it changes
+    std::uint64_t retired_nonconv_ = 0, switches_ = 0, switch_failures_ = 0;
+    double bias_[SUB] = {}, ya_[SUB] = {}, yb_[SUB] = {};
+    // shared
+    std::atomic<double> bias_t_{BIAS_MA};
+    std::atomic<std::uint8_t> mode_t_{0}, lpf_t_{0};
+};
+using LiveStage = LiveStageT<dkcore::MAX_OS>;
 
 }  // namespace dk6as6
 #endif

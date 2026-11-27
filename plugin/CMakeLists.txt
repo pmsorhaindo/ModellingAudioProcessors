@@ -6,6 +6,7 @@
 #   map_engine    static library (the DK core + the shared realtime engine, our MIT code)
 #   validator     Steinberg's VST 3 validator (built from the SDK, a test tool, not shipped)
 #   map_engine_test, map_smoothing_test, map_null_vst3, map_null_au   our tests (tests/; map_rt_hooks: a test dylib)
+#   map_switch_cpu  a measurement tool (#115): callback CPU around 6AS6 mode switches; built, not run by the checks
 #
 #   cmake -S plugin -B plugin/build -DCMAKE_BUILD_TYPE=Release
 #   cmake --build plugin/build -j
@@ -155,6 +156,9 @@ target_link_libraries(map_engine_test PRIVATE map_engine map_rt_hooks)
 add_executable(map_smoothing_test tests/smoothing_test.cpp)       # #73: Drive / Output / Bias smoothing
 target_link_libraries(map_smoothing_test PRIVATE map_engine)
 
+add_executable(map_switch_cpu tests/switch_cpu.cpp)               # #115: callback CPU around 6AS6 mode switches (a tool)
+target_link_libraries(map_switch_cpu PRIVATE map_engine)
+
 add_executable(map_null_au tests/null_au.cpp)
 target_link_libraries(map_null_au PRIVATE map_engine map_rt_hooks
     "-framework AudioToolbox" "-framework CoreAudio" "-framework CoreFoundation")
@@ -175,7 +179,7 @@ target_compile_definitions(map_null_vst3 PRIVATE MAP_TEST_VST3_PATH="${MAP_VST3_
 add_dependencies(map_null_vst3 map_vst3)
 
 # the validator is EXCLUDE_FROM_ALL with the SDK; build it with the default target
-add_custom_target(map_all ALL DEPENDS map_vst3 map_au validator map_engine_test map_rt_hooks map_smoothing_test map_null_au
+add_custom_target(map_all ALL DEPENDS map_vst3 map_au validator map_engine_test map_rt_hooks map_smoothing_test map_switch_cpu map_null_au
     map_null_vst3)
 message(STATUS "[MAP] VST 3 bundle: ${MAP_VST3_PACKAGE}")
 message(STATUS "[MAP] AU bundle:    ${MAP_AU_BUNDLE}")
