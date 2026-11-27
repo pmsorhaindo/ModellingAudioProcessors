@@ -34,12 +34,16 @@ jobs:
         include:
           - prototype: valvelab
           - prototype: fullstage
-            pytest_args: --ignore=dk6as6 --ignore=spice6as6 --ignore=cpp/tests/test_cpp_core_6as6.py
+            pytest_args: --ignore=dk6as6 --ignore=spice6as6 --ignore=cpp/tests/test_cpp_core_6as6.py --ignore=cpp/tests/test_cpp_live_6as6.py
           # #104: the C++ 6AS6 core against the Python stage (vectors, bit-exact law and solvers, the ngspice
           # validation reproduced at standard and hq) in its own shard
           - prototype: fullstage
             shard: cpp 6as6
             pytest_args: cpp/tests/test_cpp_core_6as6.py
+          # #115: live bias / mode / filter on the C++ 6AS6 core (its continuous references take about a minute)
+          - prototype: fullstage
+            shard: cpp 6as6 live
+            pytest_args: cpp/tests/test_cpp_live_6as6.py
           - prototype: fullstage
             shard: 6as6 stage
             pytest_args: dk6as6/tests/test_dk6as6_stage.py
@@ -94,9 +98,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - pytest_args: --ignore=dk6as6 --ignore=spice6as6 --ignore=cpp/tests/test_cpp_core_6as6.py
+          - pytest_args: --ignore=dk6as6 --ignore=spice6as6 --ignore=cpp/tests/test_cpp_core_6as6.py --ignore=cpp/tests/test_cpp_live_6as6.py
           - shard: cpp 6as6
             pytest_args: cpp/tests/test_cpp_core_6as6.py
+          - shard: cpp 6as6 live
+            pytest_args: cpp/tests/test_cpp_live_6as6.py
           - shard: 6as6 stage
             pytest_args: dk6as6/tests/test_dk6as6_stage.py
           - shard: 6as6 validation

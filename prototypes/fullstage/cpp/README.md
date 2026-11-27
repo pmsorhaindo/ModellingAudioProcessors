@@ -24,6 +24,7 @@ parameter since #104 (`FirDesign`: `SHIPPED_FIR`, the default and the only desig
 | `build.py` | the compile helper shared by `validate_cpp.py`, `bench.py` and the tests |
 | `alloc_hooks.h`, `bench_common.h` | the tests' allocation counting and the benchmark method, shared with the 6AS6 core's harnesses (#104) |
 | `dk6as6_core.h` and the `*_6as6*` files | the 6AS6 core (#104): [README-6as6.md](README-6as6.md) |
+| `test_live_6as6.cpp`, `live_ref_6as6.h`, [`RESULTS-smoothing-6as6.md`](RESULTS-smoothing-6as6.md) | #115: the 6AS6 stage's live bias and mode switching, measured as #73 |
 | `bias_options.cpp`, [`RESULTS-smoothing.md`](RESULTS-smoothing.md) | #73: the bias-update options measured against a continuous reference, and the results (bias smoothing, Drive / Output ramps, drive vs aliasing) |
 
 ## What the core is

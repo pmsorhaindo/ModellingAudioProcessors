@@ -26,7 +26,7 @@ these, so a renamed plugin looks like a new plugin to them, and old sessions wil
 | `src/vst3/map_vst3.cpp` | VST 3 processor, controller and factory |
 | `src/au/map_au.cpp` | AU v2 effect (`ausdk::AUEffectBase`) |
 | `src/*/Info.plist.in` | bundle plists, filled from `map_identity.h` |
-| `tests/smoothing_test.cpp` | #73: full-range Drive / Output / Bias moves during a sine and silence (worst step vs a continuous reference, stated limits), block sizes 16 / 64 / 512, the Drive ramp vs aliasing ([results](../prototypes/fullstage/cpp/RESULTS-smoothing.md)) |
+| `tests/smoothing_test.cpp` | #73 / #115: full-range Drive / Output / Bias moves during a sine and silence on both paths (worst step vs a continuous reference, stated limits), 6AS6 Mode switches, block sizes 16 / 64 / 512, the Drive ramp vs aliasing ([12AX7 results](../prototypes/fullstage/cpp/RESULTS-smoothing.md), [6AS6 results](../prototypes/fullstage/cpp/RESULTS-smoothing-6as6.md)) |
 | `tests/engine_test.cpp` | engine tests, both paths: exact null vs each path's core (3 qualities × 44.1 / 48 / 96 kHz, stereo and mono; 6AS6 modes, the T cap, the filter), bypass, live quality / bias / valve / mode switches with no allocation, lock or listed syscall in `process()`, null after a switch, NaN / inf input and parameters, saved-state decoding |
 | `tests/rt_hooks.cpp` | test-only dylib linked into the engine test: counts locks, waits, allocations and common syscalls on the audio thread (dyld interposing) |
 | `tests/null_vst3.cpp`, `tests/null_au.cpp` | offline renders **through the built plugins** (VST 3 hosting classes; AudioComponent API), compared to the direct core of either path; live valve switch; saved state (round trip, pre-#114 states, refused / sanitized values) |
@@ -102,8 +102,8 @@ IDs are what hosts store; 0–4 are the pre-#114 IDs, unchanged, and 5–8 are n
 | 3 | Quality | both | Eco / Standard / HQ (Standard) | 12AX7: 4× / 8× / 16× (`dkcore::ECO`, `STANDARD`, `HQ`). 6AS6: 8× / 8× / 16×: it has no eco (`dk6as6::STANDARD`, `HQ`) |
 | 4 | Bypass | both | off / on | wrapper-level, 10 ms crossfade to the dry input delayed by the reported latency (the host's AU bypass property and the VST 3 `kIsBypass` parameter both drive it) |
 | 5 | Valve | — | 6AS6 DK / 12AX7 DK (6AS6 DK) | the path ([Valve paths](#valve-paths-114)) |
-| 6 | 6AS6 Bias | 6AS6 | 0.1–0.6 mA (0.45) | target DC cathode current (#110); the core solves the Rk that draws it. **T caps it at 0.5 mA** |
-| 7 | 6AS6 Mode | 6AS6 | P1 / T / P2 (experimental) (P1) | the Distortion switch (#111) |
+| 6 | 6AS6 Bias | 6AS6 | 0.1–0.6 mA (0.45) | target DC cathode current (#110); the core solves the Rk that draws it. **T caps it at 0.5 mA**. 20 ms ramp in the core along the mode's bias line (#115) |
+| 7 | 6AS6 Mode | 6AS6 | P1 / T / P2 (experimental) (P1) | the Distortion switch (#111); a 30 ms switch in the core: 10 ms warm-up of the new mode, 20 ms crossfade (#115) |
 | 8 | 6AS6 Filter | 6AS6 | Off / 4k / 7k (Off) | the post-distortion low-pass (#103), 15 ms crossfade in the core |
 
 **Latency: one constant per sample rate**, whatever valve and quality run: **130 samples at 44.1 kHz, 82 elsewhere**
@@ -123,10 +123,21 @@ plugin reported the stage's own latency, so its latency grows by that pad.
   8, against 0.108 FS for the old single swap. The circuit's own operating-point transient (a thump) remains: it is
   physical and present in the continuous reference. Details:
   [RESULTS-smoothing.md](../prototypes/fullstage/cpp/RESULTS-smoothing.md).
-- **6AS6 Bias and Mode** are fixed for a prepared 6AS6 stage (the core solves Rk and builds the matrices for them).
-  A change goes through the worker and the slot switch below: a 5 ms fade out, the new stage from its operating point,
-  a 5 ms fade in. Smoothing those, and a measured click-free mode switch, are #115. A bias drag therefore rebuilds
-  repeatedly, with a fade each time.
+- **6AS6 Bias and Mode (#115)** move on the audio thread, without the worker; the engine passes the targets to the
+  running stages (`dk6as6::LiveStage`, one per channel) once per 256-sample chunk. Details:
+  [RESULTS-smoothing-6as6.md](../prototypes/fullstage/cpp/RESULTS-smoothing-6as6.md).
+  - *Bias*: the #73 method ported. A 20 ms linear ramp along the mode's bias line, one exact pack per **internal**
+    sample (the 6AS6 stage has no cathode bypass capacitor, so Rk is in the signal path), landing on the Rk that draws
+    the target current. No matrix build, lock or allocation. A full-range move steps by at most 1.1e-6 FS (limits
+    4.69e-6 FS in silence, 3.13e-4 FS with a sine, the #73 ones), against 0.7–1.3 FS for a single swap. The circuit's
+    own operating-point transient remains, as on the 12AX7 path.
+  - *Mode*: the slot's prepared bias lines hold all three modes. A switch installs the idle voice at the new mode and
+    the current bias (bounded: a pack copy and a few DC solves), warms it up for 10 ms on the live input at zero
+    weight, then crossfades over 20 ms; twice the 6AS6 CPU for those 30 ms. In silence and at Drive 1 it meets the #73
+    limits against the ideal crossfade of both modes always running (1.2e-5 FS worst, against 0.12 FS for a hard
+    switch). At Drive 8 the new mode's own settling (its ~0.1 s coupling and grid-leak states start from rest)
+    differs from "always running" by up to 0.018 FS in worst step; the switch itself adds 1.8e-7 FS. See the results
+    file; whether that settling is acceptable at Drive 8 is open for Michael on the #115 PR.
 - **T cap (Michael, #114, 22 Nov 2026).** T's supported envelope ends at 0.5 mA with the grid current
   (`dk6as6::envelope`, PR #128), so in T the plugin builds at most 0.5 mA: a 6AS6 Bias above 0.5 mA in T runs at
   0.5 mA. The parameter keeps its value, so switching back to P1 restores it. Whether the T panel range should be
@@ -138,7 +149,7 @@ plugin reported the stage's own latency, so its latency grows by that pad.
   parameter.
 - **Drive and aliasing.** The Drive ramp multiplies the host-rate input before the stage, so it runs before the
   upsampler. Against the same ramp applied per internal sample after the upsampler, the in-band difference is
-  −99.5 dB or less (`tests/smoothing_test.cpp`, the 12AX7 path).
+  −99.5 dB or less on the 12AX7 path and −107.0 dB or less on the 6AS6 path (`tests/smoothing_test.cpp`; limit −90 dB).
 
 ## Valve paths (#114)
 
@@ -153,14 +164,15 @@ effect: the 12AX7 Rk-scale Bias and the 6AS6 cathode-current Bias are different 
 the other.
 
 **The switch.** The engine owns two slots, each holding both kinds of stage, allocated once in the constructor. The
-requested configuration is (valve, quality, and on the 6AS6 path mode and bias). When it differs from the running
-one, the worker builds the idle slot and publishes it; the audio thread fades out (5 ms), switches at a block
-boundary, acknowledges, and fades in (5 ms). That is the existing quality switch, now carrying a valve change and a
-6AS6 mode / bias change too. The new stage starts from its operating point. Nothing on the audio thread allocates,
+requested configuration is (valve, quality); a 6AS6 slot is built at the requested mode and bias, which then move
+live (#115, above). When it differs from the running one, the worker builds the idle slot and publishes it; the audio
+thread fades out (5 ms), switches at a block boundary, acknowledges, and fades in (5 ms). That is the existing quality
+switch, now carrying a valve change too. The new stage starts from its operating point. Nothing on the audio thread allocates,
 locks, waits or makes a syscall: the build runs on the worker; the audio thread only reads relaxed / acquire atomics
 and the published slot (`engine_test` counts operator new, and through `tests/rt_hooks.cpp` the libSystem lock,
 wait, allocation and common syscall entry points, during every switch; every atomic is checked lock-free at compile
-time). A switch is not click-free beyond those fades, and the output level changes with the path (below): #115.
+time). A valve or quality switch is not click-free beyond those fades, and the output level changes with the path
+(below; #22). Crossfading those too is not in #115's scope.
 On the 6AS6 path a change between Eco and Standard builds nothing (both run 8×).
 
 **Saved state and presets.** Every save carries both paths' values, so switching the path and back restores the
@@ -222,9 +234,9 @@ cores' own drive and output stay 1.0.
 | `Engine::prepare()` / `release()` | non-RT, never concurrently with `process()` | VST 3 `setActive`, AU `Initialize` / `Cleanup`; prepares at the host's actual sample rate |
 | `Engine::set_*()` / `request_reset()` | any, including the audio thread | relaxed atomics; NaN ignored, other values clamped to the range |
 | `Engine::process()` | audio thread | no allocation, locks or syscalls (counted in `engine_test`: operator new, and `tests/rt_hooks.cpp`); holds `ScopedFlushDenormals`; works in fixed 256-sample chunks |
-| worker thread | the engine's own, started by `prepare()` | polls every 5 ms; builds the idle slot for a quality, valve, or 6AS6 mode / bias change (12AX7 bias and the 6AS6 filter do not go through it) |
+| worker thread | the engine's own, started by `prepare()` | polls every 5 ms; builds the idle slot for a quality or valve change (the 12AX7 bias and the 6AS6 bias, mode and filter do not go through it; a 6AS6 slot build includes the three modes' bias lines, about 20 ms on an M1, informal) |
 
-**Quality, valve and 6AS6 mode / bias changes without stopping the host.** `prepare()` of a stage must not run while
+**Quality and valve changes without stopping the host.** `prepare()` of a stage must not run while
 that stage is processed, so the engine owns two slots ([Valve paths](#valve-paths-114)). The worker builds the idle one
 and publishes it. The audio thread then fades out for 5 ms, switches at a block boundary, acknowledges and fades back
 in for 5 ms. The worker reuses a slot only after that acknowledgement. Latency reporting: `kAudioUnitProperty_Latency`
@@ -233,8 +245,9 @@ the host of anything. The AU tail time and VST 3 `getTailSamples()` follow the r
 
 ## Known limits
 
-- 6AS6 Bias and Mode changes are a 5 ms fade out / in around a rebuilt stage, not smoothed; a switch of path or mode
-  is not click-free beyond those fades, and the paths differ in level. Both are #115 (and #22 for levels).
+- A valve or quality switch is a 5 ms fade out / in around a rebuilt stage, and the paths differ in level (#22).
+- A 6AS6 Mode switch at Drive 8: the new mode settles over ~0.1 s from rest (above); a Mode change during a switch
+  waits for it to finish (at most 30 ms).
 - The 6AS6 path costs about 2.6× the 12AX7's instructions per sample and has no stereo SIMD kernel (README-6as6.md,
   "CPU"); HQ stereo may not fit one core on every host. The default quality per mode is #143.
 - On the 6AS6 path a mono instance runs the left stage only; a host that changes from mono to stereo without

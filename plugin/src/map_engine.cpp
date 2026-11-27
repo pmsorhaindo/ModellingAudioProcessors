@@ -19,6 +19,7 @@ static_assert(kBias6Range.def == dk6as6::BIAS_MA && kBias6Range.min == dk6as6::B
               kBias6Range.max == dk6as6::BIAS_RANGE_MA[0], "6AS6 bias range is the core's");
 static_assert(int(dk6as6::Mode::P1) == kP1 && int(dk6as6::Mode::T) == kT && int(dk6as6::Mode::P2) == kP2,
               "Mode6 order is dk6as6::Mode's");
+static_assert(kTBiasCapMa > kBias6Range.min && kTBiasCapMa <= kBias6Range.max, "T's cap is inside the 6AS6 range");
 static_assert(int(dk6as6::Lpf::off) == kFilterOff && int(dk6as6::Lpf::k4) == kFilter4k &&
               int(dk6as6::Lpf::k7) == kFilter7k, "Filter6 order is dk6as6::Lpf's");
 // No lock on the audio thread: every atomic it touches must be lock-free (a non-lock-free atomic takes a lock).
@@ -96,14 +97,21 @@ int Engine::build(Slot& s, const Config& c, double bias12) {
         s.latency = s.tri.latency_samples();
         s.experimental = false;
     } else {
-        // one pack (Rk solve, matrices, DC point) for both channels: the same as Stage::prepare() on each
+        // The three modes' bias lines over the plugin's ranges (T to kTBiasCapMa; P2 experimental only), once for both
+        // channels; then one pack (Rk solve, matrices, DC point) at the requested mode and bias, the same as
+        // Stage::prepare() on each channel, which the LiveStages start on. Mode and bias then move on the audio thread.
         const dk6as6::Settings set = settings_6as6(c, filter6_t_.load(std::memory_order_relaxed));
         const dkcore::Quality q = core_quality_6as6(c.quality);
+        const dk6as6::LineRange ranges[kNumModes6] = {{kBias6Range.min, kBias6Range.max, false},
+                                                      {kBias6Range.min, kTBiasCapMa, false},
+                                                      {kBias6Range.min, kBias6Range.max, true}};
+        dk6as6::Status st = dk6as6::build_lines(s.lines6, fs_ * q.os, set, ranges);
+        if (st != dk6as6::Status::ok) return int(st);
         dk6as6::Pack p;
-        dk6as6::Status st = dk6as6::build_pack(p, fs_ * q.os, set);
+        st = dk6as6::build_pack(p, fs_ * q.os, set);
         if (st != dk6as6::Status::ok) return int(st);
         for (auto& stage : s.pen) {
-            st = stage.prepare_pack(fs_, q.os, p, set.lpf, set.fir);
+            st = stage.prepare(fs_, q.os, s.lines6, p, set.lpf, set.fir, kRampSeconds);
             if (st != dk6as6::Status::ok) return int(st);
             stage.set_drive(1.0);
             stage.set_output(1.0);
@@ -172,7 +180,7 @@ void Engine::release() {
 std::uint64_t Engine::nonconverged_total() const {
     const Slot& s = *slot_[audio_slot_.load(std::memory_order_relaxed)];
     if (s.cfg.valve == k12AX7) return s.tri.nonconverged_total();
-    return s.pen[0].stats().nonconverged + s.pen[1].stats().nonconverged;
+    return s.pen[0].nonconverged() + s.pen[1].nonconverged();
 }
 
 // ---- audio thread ----------------------------------------------------------------------------------------------
@@ -193,6 +201,15 @@ void Engine::adopt(int slot) noexcept {
     active_mode6_.store(s.cfg.mode6, std::memory_order_relaxed);
     active_bias6_.store(s.cfg.bias6, std::memory_order_relaxed);
     active_experimental_.store(s.experimental, std::memory_order_relaxed);
+    if (s.cfg.valve == k6AS6) publish_6as6(s);
+}
+
+// the 6AS6 mode and bias the running stage is at (they move on the audio thread, #115); relaxed stores
+void Engine::publish_6as6(const Slot& s) noexcept {
+    const dk6as6::LiveStage& st = s.pen[0];
+    active_mode6_.store(int(st.mode()), std::memory_order_relaxed);
+    active_bias6_.store(st.bias(), std::memory_order_relaxed);
+    active_experimental_.store(!st.supported(), std::memory_order_relaxed);
 }
 
 void Engine::reset_audio_state() noexcept {
@@ -218,7 +235,7 @@ void Engine::reset_audio_state() noexcept {
 void Engine::begin_chunk() noexcept {
     if (reset_req_.exchange(false, std::memory_order_relaxed)) reset_audio_state();
 
-    // slot switch (quality, valve, 6AS6 mode / bias): idle -> fade_out -> (swap at the block boundary) -> fade_in
+    // slot switch (quality, valve): idle -> fade_out -> (swap at the block boundary) -> fade_in
     if (sw_ == Switch::idle) {
         const int p = pending_.load(std::memory_order_acquire);
         if (p >= 0 && p != active_) {
@@ -245,9 +262,17 @@ void Engine::begin_chunk() noexcept {
         s.tri.set_bias(b);
         applied_bias_.store(b, std::memory_order_relaxed);
     } else {
-        // the 6AS6 post-filter position (#103): the core crossfades 15 ms on a change (relaxed atomic in the core)
+        // #115: the 6AS6 mode, bias and post-filter targets go straight to the running stages, which move there on this
+        // thread (LiveStage: a mode switch, a bias ramp, the core's 15 ms filter crossfade, #103); read here once per
+        // chunk, like the gain targets. The bias is the requested one: each mode clamps it to its own range (T: the cap).
         const auto f = dk6as6::Lpf(filter6_t_.load(std::memory_order_relaxed));
-        for (auto& stage : s.pen) stage.set_lpf(f);
+        const auto m = dk6as6::Mode(mode6_t_.load(std::memory_order_relaxed));
+        const double b = bias6_t_.load(std::memory_order_relaxed);
+        for (auto& stage : s.pen) {
+            stage.set_lpf(f);
+            stage.set_mode(m);
+            stage.set_bias(b);
+        }
     }
     drive_.set(drive_t_.load(std::memory_order_relaxed) * kVoltsPerFullScale, ramp_len_);
     output_.set(output_t_.load(std::memory_order_relaxed) * kFullScalePerVolt, ramp_len_);
@@ -296,6 +321,7 @@ void Engine::process_chunk(const float* const* in, float* const* out, int nch, i
     } else {
         s.pen[0].process(bufL_, bufL_, std::size_t(n));
         if (nch > 1) s.pen[1].process(bufR_, bufR_, std::size_t(n));
+        publish_6as6(s);
     }
     // 3. output gain, on the stage's own timeline (as before the pad existed: an Output move lines up with the same
     // stage samples), then the pad from the stage's latency up to the reported one: an exact integer delay
@@ -371,9 +397,9 @@ void Engine::worker_poll() {
     if (audio_slot_.load(std::memory_order_acquire) != designated_) return;
 
     const Config t = target_config();
-    if (t == des_cfg_) return;
+    if (t.same_build(des_cfg_)) return;                 // a 6AS6 mode or bias change needs no build (#115)
     des_cfg_ = t;                                       // also on failure: do not retry the same request every poll
-    if (t == slot_[designated_]->cfg) return;           // back to what is running (e.g. after a failed build)
+    if (t.same_build(slot_[designated_]->cfg)) return;  // back to what is running (e.g. after a failed build)
     const int idle = 1 - designated_;                   // not processed: the audio thread acknowledged leaving it
     const int st = build(*slot_[idle], t, bias_t_.load(std::memory_order_relaxed));
     build_status_.store(st, std::memory_order_relaxed);
@@ -381,7 +407,7 @@ void Engine::worker_poll() {
     if (st != 0) return;
     designated_ = idle;
     pending_.store(idle, std::memory_order_release);
-    // The 12AX7 bias and the 6AS6 filter need no worker: the audio thread passes them to the running stage.
+    // The 12AX7 bias and the 6AS6 bias, mode and filter need no worker: the audio thread passes them to the running stage.
 }
 
 }  // namespace mapvs

@@ -35,7 +35,7 @@ COMPONENT="$BUILD/AU/$BUNDLE_FILE.component"
 echo "== engine test (both valve paths: nulls, bypass, live switches, no allocation / lock / syscall, saved state)"
 "$BIN/map_engine_test"
 
-echo "== smoothing test (#73: Drive / Output / Bias moves, block sizes, drive ramp vs aliasing)"
+echo "== smoothing test (#73, #115: Drive / Output / Bias moves and 6AS6 Mode switches, block sizes, drive ramp vs aliasing)"
 "$BIN/map_smoothing_test"
 
 echo "== VST 3 validator"
