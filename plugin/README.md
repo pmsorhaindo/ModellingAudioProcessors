@@ -144,22 +144,27 @@ plugin reported the stage's own latency, so its latency grows by that pad.
 
 **A new instance opens on the 6AS6 path at Standard (8×)**, P1 0.45 mA, filter off. This is Michael's decision of
 27 Nov 2026, and it knowingly trades the #113 inaudibility criterion for CPU.
-- At that setting Standard misses the criterion at 8 V drive: by 18.7 dB at 48 kHz and 12.7 dB at 44.1 kHz. These
-  are PR #146's sweep on the shipping core. At 2 V it passes by ≥ 52 dB.
-- HQ meets the criterion (+41.7 / +40.8 dB) and stays selectable, but its stereo does not fit one Apple M1 core.
+- At that setting Standard misses the criterion at 8 V drive: by 18.7 dB at 48 kHz and 12.7 dB at 44.1 kHz. At 2 V
+  it passes by ≥ 52 dB.
+- HQ meets it (+41.7 / +40.8 dB) and stays selectable, but its stereo is likely over one Apple M1 core.
+- These margins are PR #146's sweep on the shipping core, for inputs below 20 kHz. Between 20 kHz and Nyquist, HQ
+  fails by up to 76.7 dB, and Standard was not measured there (#147).
 
-Figures are % of one M1 core at 48 kHz, one instance. They are estimated from counted cycles at the quiet clock,
-because the Mac was loaded: load average 5–19, another agent job (#115) running, no run clean. In brackets is the
-measured median of three runs on that loaded Mac. The full record, with the spread, is
+**These are not clean timings; #143's clean M1 timing is still open.** Figures are % of one M1 core at 48 kHz,
+one instance. They are estimated from counted cycles at the quiet clock, likely a few % high, with the bias bounded
+on the 12AX7 only, because the Mac was loaded: load average 5–19, another agent job (#115) running, no run clean.
+In brackets is the measured median of three runs on that loaded Mac. Standard costs 0.50–0.58× HQ in cycles, the
+firmest figure here. Live itself was not timed. The full record, with the spread, is
 `prototypes/fullstage/cpp/m1_timing/README.md`.
 
 | path | Standard, stereo | HQ, stereo | HQ, mono |
 |---|---|---|---|
-| 12AX7 | 20–25 % (30–37 %) | 39–44 % (56–66 %) | 25–27 % (35–38 %) |
+| 12AX7 | 20–25 % (30–37 %) | 39–44 % (56–66 %) | not timed (≤ HQ stereo, inferred) |
 | 6AS6 | **58–70 % (94–111 %)** | **113–123 % (182–192 %)** | 56–62 % (88–100 %) |
 
+The 12AX7 path's mono runs the same `StereoStage` with one signal on both lanes, so it was not timed apart.
 `kQualityDefault` and `kValveDefault` (`src/map_params.h`) hold the default, and the engine test checks it. Revisit
-it when #135 brings 6AS6 HQ stereo under one core.
+it when a clean M1 timing exists, or when #135 brings 6AS6 HQ stereo clearly under one core.
 
 ## Valve paths (#114)
 
@@ -257,7 +262,7 @@ the host of anything. The AU tail time and VST 3 `getTailSamples()` follow the r
 - 6AS6 Bias and Mode changes are a 5 ms fade out / in around a rebuilt stage, not smoothed; a switch of path or mode
   is not click-free beyond those fades, and the paths differ in level. Both are #115 (and #22 for levels).
 - The 6AS6 path costs about 2.6× the 12AX7's instructions per sample and has no stereo SIMD kernel (README-6as6.md,
-  "CPU"); HQ stereo does not fit one Apple M1 core (113–123 %, estimated), so the default is Standard ([Default Quality and CPU](#default-quality-and-cpu-143)).
+  "CPU"); HQ stereo is likely over one Apple M1 core (113–123 %, estimated on a loaded Mac), and the default is Standard ([Default Quality and CPU](#default-quality-and-cpu-143)).
 - On the 6AS6 path a mono instance runs the left stage only; a host that changes from mono to stereo without
   re-activating would get a stale right stage until the next reset.
 - Sample rates other than 48 kHz are untested against the reference (#74). The plugin prepares at whatever rate the

@@ -60,9 +60,10 @@ inline constexpr double kTBiasCapMa = 0.5;
 
 enum Quality : int { kEco = 0, kStandard = 1, kHQ = 2, kNumQualities = 3 };
 /* The shipping default, with kValveDefault below: 6AS6 at Standard (8x). Michael's decision on #143 (27 Nov 2026),
- * knowingly trading the #113 inaudibility criterion for CPU. At the default setting Standard misses it at 8 V by
- * 18.7 / 12.7 dB (48 / 44.1 kHz). HQ meets it but its stereo does not fit one M1 core (113-123 % estimated, against
- * 58-70 % for Standard; measured on a loaded Mac). Record: prototypes/fullstage/cpp/m1_timing/README.md. */
+ * knowingly trading the #113 inaudibility criterion for CPU. At the default setting, for inputs below 20 kHz,
+ * Standard misses it at 8 V by 18.7 / 12.7 dB (48 / 44.1 kHz) and HQ meets it. Standard costs about half of HQ, whose
+ * stereo is likely over one M1 core (113-123 % against 58-70 %, estimated from cycles on a loaded Mac; no clean M1
+ * timing yet). Record: prototypes/fullstage/cpp/m1_timing/README.md. */
 inline constexpr int kQualityDefault = kStandard;
 // The 6AS6 stage has no eco (dk6as6_core.h: "eco is not a 6AS6 setting"): on that path Eco runs Standard 8x.
 inline constexpr const char* kQualityNames[kNumQualities] = {"Eco (4x; 6AS6 8x)", "Standard (8x)", "HQ (16x)"};
