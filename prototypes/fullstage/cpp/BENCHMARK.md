@@ -15,8 +15,8 @@
 > (fast math), against 1.27–1.35 × for the #21 path in the same run; the ~1.1 × goal is not met.
 >
 > **#143 (27 Nov 2026): repeated M1 runs of the shipping stages** (12AX7 libm, 6AS6 default) are in
-> `cpp/m1_timing/README.md`, summarised by `cpp/m1_spread.py`. That Mac was loaded, so none is clean: the spread and
-> an estimate from cycles at the quiet clock are reported instead.
+> `cpp/m1_timing/README.md`, summarised by `cpp/m1_spread.py`. That Mac was loaded (another agent job running), so
+> none is clean: the spread and an estimate from cycles at the quiet clock are reported instead.
 >
 > **Default (18 Nov 2026):** with `TriodeMath::fast`, `StereoStage` now defaults to `LaneMath::vector` (the v2 path
 > measured above). `LaneMath::per_lane` remains the bit-exact reference, and the libm path is unchanged (there is no

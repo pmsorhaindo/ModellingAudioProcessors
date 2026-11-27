@@ -1,7 +1,8 @@
-# M1 timing of the shipping stages, and the default Quality for the user view (#143, 27 Nov 2026)
+# M1 timing of the shipping stages, and the v0.1 default Quality (#143, 27 Nov 2026)
 
-**Not a clean timing.** This Mac was shared with other work for the whole measurement. The load average was 5–19 on
-8 cores (4 P + 4 E), and at the start one interactive app alone used about 1.5 cores. The P-cores ran at 2.0–2.4 GHz, against
+**Not a clean timing.** This Mac was shared with other work for the whole measurement. Another agent job was running
+at the same time, for #115 according to the dispatcher. The load average was 5–19 on 8 cores (4 P + 4 E), and at the
+start one interactive app alone used about 1.5 cores. The P-cores ran at 2.0–2.4 GHz, against
 3.15–3.17 GHz in the quiet 13 Nov record. The thread was on a CPU for 86–98 % of the wall time, and 2–25 % of its
 cycles (median pass) ran on E-cores. By the test in `cpp/m1_spread.py` ("clean"), **0 of the 84 configurations is
 clean**, and the three run medians of a configuration spread by 1.07–1.41×. The wall-time figures below therefore
@@ -91,46 +92,49 @@ overstate what the stages cost on a quiet M1, and are reported as measured. They
   own tracks and the host's overhead, so "fits one core" here is a necessary condition for real time, not a
   sufficient one.
 
-## Default Quality for the user view
+## Default Quality: 6AS6 at Standard (Michael's decision, 27 Nov 2026)
 
-The user view does not exist yet (#105). A new instance starts on the 6AS6 path, P1 0.45 mA, filter off
-(`plugin/src/map_params.h`), and Quality is shared by both paths. So the default that matters is the 6AS6 one.
+**Decision.** The v0.1 shipping default is the **6AS6 path at Standard (8×)**: P1, 0.45 mA, filter off. Michael
+chose it knowing that it trades the #113 inaudibility criterion for CPU. In `plugin/src/map_params.h` this is
+`kValveDefault = k6AS6` and `kQualityDefault = kStandard`, and `plugin/tests/engine_test.cpp` ("defaults (#143)")
+checks it. The rest of this section records what the decision trades. Quality is shared by both paths, so the 12AX7
+path also opens at its own Standard 8× (#45).
 
-**Sound first.** The #113 criterion (`dk6as6/inaudible.py`): every alias product below −100 dBFS and ≥ 10 dB under
-the threshold of hearing, at 2 and 8 V, 44.1 and 48 kHz. At the default setting, PR #146's C++ sweep on the shipping
-core (k140, grid current, filter off) gives these margins (negative fails; not re-run here):
+**What it gives up: the #113 criterion at 8 V.** The criterion (`dk6as6/inaudible.py`) is that every alias product
+sits below −100 dBFS and ≥ 10 dB under the threshold of hearing, at 2 and 8 V, 44.1 and 48 kHz. The margins at the
+default setting come from PR #146's C++ sweep on the shipping core (k140, grid current, filter off). They were not
+re-run here; negative fails:
 
 | default setting, P1 0.45 mA | 48 kHz, 8 V | 44.1 kHz, 8 V | 48 kHz, 2 V | 44.1 kHz, 2 V |
 |---|---|---|---|---|
-| Standard 8× | **−18.7 dB** | **−12.7 dB** | +59.1 dB | +52.0 dB |
+| **Standard 8× (the default)** | **−18.7 dB** | **−12.7 dB** | +59.1 dB | +52.0 dB |
 | HQ 16× | +41.7 dB | +40.8 dB | +59.1 dB | +52.0 dB |
 
-- On main, #136's record (`dk6as6/RESULTS.md`, "State-space antiderivative antialiasing") reads 8× at P1 0.6 mA the
-  same way: −21.26 / −21.10 dB.
-- So **only HQ meets the criterion at the default setting.** Standard does not, and this is the measured reason the
-  issue asks for if HQ stereo does not fit one core.
+- At 8 V drive the default's worst alias products sit 18.7 dB (48 kHz) and 12.7 dB (44.1 kHz) over the limit.
+- At 2 V it passes with ≥ 52 dB to spare.
+- On main, #136's record (`dk6as6/RESULTS.md`, "State-space antiderivative antialiasing") reads 8× the same way at
+  P1 0.6 mA: −21.26 / −21.10 dB.
+- HQ meets the criterion at the default setting and is still offered.
 
-**CPU second.** HQ stereo does not fit one M1 core (above). On a stereo track in Live, a default of HQ would not run
-in real time on this M1: the output would drop out, which is louder than any of the aliasing the criterion is about.
+**What it buys: CPU headroom.** These figures are % of one M1 core at 48 kHz, one instance, from the tables above.
+They come from the same loaded runs: load average 5–19, another agent job (#115) running concurrently, no run clean.
+The est. quiet figure is the closest to a quiet M1 and probably a few % high. The measured figure is the median of
+the three run medians, with their range, on the loaded Mac:
 
-**Recommendation.**
-- The user-view default Quality for the 6AS6 path is **HQ**, because it is the only offered quality that meets the
-  #113 criterion at the default setting.
-- That default cannot ship on an M1 in stereo until the stage's HQ stereo cost is below one core with headroom.
-  That needs a cut of about 20 % for zero headroom, and about 40 % to reach ~70 % of a core. Lane maths, a lazier
-  Jacobian and a stereo kernel are #135; this PR does no CPU work.
-- Until then, no offered quality meets both the criterion and real-time stereo on this M1. Choosing between the
-  options below is **Michael's decision**:
-  1. **HQ as the default anyway.** It meets #113 and works on mono tracks, but overloads one M1 core on stereo tracks.
-  2. **Standard as the default.** It fits (58–70 % est.), but fails #113 at 8 V by up to 18.7 dB; it passes at 2 V
-     by ≥ +52 dB. This trades the criterion for CPU, which the brief rules out without Michael's say-so.
-  3. **The 12AX7 path as the v0.1 user-view default** (as in the #145 fallback), at its own Standard 8× (#45).
-     - HQ also fits there: 39–44 % est. in stereo.
-     - The 6AS6 stays in the dev view until #135 lands.
-     - The 12AX7 path meets its own dBc aliasing gate (#6 / #98). It has not been assessed against the #113
-       criterion, which was set for the 6AS6 path.
-- `kQualityDefault` stays Standard in this PR, so nothing changes in the plugin until Michael picks. Changing it is
-  one line in `plugin/src/map_params.h`.
+| 6AS6, P1 0.45 mA | stereo, est. quiet | stereo, measured (range of 3 runs) | mono, est. quiet |
+|---|---|---|---|
+| **Standard 8× (the default)** | 58–70 % | 94–111 % (76–116 %) | 29–35 % |
+| HQ 16× | 113–123 % | 182–192 % (149–209 %) | 56–62 % |
+
+- **HQ stereo does not fit one M1 core.** It would drop out on a stereo track in Live.
+- **Standard stereo fits on a quiet M1.** On this loaded Mac its median reached 94–111 %, so on a machine as busy
+  as this one it may not keep up either, at 2 and 8 V.
+- Ranges are over 0.5 / 2 / 8 V peak, block 64.
+
+**Revisit when** #135 brings 6AS6 HQ stereo under one core with headroom. That needs a cut of about 20 % for zero
+headroom and about 40 % for ~70 % of a core. Or revisit when an eco or ADAA setting meets the criterion at
+Standard's cost (#113 / #136). Changing the default is one line, `kQualityDefault`, plus the engine test's
+expectation.
 
 ## Not covered
 - A clean timing: this Mac was never quiet during the work. The est. quiet figures are the substitute, with their bias

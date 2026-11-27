@@ -170,6 +170,26 @@ int main() {
         map_rt_clear();
     }
 
+    // 0b. the shipping defaults (#143, Michael's decision of 27 Nov 2026): a new instance runs the 6AS6 path at
+    // Standard (8x), P1 0.45 mA, filter off. Standard misses the #113 criterion at 8 V (cpp/m1_timing/README.md);
+    // HQ stereo does not fit one M1 core. The host-facing defaults (AU plain, VST 3 normalized) must say the same.
+    {
+        using namespace mapvs;
+        check(default_plain(kValve) == k6AS6 && default_plain(kQuality) == kStandard && default_plain(kMode6) == kP1 &&
+                  default_plain(kBias6) == 0.45 && default_plain(kFilter6) == kFilterOff &&
+                  default_norm(kValve) == index_to_norm(k6AS6, kNumValves) &&
+                  default_norm(kQuality) == quality_to_norm(kStandard) && mapvs::quality_6as6(kQualityDefault) == kStandard,
+              "defaults (#143): 6AS6, Standard, P1, 0.45 mA, filter off, in plain and normalized values");
+        auto fresh = std::make_unique<Engine>();
+        const bool ok = fresh->prepare(48000.0);
+        check(ok && fresh->active_valve() == k6AS6 && fresh->active_quality() == kStandard &&
+                  fresh->active_mode6() == kP1 && fresh->active_bias6() == 0.45 && !fresh->active_experimental() &&
+                  fresh->active_latency_samples() == Engine::latency_for(k6AS6, kStandard, 48000.0),
+              "a fresh engine, no parameter set, runs 6AS6 Standard (8x) P1 0.45 mA",
+              fmt("valve %.0f quality %.0f", double(fresh->active_valve()), double(fresh->active_quality())));
+        fresh->release();
+    }
+
     // 1. null, 12AX7
     for (double fs : {44100.0, 48000.0, 96000.0}) {
         for (int q = 0; q < mapvs::kNumQualities; ++q) {

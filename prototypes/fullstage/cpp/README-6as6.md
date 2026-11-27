@@ -339,9 +339,11 @@ kernel would have to carry the per-lane Newton and restart contract. The one cha
 two-lane kernel are #135.
 
 **M1, repeated (#143, 27 Nov 2026; `cpp/m1_timing/README.md`).** Three runs of the default setting and T 0.5 mA. The
-Mac was loaded again (load average 5–19, P-cores at 2.0–2.4 GHz), so none is clean, and the figures are given with
-their spread and an estimate from the counted cycles at the quiet clock. Estimated: Standard 8× stereo is 58–70 % of
-one core and HQ 16× stereo 113–123 %. **HQ stereo does not fit one M1 core**; mono HQ (56–62 %) does.
+Mac was loaded again (load average 5–19, another agent job for #115 running, P-cores at 2.0–2.4 GHz). None of the
+runs is clean, so the figures are given with their spread and an estimate from the counted cycles at the quiet clock.
+Estimated: Standard 8× stereo is 58–70 % of one core and HQ 16× stereo 113–123 %. **HQ stereo does not fit one M1
+core**; mono HQ (56–62 %) does. So the v0.1 default is Standard (Michael, 27 Nov 2026), which misses the #113
+criterion at 8 V by 18.7 / 12.7 dB (48 / 44.1 kHz).
 
 ## Limitations
 
