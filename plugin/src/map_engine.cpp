@@ -88,6 +88,7 @@ Engine::Engine() {
 Engine::~Engine() { release(); }
 
 int Engine::build(Slot& s, const Config& c, double bias12) {
+    builds_.fetch_add(1, std::memory_order_relaxed);    // non-RT (prepare() or the worker)
     if (c.valve == k12AX7) {
         const dkcore::BuildStatus st = s.tri.prepare(fs_, core_quality(c.quality), bias12);
         if (st != dkcore::BuildStatus::ok) return int(st);

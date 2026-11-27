@@ -138,12 +138,16 @@ Cout, by tens of volts, like the bias thump. The crossfade avoids that thump.
 | signal | against always running | the switch itself (vs B′ started at the switch) | hard switch | 5 ms fade out / in |
 |---|---|---|---|---|
 | silence | 2.2e-13 V | ≤ 7.8e-9 V | 1e-11–1.9e-10 V | 1e-13–1e-12 V |
-| 1 V sine | 7.3e-5–5.3e-4 V (max \|y − ref\| ≤ 0.38 V) | ≤ 7.8e-9 V | 0.32–11.6 V (≥ 2 255×) | 0.55–3.0 V (≥ 1 231×) |
+| 1 V sine | 7.3e-5–5.3e-4 V (max \|y − ref\| ≤ 0.38 V) | ≤ 7.8e-9 V | 0.32–11.6 V (≥ 1 596×) | 0.55–3.0 V (≥ 1 231×) |
 | 8 V sine | 1.5e-2–2.0 V (max \|y − ref\| ≤ 17.7 V) | ≤ 7.8e-9 V | 19.9–86 V | 8.3–19.1 V |
 
 At HQ 16× (`--hq`, all six pairs at both biases) the numbers are the same:
 - silence 1.7e-13 V;
 - 1 V: 5.3e-4 V against always running, at least 1 849× below the hard switch and 1 257× below the 5 ms fade;
+- reduction minimums over the full run (`--hq`, which also runs every Standard case): Standard 1 596× against the
+  hard switch (P2 → P1 at 0.60 mA, 1 V: 0.391 V hard, 2.45e-4 V smoothed) and 1 231× against the 5 ms fade; HQ
+  1 849× and 1 257×. The default run (CI) skips some 0.60 mA pairs, so its Standard minimum against the hard switch
+  is 2 255×. All are above the 200× limit (PR #161 review, round 1);
 - 8 V: 2.05 V against always running;
 - the switch itself: 1.3e-8 V.
 
@@ -270,9 +274,36 @@ the hooks, now goes through the live path for every 6AS6 mode and bias change.
   - Per plan (a new target) and per voice install: `exact()`, 2.1–2.3 µs typical, at most 6 DC solves of at most
     3 × 50 Newton iterations.
   - Per mode switch: twice the stage for 30 ms.
-- **CPU while a bias ramp runs**, an informal ratio only: 8 updates per base sample is +1.9–3.5 µs, against
-  8.1–9.6 µs for one base sample of the stage (1 V, standard). That is roughly +25–40 % for the 20 ms of the ramp,
-  and nothing at rest.
+- **CPU while a bias ramp runs**, an informal ratio only: one line update is about 150 ns (table 32 ns, matrices
+  85 ns, rest constants 30 ns; `-O2`, M1), so 8 per base sample add about 1.2 µs to the 7–9 µs of one base sample of
+  the stage (1 V, standard). That is roughly +15 % for the 20 ms of the ramp, and nothing at rest. The first figure
+  this file gave, 0.23–0.44 µs per update (+25–40 %), included loop overhead and was taken on a loaded machine.
+- **Callback CPU around a mode switch: over budget on this M1 in stereo** (PR #161 review, round 1;
+  `plugin/tests/switch_cpu.cpp`, `map_switch_cpu`, the review's measurement: 48 kHz, host blocks of 64 = 1.333 ms,
+  stereo L 220 Hz 0.9 FS / R 330 Hz 0.63 FS, 30 P1 ↔ T switches at 0.45 mA, thread CPU per `process()` call; load
+  average 5–10 on this shared machine, so the absolute figures move by ±25 % between runs):
+
+  | quality | before switching (median, % of the period) | during a switch | during a switch with a bias ramp |
+  |---|---|---|---|
+  | Standard 8× | 0.91–1.03 ms (68–77 %) | 1.78–2.34 ms (133–176 %), every call over | 2.20–2.78 ms (165–208 %) |
+  | HQ 16× | 2.0–2.3 ms (150–171 %): over before any switch | 4.2–4.7 ms | 4.7–5.0 ms |
+
+  - The two voices make every switch callback cost twice the stage. The 6AS6 stereo Standard stage alone already
+    takes 68–77 % of a 64-sample period here, so twice that cannot fit, whatever the buffer size: the cost per sample
+    is the same, and so is the share of real time.
+  - Under a Mach time-constraint policy, as an audio I/O thread runs (`--rt`), the overrunning thread is demoted, and
+    a switch callback takes 3.7–3.8 ms.
+  - Expect a dropout per mode switch on this Mac in stereo at Standard. Mono (one voice pair), and hosts where the
+    stage takes under about 45 % of the period, have the headroom. The cost of the stage itself is #135's (fast
+    maths, a lazier Jacobian, a two-lane stereo kernel). HQ stereo does not fit this machine even without switching.
+  - The one-voice alternative was measured and **not** adopted, because it fails the quality limit: fade the old
+    voice into a linear stand-in (the input, delayed by the stage latency, times the old voice's least-squares gain),
+    warm the new voice up behind it, fade the new voice in. It never runs two voices, but its worst step at 1 V is
+    0.023–0.23 V against #73's 20 mV sine limit, 1–11× over (scratch run, 27 Nov, offline model, P1 ↔ T and P1 → P2,
+    5–10 ms phases). The two-voice crossfade passes that limit by 38×.
+  - Which way to go is Michael's call on PR #161: keep the crossfade, which meets every step limit and needs twice
+    the stage's CPU for 30 ms, until #135 makes the stage cheaper; or a one-voice switch that fits the CPU but
+    exceeds the step limit.
 - **Non-RT.** `build_lines` (three modes) takes about 20 ms on the M1. It runs on the worker for a quality or valve
   change, and in `Engine::prepare`.
 - **Memory.** A slot holds `Lines` (26 KB) and two `LiveStage` (44 KB each), on the heap, allocated once.

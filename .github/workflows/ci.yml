@@ -139,7 +139,7 @@ jobs:
       - name: Build
         run: >-
           cmake --build plugin/build -j "$(sysctl -n hw.ncpu)"
-          --target map_vst3 map_au validator map_engine_test map_smoothing_test map_null_vst3 map_null_au
+          --target map_vst3 map_au validator map_engine_test map_smoothing_test map_switch_cpu map_null_vst3 map_null_au
       - name: Download pluginval v1.0.4
         run: |
           mkdir -p "$RUNNER_TEMP/pluginval"

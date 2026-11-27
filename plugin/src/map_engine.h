@@ -123,6 +123,9 @@ public:
     int build_status_valve() const { return build_status_valve_.load(std::memory_order_relaxed); }
     int bias_status() const { return build_status(); }  // the pre-#114 name
     double applied_bias() const { return applied_bias_.load(std::memory_order_relaxed); }
+    // stage builds since construction (prepare() and the worker, successful or not): a 6AS6 mode or bias change must
+    // not add one (#115; engine_test 4c)
+    std::uint64_t build_count() const { return builds_.load(std::memory_order_relaxed); }
     static int latency_for(int valve, int quality, double sample_rate);      // a stage's own latency
     static int latency_for(int quality, double sample_rate) { return latency_for(k12AX7, quality, sample_rate); }
     static int reported_latency_for(double sample_rate);                     // max of latency_for over valves, qualities
@@ -203,6 +206,7 @@ private:
     std::atomic<int> reported_latency_{0};
     std::atomic<int> build_status_{0}, build_status_valve_{kValveDefault};
     std::atomic<double> applied_bias_{kBiasRange.def};
+    std::atomic<std::uint64_t> builds_{0};
     std::atomic<bool> prepared_{false};
 
     // audio-thread state

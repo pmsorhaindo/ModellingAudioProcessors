@@ -249,6 +249,10 @@ the host of anything. The AU tail time and VST 3 `getTailSamples()` follow the r
 - A valve or quality switch is a 5 ms fade out / in around a rebuilt stage, and the paths differ in level (#22).
 - A 6AS6 Mode switch at Drive 8: the new mode settles over ~0.1 s from rest (above); a Mode change during a switch
   waits for it to finish (at most 30 ms).
+- A 6AS6 Mode switch runs two voices for 30 ms, so its callbacks cost twice the stage. On this repo's M1, in stereo at
+  Standard, the stage alone takes 68–77 % of a 64-sample period, so a switch overruns every callback for those
+  30 ms; expect a dropout per switch there (`map_switch_cpu`; RESULTS-smoothing-6as6.md, "Realtime and cost"). The
+  stage's own cost is #135. Open for Michael on PR #161.
 - The 6AS6 path costs about 2.6× the 12AX7's instructions per sample and has no stereo SIMD kernel (README-6as6.md,
   "CPU"); HQ stereo may not fit one core on every host. The default quality per mode is #143.
 - On the 6AS6 path a mono instance runs the left stage only; a host that changes from mono to stereo without
@@ -256,9 +260,10 @@ the host of anything. The AU tail time and VST 3 `getTailSamples()` follow the r
 - Sample rates other than 48 kHz are untested against the reference (#74). The plugin prepares at whatever rate the
   host gives. The wrapper's nulls were run at 44.1, 48 and 96 kHz, and the validators process at many more rates;
   neither tells whether the model is accurate there.
-- Quality, valve and 6AS6 mode / bias changes reach the stage through the worker. They land about 5 ms (wall clock)
-  plus the build time after the parameter changes, also in an offline render that runs faster than real time. 12AX7
-  Bias changes are sample-aligned (since #73).
+- Quality and valve changes reach the stage through the worker. They land about 5 ms (wall clock) plus the build time
+  after the parameter changes, also in an offline render that runs faster than real time. The 12AX7 Bias (since #73)
+  and the 6AS6 Bias, Mode and Filter (since #115) do not go through the worker: they are sample-aligned and build
+  nothing (`engine_test` 4c counts the builds).
 - Reported tail: latency + 0.2 s on the 12AX7 path, about 6 × the slowest time constant of its circuit values
   (Ck · Rk = 33 ms); latency + 0.8 s on the 6AS6 path, about 6 × its slowest coupling RC (Cout · (Ra + Rl) =
   100 nF · 1.27 MΩ = 0.127 s, `dk6as6/circuit.py`, inferred values). Provisional choices, not measured decays.
