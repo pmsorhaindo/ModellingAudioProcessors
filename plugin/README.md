@@ -136,8 +136,9 @@ plugin reported the stage's own latency, so its latency grows by that pad.
     weight, then crossfades over 20 ms; twice the 6AS6 CPU for those 30 ms. In silence and at Drive 1 it meets the #73
     limits against the ideal crossfade of both modes always running (1.2e-5 FS worst, against 0.12 FS for a hard
     switch). At Drive 8 the new mode's own settling (its ~0.1 s coupling and grid-leak states start from rest)
-    differs from "always running" by up to 0.018 FS in worst step; the switch itself adds 1.8e-7 FS. See the results
-    file; whether that settling is acceptable at Drive 8 is open for Michael on the #115 PR.
+    differs from "always running" by up to 0.018 FS in worst step; the switch itself adds 1.8e-7 FS. Michael accepted
+    the 10 ms + 20 ms switch on that basis (27 Nov 2026, PR #161): acceptance is on the switch itself, and the settling
+    numbers are reported in the results file.
 - **T cap (Michael, #114, 22 Nov 2026).** T's supported envelope ends at 0.5 mA with the grid current
   (`dk6as6::envelope`, PR #128), so in T the plugin builds at most 0.5 mA: a 6AS6 Bias above 0.5 mA in T runs at
   0.5 mA. The parameter keeps its value, so switching back to P1 restores it. Whether the T panel range should be

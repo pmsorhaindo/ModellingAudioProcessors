@@ -10,7 +10,7 @@ the audio thread builds or inverts a matrix, takes a lock or allocates.
 |---|---|---|---|---|---|
 | Bias, full range | the bias line, per internal sample | 6.4e-5 V (T), 4.5e-7 V (P1) | 7.5e-5 V (T), 5.0e-7 V (P1) | 2.4–73 V | 3e-4 V / 2e-2 V |
 | Mode, at 1 V | 10 ms warm-up + 20 ms crossfade | 2.2e-13 V | 5.3e-4 V | 0.32–11.6 V (hard), 0.55–3.0 V (5 ms fade) | 3e-4 V / 2e-2 V |
-| Mode, at 8 V | the same | — | 1.5e-2–2.0 V against "always running" (the new mode's settling, below); 7.8e-9 V for the switch itself | 19.9–86 V | open (Michael's call, on the PR) |
+| Mode, at 8 V | the same | — | ≤ 1.3e-8 V for the switch itself; 0.015–2.0 V against "always running" (the new mode's settling, below; reported) | 19.9–86 V | the #73 limits on the switch itself (Michael, 27 Nov 2026) |
 | Filter | #103's 15 ms crossfade, unchanged | 1e-25 V | 2.1e-14 V | 1.4–30 V | 3e-4 V / 2e-2 V |
 | Drive / Output | the wrapper's 20 ms ramps, unchanged | 0 FS | 0 FS | 0.34–0.62 FS | 1e-6 FS |
 
@@ -165,11 +165,20 @@ measurements say so in three ways:
 Only a new mode that has always been running (three voices, three times the CPU, always) would meet the #73 sine
 limit against that reference at 8 V. The issue does not define a mode-switch limit at 8 V. Asserting #73's against
 "always running" would need a method that is not in this scope. Asserting it only against "started at the switch"
-would be a change of reference. **Michael's call**, raised on the PR: is the measured settling at Drive 8 acceptable
-for v0.1 (recommended: yes, with these numbers), or should the warm-up be longer? The sweep below shows that trade:
-100 ms brings it to 0.087 V at the cost of 120 ms latency per switch. The tests assert the #73 limits against
-"always running" in silence and at 1 V / Drive 1, and against "started at the switch" everywhere. At 8 V / Drive 8
-they print the always-running numbers without asserting them.
+would be a change of reference, so it was put to Michael on PR #161.
+
+**Decision (Michael, 27 Nov 2026, on PR #161): "accept 10 ms + 20 ms switch, report the numbers".**
+- The switch stays at a 10 ms warm-up and a 20 ms crossfade. The 100 ms warm-up from the sweep below (0.087 V, at
+  the cost of 120 ms latency per switch) is not adopted.
+- Acceptance for v0.1 is on the switch itself: it adds ≤ 1.3e-8 V (standard and HQ; ≤ 1.8e-7 FS through the
+  plugin), within the #73 limits on every signal.
+- The post-switch settling against the always-running reference is reported, not asserted: 0.015–2.0 V at 8 V in
+  the core, and ≤ 0.018 FS at Drive 8 through the plugin.
+
+The tests follow the decision:
+- against "always running", the #73 limits are asserted in silence and at 1 V / Drive 1;
+- against "started at the switch", they are asserted everywhere;
+- at 8 V / Drive 8, the always-running numbers are printed without being asserted.
 
 **Option sweep** (`test_live_6as6 --options`; worst step against always running, over P1 ↔ T, P1 ↔ P2 and T ↔ P2
 at 0.45 mA; standard):
