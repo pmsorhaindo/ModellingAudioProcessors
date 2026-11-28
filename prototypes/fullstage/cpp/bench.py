@@ -332,7 +332,7 @@ def table_pair(base_a, *rest):
     runs = (base_a,) + rest
     mids = runs[1:-1]
     recs = [{r["name"]: r for r in x["results"]} for x in runs]
-    names = [n for n in recs[1] if all(n in r for r in recs[1:-1])]
+    names = list(dict.fromkeys(n for r in recs[1:-1] for n in r))       # every row of the builds, in order
     cpu = [x["host"].get("lscpu", {}).get("Model name") or x["host"].get("cpu") for x in runs]
     labels = [x["build"].get("label") or x["build"]["git"] for x in mids]
     out = [f"**paired control: base `{base_a['build']['git']}`, then {', '.join(labels)}, then the base** (one runner: "
@@ -343,7 +343,8 @@ def table_pair(base_a, *rest):
     for n in names:
         a, b = recs[0].get(n), recs[-1].get(n)
         mb = (a["pct_core"] + b["pct_core"]) / 2 if a and b else None
-        cells = [f"{r[n]['pct_core']:.2f} | " + (f"{r[n]['pct_core'] / mb:.3f}" if mb else "—") for r in recs[1:-1]]
+        cells = [(f"{r[n]['pct_core']:.2f} | " + (f"{r[n]['pct_core'] / mb:.3f}" if mb else "—")) if n in r else "— | —"
+                 for r in recs[1:-1]]
         out.append(f"| {n} | {a['pct_core']:.2f} | " if a else f"| {n} | — | ")
         out[-1] += " | ".join(cells) + (f" | {b['pct_core']:.2f} | {b['pct_core'] / a['pct_core']:.3f} |" if a and b
                                          else " | — | — |")
