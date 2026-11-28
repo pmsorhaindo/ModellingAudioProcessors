@@ -114,114 +114,103 @@ struct Law2 { dkcore::simd::V2 i[3]; dkcore::simd::V2 J[3][4]; dkcore::simd::M2 
 namespace detail2 {
 using V2 = dkcore::simd::V2;
 using M2 = dkcore::simd::M2;
-struct LawWork2 {         // cathode_values writes the first row and floor; grid_values the second row and gon
-    V2 vg1, va, g2, a, ea, spa, e1, pe, x, xa, sm, s, knee, ik0, kf, ik, f;
-    V2 zg, eg, sg1, pg, ig1;
-    M2 floor, gon;
+struct LawWork2 {         // as detail::LawWork: the values, and the gradients' parts that need no pow
+    V2 va, e1, pe, s, knee, ik0, kf, ik, f;                          // cathode_values
+    V2 sa, de1_g2, dz_a, ds, dik_z;
+    V2 ig1, dig1;                                                    // grid_values (with grid current only)
 };
 // o = a on the lanes of m, o elsewhere, for the fields the law writes: the cathode share's always, the grid
 // current's only with GRID (without it they are never written, so never read)
 template <bool GRID> inline void blend_work(M2 m, const LawWork2& a, LawWork2& o) {
     using simd2::select;
-    o.vg1 = select(m, a.vg1, o.vg1); o.va = select(m, a.va, o.va); o.g2 = select(m, a.g2, o.g2);
-    o.a = select(m, a.a, o.a); o.ea = select(m, a.ea, o.ea); o.spa = select(m, a.spa, o.spa);
-    o.e1 = select(m, a.e1, o.e1); o.pe = select(m, a.pe, o.pe); o.x = select(m, a.x, o.x); o.xa = select(m, a.xa, o.xa);
-    o.sm = select(m, a.sm, o.sm); o.s = select(m, a.s, o.s); o.knee = select(m, a.knee, o.knee);
-    o.ik0 = select(m, a.ik0, o.ik0); o.kf = select(m, a.kf, o.kf); o.ik = select(m, a.ik, o.ik); o.f = select(m, a.f, o.f);
-    o.floor = (m & a.floor) | (~m & o.floor);
-    if (GRID) {
-        o.zg = select(m, a.zg, o.zg); o.eg = select(m, a.eg, o.eg); o.sg1 = select(m, a.sg1, o.sg1);
-        o.pg = select(m, a.pg, o.pg); o.ig1 = select(m, a.ig1, o.ig1);
-        o.gon = (m & a.gon) | (~m & o.gon);
-    }
+    o.va = select(m, a.va, o.va); o.e1 = select(m, a.e1, o.e1); o.pe = select(m, a.pe, o.pe);
+    o.s = select(m, a.s, o.s); o.knee = select(m, a.knee, o.knee); o.ik0 = select(m, a.ik0, o.ik0);
+    o.kf = select(m, a.kf, o.kf); o.ik = select(m, a.ik, o.ik); o.f = select(m, a.f, o.f);
+    o.sa = select(m, a.sa, o.sa); o.de1_g2 = select(m, a.de1_g2, o.de1_g2); o.dz_a = select(m, a.dz_a, o.dz_a);
+    o.ds = select(m, a.ds, o.ds); o.dik_z = select(m, a.dik_z, o.dik_z);
+    if (GRID) { o.ig1 = select(m, a.ig1, o.ig1); o.dig1 = select(m, a.dig1, o.dig1); }
 }
 
-// detail::cathode_values on two lanes
+// detail::cathode_values on two lanes (the same expressions; the gradients' pow-free parts with the values)
 template <class L>
 inline void cathode_values(V2 vg1, V2 vg2, V2 vg3, V2 va, const PentodeParams& p, LawWork2& w, M2& raised) {
     using namespace simd2;
     const V2 zero = splat(0.0), one = splat(1.0);
-    w.vg1 = vg1; w.va = va;
-    w.floor = le(vg2, splat(VG2_FLOOR));
-    w.g2 = select(w.floor, splat(VG2_FLOOR), vg2);
-    w.a = splat(p.KP) * (splat(1.0 / p.MU) + vg1 / w.g2);
-    w.ea = L::exp(-vabs(w.a));
-    w.spa = select(gt(w.a, zero), w.a, zero) + L::log1p(w.ea);
-    w.e1 = w.g2 / splat(p.KP) * w.spa;
-    w.pe = L::pow(w.e1, p.EX, raised);
-    w.ik0 = splat(2.0) * w.pe / splat(p.KG1);
-    V2 up;
+    const M2 floor = le(vg2, splat(VG2_FLOOR));
+    const V2 g2 = select(floor, splat(VG2_FLOOR), vg2);
+    const V2 a = splat(p.KP) * (splat(1.0 / p.MU) + vg1 / g2);
+    const V2 ea = L::exp(-vabs(a));
+    const V2 spa = select(gt(a, zero), a, zero) + L::log1p(ea);
+    const V2 e1 = g2 / splat(p.KP) * spa;
+    const V2 pe = L::pow(e1, p.EX, raised);
+    const V2 ik0 = splat(2.0) * pe / splat(p.KG1);
+    V2 up, dup;
     if (p.XA == 1.0) {
         up = select(gt(va, zero), va / splat(p.MU3), zero);
-        w.x = w.xa = one;                                            // unused (dup has no power term)
+        dup = select(gt(va, zero), splat(1.0 / p.MU3), zero);
     } else {
-        w.x = select(gt(va, splat(VA_FLOOR)), va, splat(VA_FLOOR)) / splat(VA0);
-        w.xa = L::pow(w.x, p.XA, raised);
-        up = splat(VA0 / p.MU3) * (one + (w.xa - one) / splat(p.XA));
+        const V2 x = select(gt(va, splat(VA_FLOOR)), va, splat(VA_FLOOR)) / splat(VA0);
+        const V2 xa = L::pow(x, p.XA, raised);
+        up = splat(VA0 / p.MU3) * (one + (xa - one) / splat(p.XA));
+        dup = select(gt(va, splat(VA_FLOOR)), xa / x / splat(p.MU3), zero);
     }
-    const V2 mz = -((vg3 + up - splat(p.V3C) - splat(p.RI) * w.ik0) / splat(p.S3));
+    const V2 mz = -((vg3 + up - splat(p.V3C) - splat(p.RI) * ik0) / splat(p.S3));
     const V2 ez = L::exp(-vabs(mz));
     const V2 spz = select(gt(mz, zero), mz, zero) + L::log1p(ez);
-    w.sm = select(ge(mz, zero), one / (one + ez), ez / (one + ez));
-    w.s = L::exp(splat(-p.P3) * spz);
+    const V2 sm = select(ge(mz, zero), one / (one + ez), ez / (one + ez));
+    const V2 s = L::exp(splat(-p.P3) * spz);
     const M2 vpos = gt(va, zero);
-    w.knee = select(vpos, splat(2.0 / PI) * L::atan(va / splat(p.KVB)), zero);
-    w.f = splat(p.FMAX) * w.knee * w.s;
-    w.kf = one - splat(p.KR) * w.sm;
-    w.ik = w.ik0 * w.kf;
+    const V2 knee = select(vpos, splat(2.0 / PI) * L::atan(va / splat(p.KVB)), zero);
+    const V2 f = splat(p.FMAX) * knee * s;
+    const V2 kf = one - splat(p.KR) * sm;
     const V2 q = va / splat(p.KVB);
     raised = raised | (vpos & is_inf(q * q) & finite(q));
+    const V2 sa = select(ge(a, zero), one / (one + ea), ea / (one + ea));
+    w.va = va; w.e1 = e1; w.pe = pe; w.s = s; w.knee = knee; w.ik0 = ik0; w.kf = kf; w.ik = ik0 * kf; w.f = f;
+    w.sa = sa; w.de1_g2 = select(floor, zero, spa / splat(p.KP) - sa * vg1 / g2); w.dz_a = dup / splat(p.S3);
+    w.ds = s * splat(p.P3) * sm; w.dik_z = ik0 * splat(p.KR) * sm * (one - sm);
 }
-// detail::cathode_jacobian on two lanes
+// detail::cathode_jacobian on two lanes: E1^(EX - 1), (Va / KVB)^2 and what follows them
 template <class L>
 inline void cathode_jacobian(const LawWork2& w, const PentodeParams& p, V2 (&dik)[4], V2 (&dfs)[4], M2& raised) {
     using namespace simd2;
     const V2 zero = splat(0.0), one = splat(1.0);
-    const V2 sa = select(ge(w.a, zero), one / (one + w.ea), w.ea / (one + w.ea));
-    const V2 de1_g1 = sa;
-    const V2 de1_g2 = select(w.floor, zero, w.spa / splat(p.KP) - sa * w.vg1 / w.g2);
+    const V2 de1_g1 = w.sa;
     const V2 dik0 = splat(2.0) * splat(p.EX) * L::pow_m1(w.e1, p.EX, w.pe, raised) / splat(p.KG1);
-    V2 dup;
-    if (p.XA == 1.0) dup = select(gt(w.va, zero), splat(1.0 / p.MU3), zero);
-    else dup = select(gt(w.va, splat(VA_FLOOR)), w.xa / w.x / splat(p.MU3), zero);
-    const V2 dik0_g1 = dik0 * de1_g1, dik0_g2 = dik0 * de1_g2;
+    const V2 dik0_g1 = dik0 * de1_g1, dik0_g2 = dik0 * w.de1_g2;
     const V2 dz_g1 = splat(-p.RI) * dik0_g1 / splat(p.S3), dz_g2 = splat(-p.RI) * dik0_g2 / splat(p.S3),
-             dz_g3 = splat(1.0 / p.S3), dz_a = dup / splat(p.S3);
-    const V2 ds = w.s * splat(p.P3) * w.sm;
+             dz_g3 = splat(1.0 / p.S3), dz_a = w.dz_a;
     const M2 vpos = gt(w.va, zero);
     M2 rq = none();                                   // (Va / KVB) ** 2 is evaluated (and can raise) where Va > 0 only
     const V2 dknee = select(vpos, splat(2.0 / PI / p.KVB) / (one + L::sq(w.va / splat(p.KVB), rq)), zero);
     raised = raised | (rq & vpos);
-    const V2 df_z = splat(p.FMAX) * w.knee * ds, df_a = splat(p.FMAX) * dknee * w.s;
-    const V2 dik_z = w.ik0 * splat(p.KR) * w.sm * (one - w.sm);
+    const V2 df_z = splat(p.FMAX) * w.knee * w.ds, df_a = splat(p.FMAX) * dknee * w.s;
+    const V2 dik_z = w.dik_z;
     dik[0] = dik0_g1 * w.kf + dik_z * dz_g1;
     dik[1] = dik0_g2 * w.kf + dik_z * dz_g2;
     dik[2] = dik_z * dz_g3;
     dik[3] = dik_z * dz_a;
     dfs[0] = df_z * dz_g1; dfs[1] = df_z * dz_g2; dfs[2] = df_z * dz_g3; dfs[3] = df_z * dz_a + df_a;
 }
-// detail::grid_values / grid_jacobian on two lanes
+// detail::grid_values on two lanes, dIg1/dVg1k with the value (it has no pow of its own)
 template <class L> inline V2 grid_values(V2 vg1, const GridParams& g, LawWork2& w, M2& raised) {
     using namespace simd2;
-    const V2 zero = splat(0.0);
-    w.zg = splat(g.CG) * vg1;
-    w.eg = L::exp(-vabs(w.zg));
-    const V2 l = L::log1p(w.eg);
-    const V2 sp = select(ge(w.zg, zero), w.zg + l, l);
-    w.sg1 = sp / splat(g.CG);
-    w.gon = ~le(w.sg1, zero);
-    if (!any(w.gon)) { w.pg = zero; return w.ig1 = zero; }
-    M2 r = none();
-    w.pg = L::pow(w.sg1, g.XI, r);
-    raised = raised | (r & w.gon);
-    return w.ig1 = select(w.gon, splat(g.GG) * w.pg, zero);
-}
-inline V2 grid_jacobian(const LawWork2& w, const GridParams& g) {
-    using namespace simd2;
     const V2 zero = splat(0.0), one = splat(1.0);
-    const V2 sg = select(ge(w.zg, zero), one / (one + w.eg), w.eg / (one + w.eg));
-    return select(w.gon, splat(g.GG) * splat(g.XI) * w.pg / w.sg1 * sg, zero);
+    const V2 zg = splat(g.CG) * vg1;
+    const V2 eg = L::exp(-vabs(zg));
+    const V2 l = L::log1p(eg);
+    const V2 sp = select(ge(zg, zero), zg + l, l);
+    const V2 sg1 = sp / splat(g.CG);
+    const M2 gon = ~le(sg1, zero);
+    if (!any(gon)) { w.dig1 = zero; return w.ig1 = zero; }
+    M2 r = none();
+    const V2 pg = L::pow(sg1, g.XI, r);
+    raised = raised | (r & gon);
+    const V2 sg = select(ge(zg, zero), one / (one + eg), eg / (one + eg));
+    w.dig1 = select(gon, splat(g.GG) * splat(g.XI) * pg / sg1 * sg, zero);
+    return w.ig1 = select(gon, splat(g.GG) * pg, zero);
 }
+inline V2 grid_jacobian(const LawWork2& w, const GridParams&) { return w.dig1; }
 
 template <class L> inline void values2(const V2 (&v)[4], const PentodeParams& p, Law2& o, LawWork2& w) {
     o.raised = simd2::none();
