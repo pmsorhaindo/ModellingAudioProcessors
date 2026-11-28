@@ -1,0 +1,98 @@
+{
+ "host": {
+  "platform": "Linux-7.0.0-1020-azure-x86_64-with-glibc2.43",
+  "machine": "x86_64",
+  "lscpu": {
+   "CPU(s)": "4",
+   "Model name": "AMD EPYC 7763 64-Core Processor",
+   "Thread(s) per core": "2",
+   "Core(s) per socket": "2",
+   "BogoMIPS": "4890.86",
+   "Hypervisor vendor": "Microsoft",
+   "Virtualization type": "full",
+   "L1d cache": "64 KiB (2 instances)",
+   "L2 cache": "1 MiB (2 instances)",
+   "L3 cache": "32 MiB (1 instance)"
+  },
+  "perf_event_paranoid": "4",
+  "nproc_online": 4
+ },
+ "build": {
+  "cxx": "/usr/bin/g++",
+  "cxx_version": "g++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+  "flags": [
+   "-std=c++17",
+   "-Wall",
+   "-Wextra",
+   "-pedantic",
+   "-pthread",
+   "-O3"
+  ],
+  "source": "cpp/bench_6as6.cpp",
+  "git": "bed5c11",
+  "dirty": false,
+  "label": "head"
+ },
+ "state_before": {
+  "utc": "2026-11-28T16:28:59+00:00",
+  "loadavg_1_5_15": [
+   1.23,
+   1.07,
+   0.65
+  ],
+  "scaling_governor_cpu0": null,
+  "thermal_zone0_mC": null
+ },
+ "state_after": {
+  "utc": "2026-11-28T16:30:46+00:00",
+  "loadavg_1_5_15": [
+   1.17,
+   1.08,
+   0.7
+  ],
+  "scaling_governor_cpu0": null,
+  "thermal_zone0_mC": null
+ },
+ "meta": {
+  "core": "cpp/dk6as6_core.h",
+  "fs": 48000,
+  "samples_per_pass": 47616,
+  "seconds_per_pass": 0.992,
+  "reps": 5,
+  "warmup_passes": 1,
+  "order": "round-robin over configurations, per pass",
+  "signal": "Karplus-Strong guitar phrase (bench_common.h make_signal), 2 s period, scaled to the peak",
+  "timer": "std::chrono::steady_clock, one read per block boundary",
+  "sched": "default policy; affinity mask has 4 CPU(s) (pin with taskset)",
+  "counters": "unavailable",
+  "counter_error": "Permission denied",
+  "compiler": "15.2.0",
+  "sizeof_stage": 19160,
+  "fma": true
+ },
+ "results": [
+{"name": "standard_P1_0.45mA_0.5V_b64_x1", "quality": "standard", "os": 8, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 0.5, "block": 64, "instances": 1, "math": "libm", "path": "mono", "ns_per_sample": 7633.7, "ns_min": 7620.7, "ns_max": 7639.0, "pct_core": 36.642, "block_pct_p50": 34.926, "block_pct_p99": 44.675, "block_pct_max": 52.639, "cpu_on_fraction": 1.0, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.2128, "newton_mean_r": null, "newton_mean_max": null, "newton_max": 3, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "standard_P1_0.45mA_0.5V_b64_x2", "quality": "standard", "os": 8, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 0.5, "block": 64, "instances": 2, "math": "libm", "path": "mono", "ns_per_sample": 15216.3, "ns_min": 15194.5, "ns_max": 15253.8, "pct_core": 73.038, "block_pct_p50": 69.427, "block_pct_p99": 89.119, "block_pct_max": 104.1, "cpu_on_fraction": 0.9999, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.2128, "newton_mean_r": 2.1942, "newton_mean_max": null, "newton_max": 3, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "standard_P1_0.45mA_2V_b64_x1", "quality": "standard", "os": 8, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 2, "block": 64, "instances": 1, "math": "libm", "path": "mono", "ns_per_sample": 8466.8, "ns_min": 8450.7, "ns_max": 8469.2, "pct_core": 40.641, "block_pct_p50": 41.05, "block_pct_p99": 46.119, "block_pct_max": 51.38, "cpu_on_fraction": 0.9999, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.589, "newton_mean_r": null, "newton_mean_max": null, "newton_max": 4, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "standard_P1_0.45mA_2V_b64_x2", "quality": "standard", "os": 8, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 2, "block": 64, "instances": 2, "math": "libm", "path": "mono", "ns_per_sample": 16944.3, "ns_min": 16919.1, "ns_max": 16978.1, "pct_core": 81.333, "block_pct_p50": 81.87, "block_pct_p99": 91.675, "block_pct_max": 106.779, "cpu_on_fraction": 0.9999, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.589, "newton_mean_r": 2.5786, "newton_mean_max": null, "newton_max": 4, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "standard_P1_0.45mA_8V_b64_x1", "quality": "standard", "os": 8, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 8, "block": 64, "instances": 1, "math": "libm", "path": "mono", "ns_per_sample": 9209.7, "ns_min": 9199.5, "ns_max": 9233.6, "pct_core": 44.207, "block_pct_p50": 44.043, "block_pct_p99": 52.315, "block_pct_max": 56.048, "cpu_on_fraction": 0.9999, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.9165, "newton_mean_r": null, "newton_mean_max": null, "newton_max": 4, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "standard_P1_0.45mA_8V_b64_x2", "quality": "standard", "os": 8, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 8, "block": 64, "instances": 2, "math": "libm", "path": "mono", "ns_per_sample": 18364.9, "ns_min": 18329.6, "ns_max": 18398.5, "pct_core": 88.151, "block_pct_p50": 87.762, "block_pct_p99": 104.215, "block_pct_max": 113.912, "cpu_on_fraction": 0.9999, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.9165, "newton_mean_r": 2.9176, "newton_mean_max": null, "newton_max": 4, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "hq_P1_0.45mA_0.5V_b64_x1", "quality": "hq", "os": 16, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 0.5, "block": 64, "instances": 1, "math": "libm", "path": "mono", "ns_per_sample": 14482.5, "ns_min": 14439.3, "ns_max": 14497.2, "pct_core": 69.516, "block_pct_p50": 68.734, "block_pct_p99": 82.142, "block_pct_max": 86.178, "cpu_on_fraction": 1.0, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.0294, "newton_mean_r": null, "newton_mean_max": null, "newton_max": 3, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "hq_P1_0.45mA_0.5V_b64_x2", "quality": "hq", "os": 16, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 0.5, "block": 64, "instances": 2, "math": "libm", "path": "mono", "ns_per_sample": 28840.4, "ns_min": 28773.6, "ns_max": 28940.1, "pct_core": 138.434, "block_pct_p50": 137.034, "block_pct_p99": 163.997, "block_pct_max": 168.341, "cpu_on_fraction": 0.9999, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.0294, "newton_mean_r": 2.0246, "newton_mean_max": null, "newton_max": 3, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "hq_P1_0.45mA_2V_b64_x1", "quality": "hq", "os": 16, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 2, "block": 64, "instances": 1, "math": "libm", "path": "mono", "ns_per_sample": 15066.9, "ns_min": 15052.2, "ns_max": 15086.0, "pct_core": 72.321, "block_pct_p50": 69.175, "block_pct_p99": 88.4, "block_pct_max": 92.181, "cpu_on_fraction": 1.0, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.1558, "newton_mean_r": null, "newton_mean_max": null, "newton_max": 3, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "hq_P1_0.45mA_2V_b64_x2", "quality": "hq", "os": 16, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 2, "block": 64, "instances": 2, "math": "libm", "path": "mono", "ns_per_sample": 29896.2, "ns_min": 29874.6, "ns_max": 29973.7, "pct_core": 143.502, "block_pct_p50": 137.519, "block_pct_p99": 176.001, "block_pct_max": 180.404, "cpu_on_fraction": 0.9999, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.1558, "newton_mean_r": 2.141, "newton_mean_max": null, "newton_max": 3, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "hq_P1_0.45mA_8V_b64_x1", "quality": "hq", "os": 16, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 8, "block": 64, "instances": 1, "math": "libm", "path": "mono", "ns_per_sample": 16383.3, "ns_min": 16368.4, "ns_max": 16401.8, "pct_core": 78.64, "block_pct_p50": 78.722, "block_pct_p99": 89.978, "block_pct_max": 107.087, "cpu_on_fraction": 1.0, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.4849, "newton_mean_r": null, "newton_mean_max": null, "newton_max": 4, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "hq_P1_0.45mA_8V_b64_x2", "quality": "hq", "os": 16, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 8, "block": 64, "instances": 2, "math": "libm", "path": "mono", "ns_per_sample": 32703.7, "ns_min": 32668.5, "ns_max": 32730.1, "pct_core": 156.978, "block_pct_p50": 156.832, "block_pct_p99": 179.15, "block_pct_max": 200.051, "cpu_on_fraction": 0.9999, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.4849, "newton_mean_r": 2.4685, "newton_mean_max": null, "newton_max": 4, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "standard_P1_0.45mA_0.5V_b64_x1_fast", "quality": "standard", "os": 8, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 0.5, "block": 64, "instances": 1, "math": "fast", "path": "mono", "ns_per_sample": 5715.8, "ns_min": 5705.8, "ns_max": 5732.2, "pct_core": 27.436, "block_pct_p50": 26.302, "block_pct_p99": 33.024, "block_pct_max": 38.698, "cpu_on_fraction": 0.9999, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.2128, "newton_mean_r": null, "newton_mean_max": null, "newton_max": 3, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "standard_P1_0.45mA_0.5V_b64_x2_fast", "quality": "standard", "os": 8, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 0.5, "block": 64, "instances": 2, "math": "fast", "path": "mono", "ns_per_sample": 11391.3, "ns_min": 11382.7, "ns_max": 11447.1, "pct_core": 54.678, "block_pct_p50": 52.343, "block_pct_p99": 65.632, "block_pct_max": 68.626, "cpu_on_fraction": 0.9999, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.2128, "newton_mean_r": 2.1942, "newton_mean_max": null, "newton_max": 3, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "standard_P1_0.45mA_2V_b64_x1_fast", "quality": "standard", "os": 8, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 2, "block": 64, "instances": 1, "math": "fast", "path": "mono", "ns_per_sample": 6286.9, "ns_min": 6275.6, "ns_max": 6320.2, "pct_core": 30.177, "block_pct_p50": 30.515, "block_pct_p99": 34.278, "block_pct_max": 42.531, "cpu_on_fraction": 0.9999, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.589, "newton_mean_r": null, "newton_mean_max": null, "newton_max": 4, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "standard_P1_0.45mA_2V_b64_x2_fast", "quality": "standard", "os": 8, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 2, "block": 64, "instances": 2, "math": "fast", "path": "mono", "ns_per_sample": 12585.0, "ns_min": 12554.3, "ns_max": 12608.0, "pct_core": 60.408, "block_pct_p50": 60.791, "block_pct_p99": 67.768, "block_pct_max": 82.184, "cpu_on_fraction": 1.0, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.589, "newton_mean_r": 2.5786, "newton_mean_max": null, "newton_max": 4, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "standard_P1_0.45mA_8V_b64_x1_fast", "quality": "standard", "os": 8, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 8, "block": 64, "instances": 1, "math": "fast", "path": "mono", "ns_per_sample": 6817.0, "ns_min": 6810.5, "ns_max": 6827.9, "pct_core": 32.722, "block_pct_p50": 32.603, "block_pct_p99": 38.325, "block_pct_max": 40.446, "cpu_on_fraction": 1.0, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.9165, "newton_mean_r": null, "newton_mean_max": null, "newton_max": 4, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "standard_P1_0.45mA_8V_b64_x2_fast", "quality": "standard", "os": 8, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 8, "block": 64, "instances": 2, "math": "fast", "path": "mono", "ns_per_sample": 13642.5, "ns_min": 13626.8, "ns_max": 13682.2, "pct_core": 65.484, "block_pct_p50": 65.198, "block_pct_p99": 76.715, "block_pct_max": 83.48, "cpu_on_fraction": 1.0, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.9165, "newton_mean_r": 2.9176, "newton_mean_max": null, "newton_max": 4, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "hq_P1_0.45mA_0.5V_b64_x1_fast", "quality": "hq", "os": 16, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 0.5, "block": 64, "instances": 1, "math": "fast", "path": "mono", "ns_per_sample": 10853.4, "ns_min": 10843.5, "ns_max": 10875.5, "pct_core": 52.096, "block_pct_p50": 51.657, "block_pct_p99": 60.824, "block_pct_max": 71.552, "cpu_on_fraction": 0.9999, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.0294, "newton_mean_r": null, "newton_mean_max": null, "newton_max": 3, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "hq_P1_0.45mA_0.5V_b64_x2_fast", "quality": "hq", "os": 16, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 0.5, "block": 64, "instances": 2, "math": "fast", "path": "mono", "ns_per_sample": 21698.0, "ns_min": 21614.4, "ns_max": 21787.4, "pct_core": 104.15, "block_pct_p50": 103.159, "block_pct_p99": 121.967, "block_pct_max": 129.2, "cpu_on_fraction": 0.9999, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.0294, "newton_mean_r": 2.0246, "newton_mean_max": null, "newton_max": 3, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "hq_P1_0.45mA_2V_b64_x1_fast", "quality": "hq", "os": 16, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 2, "block": 64, "instances": 1, "math": "fast", "path": "mono", "ns_per_sample": 11275.8, "ns_min": 11214.9, "ns_max": 11433.0, "pct_core": 54.124, "block_pct_p50": 52.18, "block_pct_p99": 65.501, "block_pct_max": 67.345, "cpu_on_fraction": 1.0, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.1558, "newton_mean_r": null, "newton_mean_max": null, "newton_max": 3, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "hq_P1_0.45mA_2V_b64_x2_fast", "quality": "hq", "os": 16, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 2, "block": 64, "instances": 2, "math": "fast", "path": "mono", "ns_per_sample": 22665.0, "ns_min": 22580.3, "ns_max": 22678.9, "pct_core": 108.792, "block_pct_p50": 104.585, "block_pct_p99": 131.531, "block_pct_max": 148.11, "cpu_on_fraction": 0.9999, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.1558, "newton_mean_r": 2.141, "newton_mean_max": null, "newton_max": 3, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "hq_P1_0.45mA_8V_b64_x1_fast", "quality": "hq", "os": 16, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 8, "block": 64, "instances": 1, "math": "fast", "path": "mono", "ns_per_sample": 12281.3, "ns_min": 12277.9, "ns_max": 12350.3, "pct_core": 58.95, "block_pct_p50": 59.161, "block_pct_p99": 67.093, "block_pct_max": 85.078, "cpu_on_fraction": 0.9999, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.4849, "newton_mean_r": null, "newton_mean_max": null, "newton_max": 4, "nonconverged": 0, "restarted": 0, "deterministic": true},
+{"name": "hq_P1_0.45mA_8V_b64_x2_fast", "quality": "hq", "os": 16, "variant": "P1_0.45mA", "mode": "P1", "bias_ma": 0.45, "grid_hardness": 1, "lpf": 0, "fir": "k140", "level_v": 8, "block": 64, "instances": 2, "math": "fast", "path": "mono", "ns_per_sample": 24510.2, "ns_min": 24474.6, "ns_max": 24605.7, "pct_core": 117.649, "block_pct_p50": 117.589, "block_pct_p99": 133.438, "block_pct_max": 145.246, "cpu_on_fraction": 0.9999, "cycles_per_sample": null, "instr_per_sample": null, "ghz_on_cpu": null, "newton_mean": 2.4849, "newton_mean_r": 2.4685, "newton_mean_max": null, "newton_max": 4, "nonconverged": 0, "restarted": 0, "deterministic": true}
+]}
