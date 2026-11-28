@@ -41,12 +41,11 @@ jobs:
         run: python -m cpp.bench --core 6as6 --reps 5 --seconds 1 --out bench_6as6_x86_64_linux_ci.json
       - name: Tables
         run: python -m cpp.bench --table bench_6as6_x86_64_linux_ci.json >> "$GITHUB_STEP_SUMMARY"
-      # #135 review: a paired control on this same runner. The base (git merge-base with main), this head's core built
-      # with the base's harness (cpp/bench_6as6.cpp of the base: isolates the core from the harness), this head, and
-      # the base again (so the VM's drift is in the record): the default setting's libm x1 / x2 rows at block 64.
-      # bench.py --pair prints each / the base. Between the base and this head the libm path differs by the lazier
-      # Jacobian (and the law's two passes it needs) only.
-      - name: Paired control (base / head core + base harness / head / base, default libm rows)
+      # #135 review: a paired control on this same runner, the default setting's libm x1 / x2 rows at block 64: the base
+      # (git merge-base with main); this head's core with the base's harness (cpp/bench_6as6.cpp of the base), built
+      # with -DDK6AS6_EAGER_JACOBIAN (the Jacobian at every accepted trial, as solver.py) and without (the lazier
+      # Jacobian); this head; the base again (the VM's drift). bench.py --pair prints each / the base.
+      - name: Paired control (base / head eager / head lazy / head / base, default libm rows)
         run: |
           base=$(git merge-base HEAD origin/main)
           git worktree add "$RUNNER_TEMP/base" "$base"
@@ -58,16 +57,18 @@ jobs:
           args="--core 6as6 --reps 5 --seconds 1 --only $only"
           here="$PWD"
           (cd "$RUNNER_TEMP/base/prototypes/fullstage" && python -m cpp.bench $args --out "$here/pair_base_a.json")
-          (cd "$mixed" && python -m cpp.bench $args --label "head core, base harness" --out "$here/pair_mixed.json")
+          (cd "$mixed" && python -m cpp.bench $args --flags "-O3 -DDK6AS6_EAGER_JACOBIAN" --label "head core, eager J" --out "$here/pair_eager.json")
+          (cd "$mixed" && python -m cpp.bench $args --label "head core, lazy J" --out "$here/pair_mixed.json")
           python -m cpp.bench $args --label head --out pair_head.json
           (cd "$RUNNER_TEMP/base/prototypes/fullstage" && python -m cpp.bench $args --out "$here/pair_base_b.json")
-          python -m cpp.bench --pair pair_base_a.json pair_mixed.json pair_head.json pair_base_b.json >> "$GITHUB_STEP_SUMMARY"
+          python -m cpp.bench --pair pair_base_a.json pair_eager.json pair_mixed.json pair_head.json pair_base_b.json >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: bench-6as6-x86-64-linux
           path: |
             prototypes/fullstage/bench_6as6_x86_64_linux_ci.json
             prototypes/fullstage/pair_base_a.json
+            prototypes/fullstage/pair_eager.json
             prototypes/fullstage/pair_mixed.json
             prototypes/fullstage/pair_head.json
             prototypes/fullstage/pair_base_b.json

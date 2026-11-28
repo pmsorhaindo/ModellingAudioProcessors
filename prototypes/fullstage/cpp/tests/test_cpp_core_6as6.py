@@ -137,8 +137,11 @@ def _problems(st, rng, n):
     return p, s
 
 
-def test_bit_exact_solvers():
-    exe = _exe(("-O2", "-ffp-contract=off"))
+@pytest.mark.parametrize("defines", [(), ("DK6AS6_EAGER_JACOBIAN",)], ids=["lazy", "eager"])
+def test_bit_exact_solvers(defines):
+    """The solvers against the live Python ones, bit for bit: the lazier Jacobian (default) and the eager control
+    build (-DDK6AS6_EAGER_JACOBIAN, solver.py's evaluation order, #135 review)."""
+    exe = _exe(("-O2", "-ffp-contract=off"), defines)
     rng = np.random.default_rng(1042)
     settings = [(solver.MAX_IT, solver.TOL_V, solver.TOL_F), (1, 0.0, 0.0), (3, 0.0, 0.0), (6, 1e-6, 1e-6)]
     for mode, h, tag in (("P1", 0.0, "solve2"), ("T", 0.0, "solve2"), ("P1", 1.0, "solve3"), ("T", 1.0, "solve3"),

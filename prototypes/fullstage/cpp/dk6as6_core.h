@@ -466,6 +466,15 @@ inline void currents_grid(const double (&v)[4], const PentodeParams& p, const Gr
  * Measured not to occur (cpp/README-6as6.md, "CPU (#135)": 0 such trials in the validation, bench and fuzzed solves). */
 struct Solution { double v[4]; double i[3]; int it; bool ok; double fv; int attempts; };
 
+/* -DDK6AS6_EAGER_JACOBIAN (control builds only, #135 review: the paired eager / lazy benchmark): the solvers evaluate
+ * the Jacobian at every accepted trial, the converging one included, as solver.py does; the 3-current solve then
+ * applies solver._resid3_safe's Jacobian check there too. */
+#ifdef DK6AS6_EAGER_JACOBIAN
+inline constexpr bool EAGER_JACOBIAN = true;
+#else
+inline constexpr bool EAGER_JACOBIAN = false;
+#endif
+
 namespace detail {
 // solver._resid: R = i - i(p - K i) and ||K R||inf, the values pass only (w: for the Jacobian)
 template <class M>
@@ -522,13 +531,14 @@ inline Solution solve(const double (&p)[4], const double (&K)[4][3], double i0, 
         i0 = i0 + lam * s0; i1 = i1 + lam * s1;
         r0 = g0; r1 = g1; fv = gv;
         for (int k = 0; k < 4; ++k) v[k] = gvolt[k];
+        if (EAGER_JACOBIAN) detail::jacobian2<M>(gw, par, gL);
         if (dv < nw.tol_v && fv < nw.tol_f) {
             Solution s{};
             keep(s);
             s.it = it; s.ok = true; s.fv = fv; s.attempts = 1;
             return s;
         }
-        detail::jacobian2<M>(gw, par, gL);                   // the Jacobian at the accepted point, for the next step
+        if (!EAGER_JACOBIAN) detail::jacobian2<M>(gw, par, gL);   // the Jacobian at the accepted point, for the next step
         for (int q = 0; q < 2; ++q) for (int j = 0; j < 4; ++j) L.J[q][j] = gL.J[q][j];
         if ((fv < fb || !(fb < INFINITY)) && std::fabs(r0) + std::fabs(r1) < INFINITY) { fb = fv; keep(best); }
     }
@@ -634,7 +644,8 @@ inline Solution solve_grid(const double (&p)[4], const double (&K)[4][3], const 
         // the full step accepted on its values: its Jacobian, unless it converges (solver._resid3_safe would reject
         // it, gv = inf, where that Jacobian is not finite: then the line search below, as in Python)
         if (gok && (gv < fv || fv < nw.tol_f)) {
-            if (!(detail::step_norm3(K, s, lam) < nw.tol_v && gv < nw.tol_f)) gok = detail::jacobian3_safe<M>(gw, par, g, gL, gv);
+            if (EAGER_JACOBIAN || !(detail::step_norm3(K, s, lam) < nw.tol_v && gv < nw.tol_f))
+                gok = detail::jacobian3_safe<M>(gw, par, g, gL, gv);
             else detail::skipped_jacobian<M>(gw, par, g, gL);
         }
         if (!(gv < fv || fv < nw.tol_f)) {
@@ -645,7 +656,8 @@ inline Solution solve_grid(const double (&p)[4], const double (&K)[4][3], const 
                 if (gv < fv) break;
             }
             if (gok) {
-                if (!(detail::step_norm3(K, s, lam) < nw.tol_v && gv < nw.tol_f)) gok = detail::jacobian3_safe<M>(gw, par, g, gL, gv);
+                if (EAGER_JACOBIAN || !(detail::step_norm3(K, s, lam) < nw.tol_v && gv < nw.tol_f))
+                    gok = detail::jacobian3_safe<M>(gw, par, g, gL, gv);
                 else detail::skipped_jacobian<M>(gw, par, g, gL);
             }
         }
