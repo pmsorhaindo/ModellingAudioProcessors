@@ -1,0 +1,83 @@
+{
+ "method": [
+  "",
+  "  domain     the arguments FastLaw's exp / log1p / pow / atan / sq receive (every Newton trial and line-search point,",
+  "             the DC solves excluded: they are libm) on dk6as6.validate's signals, all 44 settings, standard and hq",
+  "             (cpp/validate_cpp_6as6.py --math fast with the research probes), as #18's dk/fastmath_domain.py did for the",
+  "             triode; and, with libm and with fast maths, every converging 3-current trial whose Jacobian the lazier",
+  "             Jacobian skips and whether that Jacobian would have been finite (solver._resid3_safe's contract). Plus the"
+ ],
+ "validation": {
+  "libm": {
+   "rows": 44,
+   "failed": 0
+  },
+  "fast": {
+   "rows": 44,
+   "failed": 0
+  }
+ },
+ "deviation_points": 192,
+ "lazy_jacobian": {
+  "libm": {
+   "skipped_jacobians": 191411640,
+   "skipped_nonfinite": 0
+  },
+  "fast": {
+   "skipped_jacobians": 191411640,
+   "skipped_nonfinite": 0
+  }
+ },
+ "ranges": {
+  "atan": {
+   "min": 4.91873107464449e-05,
+   "max": 398.0206904438184,
+   "calls": 778359986
+  },
+  "exp": {
+   "min": -317002.3234582819,
+   "max": -1.3081608909788408e-36,
+   "calls": 2946872050
+  },
+  "log1p": {
+   "min": 0,
+   "max": 0.9999998500464804,
+   "calls": 2166685679
+  },
+  "pow_y0.5742673753852175": {
+   "min": 8.333333333333334e-06,
+   "max": 1.6584195435159106,
+   "calls": 780186371
+  },
+  "pow_y1.314": {
+   "min": 2.4251217270149032e-56,
+   "max": 2.4153996156626945,
+   "calls": 606312937
+  },
+  "pow_y1.4904598465136472": {
+   "min": 0,
+   "max": 5.274440834060508,
+   "calls": 780186371
+  },
+  "pow_ylog_y0.5742673753852175": {
+   "min": -6.7161988116703,
+   "max": 0.290501804113232,
+   "calls": 780186371
+  },
+  "pow_ylog_y1.314": {
+   "min": -168.2693729030083,
+   "max": 1.1587702759018321,
+   "calls": 606312937
+  },
+  "pow_ylog_y1.4904598465136472": {
+   "min": -1048.137877534395,
+   "max": 2.4784449455756157,
+   "calls": 780186189
+  },
+  "sq": {
+   "min": 4.91873107464449e-05,
+   "max": 398.0206904438184,
+   "calls": 722685945
+  }
+ }
+}

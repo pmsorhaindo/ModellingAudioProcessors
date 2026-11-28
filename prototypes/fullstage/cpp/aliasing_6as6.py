@@ -39,7 +39,10 @@ Run from prototypes/fullstage:
   python -m cpp.aliasing_6as6 guardgrid [--workers N]      -> dk6as6/aliasing_guard_k140.json: the k140 grid at the
                                                               Python 6AS6 guard's keys (its limits and tones)
   python -m cpp.aliasing_6as6 guard --fs 48000|44100 [--workers N] [--json OUT]
-                                    [--update-baseline --reason "..."]
+                                    [--update-baseline --reason "..."] [--math fast] [--stereo [--lanes per_lane]]
+#135: --math fast runs the guard on the fast valve law (LawMath::fast), --stereo on the two-lane kernel (the tone on the
+left lane, measured there), against the same limits and the same (libm, mono) baselines; the baselines are only ever
+written from the default path.
 """
 import argparse
 import json
@@ -69,6 +72,7 @@ TONES = tuple(AL.SWEEP_HZ) + BAND_EDGE_HZ
 GUARD_EXTRA_TONES = (19037,) + BAND_EDGE_HZ
 SWEEP_JSON = os.path.join(HERE, "aliasing_6as6.json")
 GUARD_FIR = "default"            # the CLI runs the stage's own DEFAULT_FIR (default_fir() names it)
+CLI_OPTS = {}                    # #135: VC.cli's math / stereo / lanes for every measurement (empty: libm, mono)
 # The band-edge scan (#113 review): P1 0.6 mA (the 2 V worst of the sweep at 44.1 kHz) at 2 V, tones from the band edge
 # up to 19997 Hz in 10 Hz steps, both rates, both qualities (48 kHz: standard), both designs
 SCAN_TONES = tuple(range(19937, 19998, 10))
@@ -121,7 +125,7 @@ def measure(fs, quality, fir, mode, bias, drive, tone, window=AL.WINDOW_S, settl
     L = latency(fs, os_, fir)
     x = drive * np.sin(2 * np.pi * m * np.arange(n0 + n + L) / n)
     t0 = time.perf_counter()
-    y, _, info = VC.cli(x, fs, os_, mode, bias, 1.0, fir=fir)
+    y, _, info = VC.cli(x, fs, os_, mode, bias, 1.0, fir=fir, **CLI_OPTS)
     wall = time.perf_counter() - t0
     assert info["latency_samples"] == L and info["fir"] == resolve(fir), (info["latency_samples"], L, info["fir"])
     a = AL.alias_dbc(y[n0 + L:n0 + L + n], m, fs, os_)
@@ -131,8 +135,10 @@ def measure(fs, quality, fir, mode, bias, drive, tone, window=AL.WINDOW_S, settl
                 restarted=st["restarted"], out_of_law=st["out_of_law"], it_max=st["max"], wall_s=wall, **a)
 
 
-def _init(path):
+def _init(path, opts=None):
     VC.EXE = path
+    CLI_OPTS.clear()
+    CLI_OPTS.update(opts or {})
 
 
 def _job(a):
@@ -148,7 +154,7 @@ def run(jobs, workers, cache=None):
             r = json.loads(line)
             done[(r["fs"], r["quality"], r["fir"], r["mode"], r["bias_ma"], r["drive"], r["tone"])] = r
     todo = [j for j in jobs if j not in done]
-    with ProcessPoolExecutor(workers, initializer=_init, initargs=(VC.exe(),)) as ex:
+    with ProcessPoolExecutor(workers, initializer=_init, initargs=(VC.exe(), dict(CLI_OPTS))) as ex:
         out = open(cache, "a") if cache else None
         for j, r in zip(todo, ex.map(_job, todo, chunksize=1)):
             done[j] = r
@@ -251,8 +257,10 @@ def guard(fs, workers, json_out=None, update=False, reason=None):
     base = AG.load_baseline(path)
     rows = AG.compare(measured, base["values"], guard_limits(fs), tones)
     bad_nc = [r for r in recs if r["nonconverged"] or r["out_of_law"]]
+    path_name = "".join(f", {k} {v}" for k, v in CLI_OPTS.items())
     md = AG.markdown(rows, baseline_meta={k: base[k] for k in ("updated", "reason") if k in base} or None, wall_s=wall,
-                     baseline_name=AG.shown_path(path), fs=fs).replace("Aliasing guard:", "6AS6 C++ aliasing guard:")
+                     baseline_name=AG.shown_path(path), fs=fs).replace("Aliasing guard:",
+                                                                       f"6AS6 C++ aliasing guard{path_name}:")
     print(md)
     if bad_nc:
         print(f"{len(bad_nc)} points had non-converged or out-of-law samples: "
@@ -262,6 +270,8 @@ def guard(fs, workers, json_out=None, update=False, reason=None):
     if json_out:
         json.dump(dict(rows=rows, records=recs, measured=measured, wall_s=wall), open(json_out, "w"), indent=1)
     if update:
+        if CLI_OPTS:
+            sys.exit("the baselines are written from the default path (libm, mono) only")
         over = [r for r in rows if r["status"] in ("FAIL limit", "FAIL not measured")]
         if over or bad_nc:
             sys.exit("not updating the baseline: " + ", ".join(f"{r['key']} at {r['tone']} Hz ({r['status']})"
@@ -294,7 +304,7 @@ def guard_grid(workers):
                              if (r["fs"], r["mode"], r["bias_ma"], r["quality"], r["drive"]) == k]) for k in keys}
     ci_jobs = [(fs, st, "default", m, b, d, f, AL.CI_WINDOW_S) for (fs, m, b, st, d) in keys
                for f in derived[(fs, m, b, st, d)][1]]
-    with ProcessPoolExecutor(workers, initializer=_init, initargs=(VC.exe(),)) as ex:
+    with ProcessPoolExecutor(workers, initializer=_init, initargs=(VC.exe(), dict(CLI_OPTS))) as ex:
         ci = list(ex.map(_job_w, ci_jobs, chunksize=1))
     out = dict(method=dict(core="cpp/dk6as6_core.h", fir=resolve("default"), settle_s=SETTLE_S, window_s=AL.WINDOW_S,
                            ci_window_s=AL.CI_WINDOW_S, grid_hardness=1.0, lpf="off", tones=list(tones),
@@ -346,7 +356,14 @@ if __name__ == "__main__":
     ap.add_argument("--json")
     ap.add_argument("--update-baseline", action="store_true")
     ap.add_argument("--reason")
+    ap.add_argument("--math", choices=("libm", "fast"), default="libm", help="#135: the valve law's maths")
+    ap.add_argument("--stereo", action="store_true", help="#135: the two-lane kernel")
+    ap.add_argument("--lanes", choices=("vector", "per_lane"), default="vector")
     a = ap.parse_args()
+    if a.math != "libm":
+        CLI_OPTS["math"] = a.math
+    if a.stereo:
+        CLI_OPTS.update(stereo=True, lanes=a.lanes)
     if a.cmd == "sweep":
         t0 = time.perf_counter()
         cache = os.path.join(HERE, ".aliasing_6as6_cache.jsonl")

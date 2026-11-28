@@ -1,0 +1,5212 @@
+{
+ "method": [
+  "             same probes on the deviation signals below. -> cpp/fastlaw_domain_6as6.json",
+  "  deviation  the fast path's output against the libm path's on the same input, mono and on the two-lane kernel (vector",
+  "             lane maths): sines at 0.05 / 0.5 / 2 / 8 V peak and 100 Hz / 1 kHz / 15 kHz, every supported setting with",
+  "             the default grid current and P1 0.45 mA without it, standard and hq, 48 kHz, after the 1.25 s settle; per",
+  "             point max |y_fast - y_libm| and its RMS, relative to the libm output's fundamental (dBc, peak / RMS), and"
+ ],
+ "settle_s": 1.25,
+ "window_s": 0.5,
+ "fs": 48000.0,
+ "worst": {
+  "fast": {
+   "max_abs_v": 3.553335403694291e-11,
+   "peak_dbc": -205.37633744555058,
+   "rms_dbc": -210.4443439018096,
+   "line_dbc": -211.7508991286927
+  },
+  "fast_stereo": {
+   "max_abs_v": 3.553335403694291e-11,
+   "peak_dbc": -205.37633744555058,
+   "rms_dbc": -210.4443439018096,
+   "line_dbc": -211.7508991286927
+  }
+ },
+ "rows": [
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 100.0,
+   "fund_v": 0.11173919784977766,
+   "fast": {
+    "max_abs_v": 3.56700780024255e-12,
+    "peak_dbc": -209.9180298058137,
+    "rms_dbc": -211.54986978118845,
+    "line_dbc": -211.79136172882835,
+    "iterations": 1344042,
+    "iterations_libm": 1344042,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.56700780024255e-12,
+    "peak_dbc": -209.9180298058137,
+    "rms_dbc": -211.54986978118845,
+    "line_dbc": -211.79136172882835,
+    "iterations": 1344042,
+    "iterations_libm": 1344042,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 1000.0,
+   "fund_v": 0.11176191628339253,
+   "fast": {
+    "max_abs_v": 3.601313691703467e-12,
+    "peak_dbc": -209.83665774967278,
+    "rms_dbc": -211.55949418868104,
+    "line_dbc": -211.78990559199306,
+    "iterations": 2491581,
+    "iterations_libm": 2491581,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.601313691703467e-12,
+    "peak_dbc": -209.83665774967278,
+    "rms_dbc": -211.55949418868104,
+    "line_dbc": -211.78990559199306,
+    "iterations": 2491581,
+    "iterations_libm": 2491581,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 15000.0,
+   "fund_v": 0.11176027440995405,
+   "fast": {
+    "max_abs_v": 2.902525442216586e-12,
+    "peak_dbc": -211.71022848389836,
+    "rms_dbc": -211.75273788034784,
+    "line_dbc": -211.7528961337867,
+    "iterations": 2687641,
+    "iterations_libm": 2687641,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.902525442216586e-12,
+    "peak_dbc": -211.71022848389836,
+    "rms_dbc": -211.75273788034784,
+    "line_dbc": -211.7528961337867,
+    "iterations": 2687641,
+    "iterations_libm": 2687641,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 100.0,
+   "fund_v": 1.1172277084153237,
+   "fast": {
+    "max_abs_v": 9.327649763690715e-12,
+    "peak_dbc": -221.567389347356,
+    "rms_dbc": -229.2833555257929,
+    "line_dbc": -233.0453762519886,
+    "iterations": 1344263,
+    "iterations_libm": 1344263,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 9.327649763690715e-12,
+    "peak_dbc": -221.567389347356,
+    "rms_dbc": -229.2833555257929,
+    "line_dbc": -233.0453762519886,
+    "iterations": 1344263,
+    "iterations_libm": 1344263,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 1000.0,
+   "fund_v": 1.1174548147977443,
+   "fast": {
+    "max_abs_v": 8.106348925451812e-12,
+    "peak_dbc": -222.78809355504654,
+    "rms_dbc": -229.3802357263249,
+    "line_dbc": -233.06045967837383,
+    "iterations": 2668365,
+    "iterations_libm": 2668365,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 8.106348925451812e-12,
+    "peak_dbc": -222.78809355504654,
+    "rms_dbc": -229.3802357263249,
+    "line_dbc": -233.06045967837383,
+    "iterations": 2668365,
+    "iterations_libm": 2668365,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 15000.0,
+   "fund_v": 1.1174375188905765,
+   "fast": {
+    "max_abs_v": 6.716849298982197e-13,
+    "peak_dbc": -244.42115289209116,
+    "rms_dbc": -245.98534273183594,
+    "line_dbc": -246.3426287708013,
+    "iterations": 3794946,
+    "iterations_libm": 3794946,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 6.716849298982197e-13,
+    "peak_dbc": -244.42115289209116,
+    "rms_dbc": -245.98534273183594,
+    "line_dbc": -246.3426287708013,
+    "iterations": 3794946,
+    "iterations_libm": 3794946,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 100.0,
+   "fund_v": 4.4586230760752725,
+   "fast": {
+    "max_abs_v": 7.30793203729263e-12,
+    "peak_dbc": -235.70812519216707,
+    "rms_dbc": -241.1739940081374,
+    "line_dbc": -245.65790328176735,
+    "iterations": 2174095,
+    "iterations_libm": 2174095,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 7.30793203729263e-12,
+    "peak_dbc": -235.70812519216707,
+    "rms_dbc": -241.1739940081374,
+    "line_dbc": -245.65790328176735,
+    "iterations": 2174095,
+    "iterations_libm": 2174095,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 1000.0,
+   "fund_v": 4.45952653252198,
+   "fast": {
+    "max_abs_v": 6.710187960834446e-12,
+    "peak_dbc": -236.45108133365483,
+    "rms_dbc": -241.4526739539645,
+    "line_dbc": -245.61008450728878,
+    "iterations": 2684165,
+    "iterations_libm": 2684165,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 6.710187960834446e-12,
+    "peak_dbc": -236.45108133365483,
+    "rms_dbc": -241.4526739539645,
+    "line_dbc": -245.61008450728878,
+    "iterations": 2684165,
+    "iterations_libm": 2684165,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 15000.0,
+   "fund_v": 4.45939923276183,
+   "fast": {
+    "max_abs_v": 3.446132268436486e-13,
+    "peak_dbc": -262.238888247997,
+    "rms_dbc": -267.0248937757982,
+    "line_dbc": -268.94923526297936,
+    "iterations": 3978687,
+    "iterations_libm": 3978687,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.446132268436486e-13,
+    "peak_dbc": -262.238888247997,
+    "rms_dbc": -267.0248937757982,
+    "line_dbc": -268.94923526297936,
+    "iterations": 3978687,
+    "iterations_libm": 3978687,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 100.0,
+   "fund_v": 16.53365574730166,
+   "fast": {
+    "max_abs_v": 1.1620926443356439e-11,
+    "peak_dbc": -243.06256277086777,
+    "rms_dbc": -250.07383450945258,
+    "line_dbc": -254.73793576115358,
+    "iterations": 2537161,
+    "iterations_libm": 2537161,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.1620926443356439e-11,
+    "peak_dbc": -243.06256277086777,
+    "rms_dbc": -250.07383450945258,
+    "line_dbc": -254.73793576115358,
+    "iterations": 2537161,
+    "iterations_libm": 2537161,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 1000.0,
+   "fund_v": 16.536449454115477,
+   "fast": {
+    "max_abs_v": 5.208278253121534e-12,
+    "peak_dbc": -250.03496178593653,
+    "rms_dbc": -253.79139460963782,
+    "line_dbc": -254.76431915775316,
+    "iterations": 2687733,
+    "iterations_libm": 2687733,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 5.208278253121534e-12,
+    "peak_dbc": -250.03496178593653,
+    "rms_dbc": -253.79139460963782,
+    "line_dbc": -254.76431915775316,
+    "iterations": 2687733,
+    "iterations_libm": 2687733,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 15000.0,
+   "fund_v": 16.526172416013097,
+   "fast": {
+    "max_abs_v": 4.021671884402167e-12,
+    "peak_dbc": -252.27531288833336,
+    "rms_dbc": -253.91159583933987,
+    "line_dbc": -254.78055790890448,
+    "iterations": 4325136,
+    "iterations_libm": 4325136,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 4.021671884402167e-12,
+    "peak_dbc": -252.27531288833336,
+    "rms_dbc": -253.91159583933987,
+    "line_dbc": -254.78055790890448,
+    "iterations": 4325136,
+    "iterations_libm": 4325136,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 100.0,
+   "fund_v": 0.11173919790492205,
+   "fast": {
+    "max_abs_v": 3.576333673649401e-12,
+    "peak_dbc": -209.89535035301205,
+    "rms_dbc": -211.54896956380313,
+    "line_dbc": -211.79046540196708,
+    "iterations": 672098,
+    "iterations_libm": 672098,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.576333673649401e-12,
+    "peak_dbc": -209.89535035301205,
+    "rms_dbc": -211.54896956380313,
+    "line_dbc": -211.79046540196708,
+    "iterations": 672098,
+    "iterations_libm": 672098,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 1000.0,
+   "fund_v": 0.11176191628911994,
+   "fast": {
+    "max_abs_v": 3.6115277435300186e-12,
+    "peak_dbc": -209.81205768452037,
+    "rms_dbc": -211.55932879632587,
+    "line_dbc": -211.7898654869774,
+    "iterations": 1326307,
+    "iterations_libm": 1326307,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.6115277435300186e-12,
+    "peak_dbc": -209.81205768452037,
+    "rms_dbc": -211.55932879632587,
+    "line_dbc": -211.7898654869774,
+    "iterations": 1326307,
+    "iterations_libm": 1326307,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 15000.0,
+   "fund_v": 0.11176025737107993,
+   "fast": {
+    "max_abs_v": 2.89354651350493e-12,
+    "peak_dbc": -211.73713850473194,
+    "rms_dbc": -211.74758839455703,
+    "line_dbc": -211.7508991286927,
+    "iterations": 1826638,
+    "iterations_libm": 1826638,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.89354651350493e-12,
+    "peak_dbc": -211.73713850473194,
+    "rms_dbc": -211.74758839455703,
+    "line_dbc": -211.7508991286927,
+    "iterations": 1826638,
+    "iterations_libm": 1826638,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 100.0,
+   "fund_v": 1.1172277089796991,
+   "fast": {
+    "max_abs_v": 9.33758625976111e-12,
+    "peak_dbc": -221.55814143049577,
+    "rms_dbc": -229.28342062295076,
+    "line_dbc": -233.04542531296994,
+    "iterations": 1164804,
+    "iterations_libm": 1164804,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 9.33758625976111e-12,
+    "peak_dbc": -221.55814143049577,
+    "rms_dbc": -229.28342062295076,
+    "line_dbc": -233.04542531296994,
+    "iterations": 1164804,
+    "iterations_libm": 1164804,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 1000.0,
+   "fund_v": 1.117454814840874,
+   "fast": {
+    "max_abs_v": 8.207934332205014e-12,
+    "peak_dbc": -222.67992195849783,
+    "rms_dbc": -229.39368943575332,
+    "line_dbc": -233.06800015608107,
+    "iterations": 1342103,
+    "iterations_libm": 1342103,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 8.207934332205014e-12,
+    "peak_dbc": -222.67992195849783,
+    "rms_dbc": -229.39368943575332,
+    "line_dbc": -233.06800015608107,
+    "iterations": 1342103,
+    "iterations_libm": 1342103,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 15000.0,
+   "fund_v": 1.1174373394427957,
+   "fast": {
+    "max_abs_v": 9.030554082301023e-13,
+    "peak_dbc": -241.85017562891377,
+    "rms_dbc": -244.87049740103103,
+    "line_dbc": -245.59069675340228,
+    "iterations": 1999878,
+    "iterations_libm": 1999878,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 9.030554082301023e-13,
+    "peak_dbc": -241.85017562891377,
+    "rms_dbc": -244.87049740103103,
+    "line_dbc": -245.59069675340228,
+    "iterations": 1999878,
+    "iterations_libm": 1999878,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 100.0,
+   "fund_v": 4.458623078510156,
+   "fast": {
+    "max_abs_v": 7.315925643069932e-12,
+    "peak_dbc": -235.69862953769058,
+    "rms_dbc": -241.17173167306885,
+    "line_dbc": -245.65277807535392,
+    "iterations": 1301067,
+    "iterations_libm": 1301067,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 7.315925643069932e-12,
+    "peak_dbc": -235.69862953769058,
+    "rms_dbc": -241.17173167306885,
+    "line_dbc": -245.65277807535392,
+    "iterations": 1301067,
+    "iterations_libm": 1301067,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 1000.0,
+   "fund_v": 4.459526532489374,
+   "fast": {
+    "max_abs_v": 6.7057470687359455e-12,
+    "peak_dbc": -236.45683167450844,
+    "rms_dbc": -241.4363646773636,
+    "line_dbc": -245.60427746099805,
+    "iterations": 1343891,
+    "iterations_libm": 1343891,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 6.7057470687359455e-12,
+    "peak_dbc": -236.45683167450844,
+    "rms_dbc": -241.4363646773636,
+    "line_dbc": -245.60427746099805,
+    "iterations": 1343891,
+    "iterations_libm": 1343891,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 15000.0,
+   "fund_v": 4.459397908214028,
+   "fast": {
+    "max_abs_v": 6.536993168992922e-13,
+    "peak_dbc": -256.67796389321467,
+    "rms_dbc": -259.2143775205303,
+    "line_dbc": -263.8340788815798,
+    "iterations": 2440731,
+    "iterations_libm": 2440731,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 6.536993168992922e-13,
+    "peak_dbc": -256.67796389321467,
+    "rms_dbc": -259.2143775205303,
+    "line_dbc": -263.8340788815798,
+    "iterations": 2440731,
+    "iterations_libm": 2440731,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 100.0,
+   "fund_v": 16.53365576419146,
+   "fast": {
+    "max_abs_v": 1.1617373729677638e-11,
+    "peak_dbc": -243.0652186090347,
+    "rms_dbc": -250.0732442434591,
+    "line_dbc": -254.73673897691577,
+    "iterations": 1335455,
+    "iterations_libm": 1335455,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.1617373729677638e-11,
+    "peak_dbc": -243.0652186090347,
+    "rms_dbc": -250.0732442434591,
+    "line_dbc": -254.73673897691577,
+    "iterations": 1335455,
+    "iterations_libm": 1335455,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 1000.0,
+   "fund_v": 16.536449449625138,
+   "fast": {
+    "max_abs_v": 4.929390229335695e-12,
+    "peak_dbc": -250.51298135378588,
+    "rms_dbc": -253.8195432792573,
+    "line_dbc": -254.77888985311708,
+    "iterations": 1671037,
+    "iterations_libm": 1671037,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 4.929390229335695e-12,
+    "peak_dbc": -250.51298135378588,
+    "rms_dbc": -253.8195432792573,
+    "line_dbc": -254.77888985311708,
+    "iterations": 1671037,
+    "iterations_libm": 1671037,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 15000.0,
+   "fund_v": 16.526394875121913,
+   "fast": {
+    "max_abs_v": 4.407141318552021e-12,
+    "peak_dbc": -251.480422973346,
+    "rms_dbc": -253.5791823841025,
+    "line_dbc": -254.72886645413126,
+    "iterations": 2687424,
+    "iterations_libm": 2687424,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 4.407141318552021e-12,
+    "peak_dbc": -251.480422973346,
+    "rms_dbc": -253.5791823841025,
+    "line_dbc": -254.72886645413126,
+    "iterations": 2687424,
+    "iterations_libm": 2687424,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 100.0,
+   "fund_v": 0.2884071618459877,
+   "fast": {
+    "max_abs_v": 2.819570965595375e-12,
+    "peak_dbc": -220.19646021941057,
+    "rms_dbc": -223.5742213211319,
+    "line_dbc": -229.8565870090814,
+    "iterations": 1344108,
+    "iterations_libm": 1344108,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.819570965595375e-12,
+    "peak_dbc": -220.19646021941057,
+    "rms_dbc": -223.5742213211319,
+    "line_dbc": -229.8565870090814,
+    "iterations": 1344108,
+    "iterations_libm": 1344108,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 1000.0,
+   "fund_v": 0.2884659066331766,
+   "fast": {
+    "max_abs_v": 2.660927034270344e-12,
+    "peak_dbc": -220.70123052075886,
+    "rms_dbc": -224.00619373999763,
+    "line_dbc": -229.85647666990218,
+    "iterations": 2603576,
+    "iterations_libm": 2603576,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.660927034270344e-12,
+    "peak_dbc": -220.70123052075886,
+    "rms_dbc": -224.00619373999763,
+    "line_dbc": -229.85647666990218,
+    "iterations": 2603576,
+    "iterations_libm": 2603576,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 15000.0,
+   "fund_v": 0.28841103497415727,
+   "fast": {
+    "max_abs_v": 9.22595333463505e-13,
+    "peak_dbc": -229.90001238866273,
+    "rms_dbc": -230.6698617567828,
+    "line_dbc": -230.70058163675722,
+    "iterations": 2687672,
+    "iterations_libm": 2687672,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 9.22595333463505e-13,
+    "peak_dbc": -229.90001238866273,
+    "rms_dbc": -230.6698617567828,
+    "line_dbc": -230.70058163675722,
+    "iterations": 2687672,
+    "iterations_libm": 2687672,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 100.0,
+   "fund_v": 2.8833327238118613,
+   "fast": {
+    "max_abs_v": 1.9957369090661814e-11,
+    "peak_dbc": -223.19582943435017,
+    "rms_dbc": -230.34662360467397,
+    "line_dbc": -237.04949521260323,
+    "iterations": 1612993,
+    "iterations_libm": 1612993,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.9957369090661814e-11,
+    "peak_dbc": -223.19582943435017,
+    "rms_dbc": -230.34662360467397,
+    "line_dbc": -237.04949521260323,
+    "iterations": 1612993,
+    "iterations_libm": 1612993,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 1000.0,
+   "fund_v": 2.883919840854321,
+   "fast": {
+    "max_abs_v": 1.6274981362585095e-11,
+    "peak_dbc": -224.96925370011266,
+    "rms_dbc": -230.75029169939688,
+    "line_dbc": -237.05590045763404,
+    "iterations": 2680648,
+    "iterations_libm": 2680648,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.6274981362585095e-11,
+    "peak_dbc": -224.96925370011266,
+    "rms_dbc": -230.75029169939688,
+    "line_dbc": -237.05590045763404,
+    "iterations": 2680648,
+    "iterations_libm": 2680648,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 15000.0,
+   "fund_v": 2.883369145681395,
+   "fast": {
+    "max_abs_v": 2.112088282046898e-12,
+    "peak_dbc": -242.70376359537107,
+    "rms_dbc": -243.38544148158988,
+    "line_dbc": -243.7372379240549,
+    "iterations": 3894679,
+    "iterations_libm": 3894679,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.112088282046898e-12,
+    "peak_dbc": -242.70376359537107,
+    "rms_dbc": -243.38544148158988,
+    "line_dbc": -243.7372379240549,
+    "iterations": 3894679,
+    "iterations_libm": 3894679,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 100.0,
+   "fund_v": 11.487234807381006,
+   "fast": {
+    "max_abs_v": 1.52495793770413e-11,
+    "peak_dbc": -237.53915267143134,
+    "rms_dbc": -242.28042250682444,
+    "line_dbc": -250.84054786877329,
+    "iterations": 2489143,
+    "iterations_libm": 2489143,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.52495793770413e-11,
+    "peak_dbc": -237.53915267143134,
+    "rms_dbc": -242.28042250682444,
+    "line_dbc": -250.84054786877329,
+    "iterations": 2489143,
+    "iterations_libm": 2489143,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 1000.0,
+   "fund_v": 11.489562299279672,
+   "fast": {
+    "max_abs_v": 9.567457937009749e-12,
+    "peak_dbc": -241.59013845587594,
+    "rms_dbc": -245.8688251563937,
+    "line_dbc": -250.75957105753992,
+    "iterations": 2687703,
+    "iterations_libm": 2687703,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 9.567457937009749e-12,
+    "peak_dbc": -241.59013845587594,
+    "rms_dbc": -245.8688251563937,
+    "line_dbc": -250.75957105753992,
+    "iterations": 2687703,
+    "iterations_libm": 2687703,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 15000.0,
+   "fund_v": 11.487227043685737,
+   "fast": {
+    "max_abs_v": 4.508393658397836e-12,
+    "peak_dbc": -248.12386749415424,
+    "rms_dbc": -249.69809041001173,
+    "line_dbc": -250.80418873109576,
+    "iterations": 3999736,
+    "iterations_libm": 3999736,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 4.508393658397836e-12,
+    "peak_dbc": -248.12386749415424,
+    "rms_dbc": -249.69809041001173,
+    "line_dbc": -250.80418873109576,
+    "iterations": 3999736,
+    "iterations_libm": 3999736,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 100.0,
+   "fund_v": 40.71160216768304,
+   "fast": {
+    "max_abs_v": 2.6695090582506964e-11,
+    "peak_dbc": -243.66573590239196,
+    "rms_dbc": -250.33826528164124,
+    "line_dbc": -254.28242914754523,
+    "iterations": 2609533,
+    "iterations_libm": 2609533,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.6695090582506964e-11,
+    "peak_dbc": -243.66573590239196,
+    "rms_dbc": -250.33826528164124,
+    "line_dbc": -254.28242914754523,
+    "iterations": 2609533,
+    "iterations_libm": 2609533,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 1000.0,
+   "fund_v": 40.71808287881644,
+   "fast": {
+    "max_abs_v": 1.4864554032101296e-11,
+    "peak_dbc": -248.75270876047014,
+    "rms_dbc": -253.91477991221893,
+    "line_dbc": -254.16926397132903,
+    "iterations": 2687780,
+    "iterations_libm": 2687780,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.4864554032101296e-11,
+    "peak_dbc": -248.75270876047014,
+    "rms_dbc": -253.91477991221893,
+    "line_dbc": -254.16926397132903,
+    "iterations": 2687780,
+    "iterations_libm": 2687780,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 15000.0,
+   "fund_v": 40.69153076785484,
+   "fast": {
+    "max_abs_v": 1.1674217148538446e-11,
+    "peak_dbc": -250.84552521167498,
+    "rms_dbc": -253.3064378682579,
+    "line_dbc": -253.66678302058887,
+    "iterations": 4571815,
+    "iterations_libm": 4571815,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.1674217148538446e-11,
+    "peak_dbc": -250.84552521167498,
+    "rms_dbc": -253.3064378682579,
+    "line_dbc": -253.66678302058887,
+    "iterations": 4571815,
+    "iterations_libm": 4571815,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 100.0,
+   "fund_v": 0.28840716200522243,
+   "fast": {
+    "max_abs_v": 2.83654003063738e-12,
+    "peak_dbc": -220.14434248163397,
+    "rms_dbc": -223.57367784229882,
+    "line_dbc": -229.85682450320053,
+    "iterations": 672148,
+    "iterations_libm": 672148,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.83654003063738e-12,
+    "peak_dbc": -220.14434248163397,
+    "rms_dbc": -223.57367784229882,
+    "line_dbc": -229.85682450320053,
+    "iterations": 672148,
+    "iterations_libm": 672148,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 1000.0,
+   "fund_v": 0.28846590664169797,
+   "fast": {
+    "max_abs_v": 2.681355137923447e-12,
+    "peak_dbc": -220.63480306063428,
+    "rms_dbc": -224.00582242397772,
+    "line_dbc": -229.85641624210902,
+    "iterations": 1336824,
+    "iterations_libm": 1336824,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.681355137923447e-12,
+    "peak_dbc": -220.63480306063428,
+    "rms_dbc": -224.00582242397772,
+    "line_dbc": -229.85641624210902,
+    "iterations": 1336824,
+    "iterations_libm": 1336824,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 15000.0,
+   "fund_v": 0.28841060499727483,
+   "fast": {
+    "max_abs_v": 9.471867734589523e-13,
+    "peak_dbc": -229.67151201274592,
+    "rms_dbc": -230.6553290193652,
+    "line_dbc": -230.72654392807937,
+    "iterations": 1900122,
+    "iterations_libm": 1900122,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 9.471867734589523e-13,
+    "peak_dbc": -229.67151201274592,
+    "rms_dbc": -230.6553290193652,
+    "line_dbc": -230.72654392807937,
+    "iterations": 1900122,
+    "iterations_libm": 1900122,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 100.0,
+   "fund_v": 2.883332725397878,
+   "fast": {
+    "max_abs_v": 1.9964030428809565e-11,
+    "peak_dbc": -223.19293076076363,
+    "rms_dbc": -230.3467617551563,
+    "line_dbc": -237.04951793093218,
+    "iterations": 1268769,
+    "iterations_libm": 1268769,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.9964030428809565e-11,
+    "peak_dbc": -223.19293076076363,
+    "rms_dbc": -230.3467617551563,
+    "line_dbc": -237.04951793093218,
+    "iterations": 1268769,
+    "iterations_libm": 1268769,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 1000.0,
+   "fund_v": 2.8839198409434545,
+   "fast": {
+    "max_abs_v": 1.631184076700265e-11,
+    "peak_dbc": -224.94960423262015,
+    "rms_dbc": -230.75241404001417,
+    "line_dbc": -237.04931662432165,
+    "iterations": 1343872,
+    "iterations_libm": 1343872,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.631184076700265e-11,
+    "peak_dbc": -224.94960423262015,
+    "rms_dbc": -230.75241404001417,
+    "line_dbc": -237.04931662432165,
+    "iterations": 1343872,
+    "iterations_libm": 1343872,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 15000.0,
+   "fund_v": 2.883364825908417,
+   "fast": {
+    "max_abs_v": 3.0464519795714295e-12,
+    "peak_dbc": -239.52210518723265,
+    "rms_dbc": -241.43510385849936,
+    "line_dbc": -243.98968961124615,
+    "iterations": 1999899,
+    "iterations_libm": 1999899,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.0464519795714295e-12,
+    "peak_dbc": -239.52210518723265,
+    "rms_dbc": -241.43510385849936,
+    "line_dbc": -243.98968961124615,
+    "iterations": 1999899,
+    "iterations_libm": 1999899,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 100.0,
+   "fund_v": 11.487234813628124,
+   "fast": {
+    "max_abs_v": 1.5284662424619455e-11,
+    "peak_dbc": -237.51919294599338,
+    "rms_dbc": -242.28113656967795,
+    "line_dbc": -250.8449400263959,
+    "iterations": 1325834,
+    "iterations_libm": 1325834,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.5284662424619455e-11,
+    "peak_dbc": -237.51919294599338,
+    "rms_dbc": -242.28113656967795,
+    "line_dbc": -250.8449400263959,
+    "iterations": 1325834,
+    "iterations_libm": 1325834,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 1000.0,
+   "fund_v": 11.48956229962897,
+   "fast": {
+    "max_abs_v": 9.590550575921952e-12,
+    "peak_dbc": -241.56919888822497,
+    "rms_dbc": -245.89752949981948,
+    "line_dbc": -250.8981358047149,
+    "iterations": 1343922,
+    "iterations_libm": 1343922,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 9.590550575921952e-12,
+    "peak_dbc": -241.56919888822497,
+    "rms_dbc": -245.89752949981948,
+    "line_dbc": -250.8981358047149,
+    "iterations": 1343922,
+    "iterations_libm": 1343922,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 15000.0,
+   "fund_v": 11.487208415855154,
+   "fast": {
+    "max_abs_v": 5.055511564933113e-12,
+    "peak_dbc": -247.1289878492043,
+    "rms_dbc": -249.12452612222384,
+    "line_dbc": -250.61215444922937,
+    "iterations": 2508964,
+    "iterations_libm": 2508964,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 5.055511564933113e-12,
+    "peak_dbc": -247.1289878492043,
+    "rms_dbc": -249.12452612222384,
+    "line_dbc": -250.61215444922937,
+    "iterations": 2508964,
+    "iterations_libm": 2508964,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 100.0,
+   "fund_v": 40.71160219241054,
+   "fast": {
+    "max_abs_v": 2.6759039428725373e-11,
+    "peak_dbc": -243.64495349532237,
+    "rms_dbc": -250.33220868280108,
+    "line_dbc": -254.2875391224317,
+    "iterations": 1343880,
+    "iterations_libm": 1343880,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.6759039428725373e-11,
+    "peak_dbc": -243.64495349532237,
+    "rms_dbc": -250.33220868280108,
+    "line_dbc": -254.2875391224317,
+    "iterations": 1343880,
+    "iterations_libm": 1343880,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 1000.0,
+   "fund_v": 40.7180828605741,
+   "fast": {
+    "max_abs_v": 1.4424017535930034e-11,
+    "peak_dbc": -249.0140216022192,
+    "rms_dbc": -253.8155342123569,
+    "line_dbc": -254.07060456616793,
+    "iterations": 1770763,
+    "iterations_libm": 1770763,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.4424017535930034e-11,
+    "peak_dbc": -249.0140216022192,
+    "rms_dbc": -253.8155342123569,
+    "line_dbc": -254.07060456616793,
+    "iterations": 1770763,
+    "iterations_libm": 1770763,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 15000.0,
+   "fund_v": 40.6919494777118,
+   "fast": {
+    "max_abs_v": 1.1496581464598421e-11,
+    "peak_dbc": -250.9787955109161,
+    "rms_dbc": -253.78079537737148,
+    "line_dbc": -254.15033352468416,
+    "iterations": 2724181,
+    "iterations_libm": 2724181,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.1496581464598421e-11,
+    "peak_dbc": -250.9787955109161,
+    "rms_dbc": -253.78079537737148,
+    "line_dbc": -254.15033352468416,
+    "iterations": 2724181,
+    "iterations_libm": 2724181,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 100.0,
+   "fund_v": 0.49238683622643437,
+   "fast": {
+    "max_abs_v": 2.649630514994783e-11,
+    "peak_dbc": -205.3824223389147,
+    "rms_dbc": -210.44438256307524,
+    "line_dbc": -213.69121409899185,
+    "iterations": 1344158,
+    "iterations_libm": 1344158,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.649630514994783e-11,
+    "peak_dbc": -205.3824223389147,
+    "rms_dbc": -210.44438256307524,
+    "line_dbc": -213.69121409899185,
+    "iterations": 1344158,
+    "iterations_libm": 1344158,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 1000.0,
+   "fund_v": 0.49248825576170685,
+   "fast": {
+    "max_abs_v": 2.3788832015370076e-11,
+    "peak_dbc": -206.3204551778079,
+    "rms_dbc": -210.4797345351534,
+    "line_dbc": -213.6933580318377,
+    "iterations": 2638587,
+    "iterations_libm": 2638587,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.3788832015370076e-11,
+    "peak_dbc": -206.3204551778079,
+    "rms_dbc": -210.4797345351534,
+    "line_dbc": -213.6933580318377,
+    "iterations": 2638587,
+    "iterations_libm": 2638587,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 15000.0,
+   "fund_v": 0.49236460190974557,
+   "fast": {
+    "max_abs_v": 3.9498404547089194e-12,
+    "peak_dbc": -221.9141453719351,
+    "rms_dbc": -222.172256215431,
+    "line_dbc": -222.19604481901402,
+    "iterations": 2687695,
+    "iterations_libm": 2687695,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.9498404547089194e-12,
+    "peak_dbc": -221.9141453719351,
+    "rms_dbc": -222.172256215431,
+    "line_dbc": -222.19604481901402,
+    "iterations": 2687695,
+    "iterations_libm": 2687695,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 100.0,
+   "fund_v": 4.92147706352475,
+   "fast": {
+    "max_abs_v": 3.154099204039085e-11,
+    "peak_dbc": -223.86440233209635,
+    "rms_dbc": -231.36012196803983,
+    "line_dbc": -239.40634630781037,
+    "iterations": 2170441,
+    "iterations_libm": 2170441,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.154099204039085e-11,
+    "peak_dbc": -223.86440233209635,
+    "rms_dbc": -231.36012196803983,
+    "line_dbc": -239.40634630781037,
+    "iterations": 2170441,
+    "iterations_libm": 2170441,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 1000.0,
+   "fund_v": 4.922490244490819,
+   "fast": {
+    "max_abs_v": 1.3807621712658147e-11,
+    "peak_dbc": -231.04131967890768,
+    "rms_dbc": -233.1320621033757,
+    "line_dbc": -239.56000244889904,
+    "iterations": 2680668,
+    "iterations_libm": 2680668,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.3807621712658147e-11,
+    "peak_dbc": -231.04131967890768,
+    "rms_dbc": -233.1320621033757,
+    "line_dbc": -239.56000244889904,
+    "iterations": 2680668,
+    "iterations_libm": 2680668,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 15000.0,
+   "fund_v": 4.921250482719803,
+   "fast": {
+    "max_abs_v": 5.181632900530531e-12,
+    "peak_dbc": -239.5521765762216,
+    "rms_dbc": -245.30471937851345,
+    "line_dbc": -247.4912723005038,
+    "iterations": 3936688,
+    "iterations_libm": 3936688,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 5.181632900530531e-12,
+    "peak_dbc": -239.5521765762216,
+    "rms_dbc": -245.30471937851345,
+    "line_dbc": -247.4912723005038,
+    "iterations": 3936688,
+    "iterations_libm": 3936688,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 100.0,
+   "fund_v": 19.53862729736475,
+   "fast": {
+    "max_abs_v": 2.3888446776254568e-11,
+    "peak_dbc": -238.25412271670785,
+    "rms_dbc": -243.1991497852669,
+    "line_dbc": -255.1197451311269,
+    "iterations": 2574313,
+    "iterations_libm": 2574313,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.3888446776254568e-11,
+    "peak_dbc": -238.25412271670785,
+    "rms_dbc": -243.1991497852669,
+    "line_dbc": -255.1197451311269,
+    "iterations": 2574313,
+    "iterations_libm": 2574313,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 1000.0,
+   "fund_v": 19.54261681743694,
+   "fast": {
+    "max_abs_v": 1.1375789199519204e-11,
+    "peak_dbc": -244.70002361904216,
+    "rms_dbc": -252.4460756036835,
+    "line_dbc": -254.8798840695285,
+    "iterations": 2687724,
+    "iterations_libm": 2687724,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.1375789199519204e-11,
+    "peak_dbc": -244.70002361904216,
+    "rms_dbc": -252.4460756036835,
+    "line_dbc": -254.8798840695285,
+    "iterations": 2687724,
+    "iterations_libm": 2687724,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 15000.0,
+   "fund_v": 19.537433343062197,
+   "fast": {
+    "max_abs_v": 4.373390538603417e-12,
+    "peak_dbc": -253.00098496526277,
+    "rms_dbc": -254.36720636544482,
+    "line_dbc": -255.19429090244125,
+    "iterations": 4005012,
+    "iterations_libm": 4005012,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 4.373390538603417e-12,
+    "peak_dbc": -253.00098496526277,
+    "rms_dbc": -254.36720636544482,
+    "line_dbc": -255.19429090244125,
+    "iterations": 4005012,
+    "iterations_libm": 4005012,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 100.0,
+   "fund_v": 64.38781985063403,
+   "fast": {
+    "max_abs_v": 3.037570195374428e-11,
+    "peak_dbc": -246.52554794845346,
+    "rms_dbc": -255.41375568332072,
+    "line_dbc": -257.36013693008516,
+    "iterations": 2645176,
+    "iterations_libm": 2645176,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.037570195374428e-11,
+    "peak_dbc": -246.52554794845346,
+    "rms_dbc": -255.41375568332072,
+    "line_dbc": -257.36013693008516,
+    "iterations": 2645176,
+    "iterations_libm": 2645176,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 1000.0,
+   "fund_v": 64.3971775271546,
+   "fast": {
+    "max_abs_v": 1.2533973858808167e-11,
+    "peak_dbc": -254.21556096870074,
+    "rms_dbc": -256.7195046473937,
+    "line_dbc": -257.55821771002593,
+    "iterations": 2687819,
+    "iterations_libm": 2687819,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.2533973858808167e-11,
+    "peak_dbc": -254.21556096870074,
+    "rms_dbc": -256.7195046473937,
+    "line_dbc": -257.55821771002593,
+    "iterations": 2687819,
+    "iterations_libm": 2687819,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 15000.0,
+   "fund_v": 64.35057734446453,
+   "fast": {
+    "max_abs_v": 9.64917035162216e-12,
+    "peak_dbc": -256.48124947900885,
+    "rms_dbc": -257.37942918153635,
+    "line_dbc": -257.95763691168753,
+    "iterations": 4645310,
+    "iterations_libm": 4645310,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 9.64917035162216e-12,
+    "peak_dbc": -256.48124947900885,
+    "rms_dbc": -257.37942918153635,
+    "line_dbc": -257.95763691168753,
+    "iterations": 4645310,
+    "iterations_libm": 4645310,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 100.0,
+   "fund_v": 0.4923868364197458,
+   "fast": {
+    "max_abs_v": 2.6514873630034685e-11,
+    "peak_dbc": -205.37633744555058,
+    "rms_dbc": -210.4443439018096,
+    "line_dbc": -213.69109003214828,
+    "iterations": 672179,
+    "iterations_libm": 672179,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.6514873630034685e-11,
+    "peak_dbc": -205.37633744555058,
+    "rms_dbc": -210.4443439018096,
+    "line_dbc": -213.69109003214828,
+    "iterations": 672179,
+    "iterations_libm": 672179,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 1000.0,
+   "fund_v": 0.4924882557753202,
+   "fast": {
+    "max_abs_v": 2.3813714888909487e-11,
+    "peak_dbc": -206.31137457513145,
+    "rms_dbc": -210.48021407916667,
+    "line_dbc": -213.69355175938776,
+    "iterations": 1340334,
+    "iterations_libm": 1340334,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.3813714888909487e-11,
+    "peak_dbc": -206.31137457513145,
+    "rms_dbc": -210.48021407916667,
+    "line_dbc": -213.69355175938776,
+    "iterations": 1340334,
+    "iterations_libm": 1340334,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 15000.0,
+   "fund_v": 0.4923636392860961,
+   "fast": {
+    "max_abs_v": 3.8557490533719374e-12,
+    "peak_dbc": -222.1235442492378,
+    "rms_dbc": -222.07411458640738,
+    "line_dbc": -222.1812925802483,
+    "iterations": 1931615,
+    "iterations_libm": 1931615,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.8557490533719374e-12,
+    "peak_dbc": -222.1235442492378,
+    "rms_dbc": -222.07411458640738,
+    "line_dbc": -222.1812925802483,
+    "iterations": 1931615,
+    "iterations_libm": 1931615,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 100.0,
+   "fund_v": 4.921477065233037,
+   "fast": {
+    "max_abs_v": 3.155253835984695e-11,
+    "peak_dbc": -223.86122324346732,
+    "rms_dbc": -231.3598240476594,
+    "line_dbc": -239.40675213365563,
+    "iterations": 1298629,
+    "iterations_libm": 1298629,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.155253835984695e-11,
+    "peak_dbc": -223.86122324346732,
+    "rms_dbc": -231.3598240476594,
+    "line_dbc": -239.40675213365563,
+    "iterations": 1298629,
+    "iterations_libm": 1298629,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 1000.0,
+   "fund_v": 4.922490244767444,
+   "fast": {
+    "max_abs_v": 1.4038326057175254e-11,
+    "peak_dbc": -230.89739077859946,
+    "rms_dbc": -233.16699760531773,
+    "line_dbc": -239.59073676964448,
+    "iterations": 1343879,
+    "iterations_libm": 1343879,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.4038326057175254e-11,
+    "peak_dbc": -230.89739077859946,
+    "rms_dbc": -233.16699760531773,
+    "line_dbc": -239.59073676964448,
+    "iterations": 1343879,
+    "iterations_libm": 1343879,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 15000.0,
+   "fund_v": 4.921240809592693,
+   "fast": {
+    "max_abs_v": 4.668265773943858e-12,
+    "peak_dbc": -240.45838086804616,
+    "rms_dbc": -242.44453608147217,
+    "line_dbc": -245.58807484688188,
+    "iterations": 2005163,
+    "iterations_libm": 2005163,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 4.668265773943858e-12,
+    "peak_dbc": -240.45838086804616,
+    "rms_dbc": -242.44453608147217,
+    "line_dbc": -245.58807484688188,
+    "iterations": 2005163,
+    "iterations_libm": 2005163,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 100.0,
+   "fund_v": 19.538627299272658,
+   "fast": {
+    "max_abs_v": 2.403588439392479e-11,
+    "peak_dbc": -238.20067884532807,
+    "rms_dbc": -243.19966173870614,
+    "line_dbc": -255.1188080770567,
+    "iterations": 1333227,
+    "iterations_libm": 1333227,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.403588439392479e-11,
+    "peak_dbc": -238.20067884532807,
+    "rms_dbc": -243.19966173870614,
+    "line_dbc": -255.1188080770567,
+    "iterations": 1333227,
+    "iterations_libm": 1333227,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 1000.0,
+   "fund_v": 19.54261681833166,
+   "fast": {
+    "max_abs_v": 1.1151968237754772e-11,
+    "peak_dbc": -244.8726238571046,
+    "rms_dbc": -252.23380542496903,
+    "line_dbc": -254.92570523577456,
+    "iterations": 1343962,
+    "iterations_libm": 1343962,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.1151968237754772e-11,
+    "peak_dbc": -244.8726238571046,
+    "rms_dbc": -252.23380542496903,
+    "line_dbc": -254.92570523577456,
+    "iterations": 1343962,
+    "iterations_libm": 1343962,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 15000.0,
+   "fund_v": 19.537391461105752,
+   "fast": {
+    "max_abs_v": 7.762790410481557e-12,
+    "peak_dbc": -248.01697435277202,
+    "rms_dbc": -249.53502183457908,
+    "line_dbc": -252.69483594262687,
+    "iterations": 2540467,
+    "iterations_libm": 2540467,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 7.762790410481557e-12,
+    "peak_dbc": -248.01697435277202,
+    "rms_dbc": -249.53502183457908,
+    "line_dbc": -252.69483594262687,
+    "iterations": 2540467,
+    "iterations_libm": 2540467,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 100.0,
+   "fund_v": 64.38781982464603,
+   "fast": {
+    "max_abs_v": 3.035438567167148e-11,
+    "peak_dbc": -246.53164544582154,
+    "rms_dbc": -255.41185606332493,
+    "line_dbc": -257.37437129082247,
+    "iterations": 1343895,
+    "iterations_libm": 1343895,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.035438567167148e-11,
+    "peak_dbc": -246.53164544582154,
+    "rms_dbc": -255.41185606332493,
+    "line_dbc": -257.37437129082247,
+    "iterations": 1343895,
+    "iterations_libm": 1343895,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 1000.0,
+   "fund_v": 64.3971775162443,
+   "fast": {
+    "max_abs_v": 1.177369313154486e-11,
+    "peak_dbc": -254.75908241475844,
+    "rms_dbc": -257.25442847651954,
+    "line_dbc": -258.1236425452042,
+    "iterations": 1802261,
+    "iterations_libm": 1802261,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.177369313154486e-11,
+    "peak_dbc": -254.75908241475844,
+    "rms_dbc": -257.25442847651954,
+    "line_dbc": -258.1236425452042,
+    "iterations": 1802261,
+    "iterations_libm": 1802261,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 15000.0,
+   "fund_v": 64.35130728471067,
+   "fast": {
+    "max_abs_v": 1.2782663816324202e-11,
+    "peak_dbc": -254.03872013604695,
+    "rms_dbc": -256.39767070236803,
+    "line_dbc": -258.16396261817835,
+    "iterations": 2728917,
+    "iterations_libm": 2728917,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.2782663816324202e-11,
+    "peak_dbc": -254.03872013604695,
+    "rms_dbc": -256.39767070236803,
+    "line_dbc": -258.16396261817835,
+    "iterations": 2728917,
+    "iterations_libm": 2728917,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 100.0,
+   "fund_v": 0.5994278552040117,
+   "fast": {
+    "max_abs_v": 2.934036347213009e-11,
+    "peak_dbc": -206.20542861913236,
+    "rms_dbc": -211.80734582136404,
+    "line_dbc": -216.99750555259868,
+    "iterations": 1344180,
+    "iterations_libm": 1344180,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.934036347213009e-11,
+    "peak_dbc": -206.20542861913236,
+    "rms_dbc": -211.80734582136404,
+    "line_dbc": -216.99750555259868,
+    "iterations": 1344180,
+    "iterations_libm": 1344180,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 1000.0,
+   "fund_v": 0.5995529548685569,
+   "fast": {
+    "max_abs_v": 2.3482327193846686e-11,
+    "peak_dbc": -208.14172825336618,
+    "rms_dbc": -211.9495593839227,
+    "line_dbc": -216.99961714054814,
+    "iterations": 2649090,
+    "iterations_libm": 2649090,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.3482327193846686e-11,
+    "peak_dbc": -208.14172825336618,
+    "rms_dbc": -211.9495593839227,
+    "line_dbc": -216.99961714054814,
+    "iterations": 2649090,
+    "iterations_libm": 2649090,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 15000.0,
+   "fund_v": 0.5993926749808526,
+   "fast": {
+    "max_abs_v": 2.790545572395331e-12,
+    "peak_dbc": -226.64044623742228,
+    "rms_dbc": -227.36491576760164,
+    "line_dbc": -227.5311045264877,
+    "iterations": 2986801,
+    "iterations_libm": 2986801,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.790545572395331e-12,
+    "peak_dbc": -226.64044623742228,
+    "rms_dbc": -227.36491576760164,
+    "line_dbc": -227.5311045264877,
+    "iterations": 2986801,
+    "iterations_libm": 2986801,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 100.0,
+   "fund_v": 5.990640335962859,
+   "fast": {
+    "max_abs_v": 3.5507596862771607e-11,
+    "peak_dbc": -224.5430393179039,
+    "rms_dbc": -231.10711558173733,
+    "line_dbc": -242.26828418435642,
+    "iterations": 2271069,
+    "iterations_libm": 2271069,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.5507596862771607e-11,
+    "peak_dbc": -224.5430393179039,
+    "rms_dbc": -231.10711558173733,
+    "line_dbc": -242.26828418435642,
+    "iterations": 2271069,
+    "iterations_libm": 2271069,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 1000.0,
+   "fund_v": 5.991889796237528,
+   "fast": {
+    "max_abs_v": 1.901767632261908e-11,
+    "peak_dbc": -229.968127312827,
+    "rms_dbc": -235.8393572762316,
+    "line_dbc": -244.5642728240005,
+    "iterations": 2687671,
+    "iterations_libm": 2687671,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.901767632261908e-11,
+    "peak_dbc": -229.968127312827,
+    "rms_dbc": -235.8393572762316,
+    "line_dbc": -244.5642728240005,
+    "iterations": 2687671,
+    "iterations_libm": 2687671,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 15000.0,
+   "fund_v": 5.990282175563448,
+   "fast": {
+    "max_abs_v": 2.1475043965324403e-12,
+    "peak_dbc": -248.91026437858088,
+    "rms_dbc": -252.48559157906732,
+    "line_dbc": -258.1540711823791,
+    "iterations": 3952443,
+    "iterations_libm": 3952443,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.1475043965324403e-12,
+    "peak_dbc": -248.91026437858088,
+    "rms_dbc": -252.48559157906732,
+    "line_dbc": -258.1540711823791,
+    "iterations": 3952443,
+    "iterations_libm": 3952443,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 100.0,
+   "fund_v": 23.739636373897834,
+   "fast": {
+    "max_abs_v": 2.9530156098189764e-11,
+    "peak_dbc": -238.10416639582942,
+    "rms_dbc": -244.23765580751387,
+    "line_dbc": -255.9655244720449,
+    "iterations": 2600188,
+    "iterations_libm": 2600188,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.9530156098189764e-11,
+    "peak_dbc": -238.10416639582942,
+    "rms_dbc": -244.23765580751387,
+    "line_dbc": -255.9655244720449,
+    "iterations": 2600188,
+    "iterations_libm": 2600188,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 1000.0,
+   "fund_v": 23.74453906603597,
+   "fast": {
+    "max_abs_v": 1.0455636356709874e-11,
+    "peak_dbc": -247.12426546311872,
+    "rms_dbc": -256.20615999496283,
+    "line_dbc": -260.62727769252245,
+    "iterations": 2687730,
+    "iterations_libm": 2687730,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.0455636356709874e-11,
+    "peak_dbc": -247.12426546311872,
+    "rms_dbc": -256.20615999496283,
+    "line_dbc": -260.62727769252245,
+    "iterations": 2687730,
+    "iterations_libm": 2687730,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 15000.0,
+   "fund_v": 23.737770879914784,
+   "fast": {
+    "max_abs_v": 6.981193401145447e-12,
+    "peak_dbc": -250.63020528307248,
+    "rms_dbc": -253.89921567593777,
+    "line_dbc": -257.82712108635525,
+    "iterations": 4020766,
+    "iterations_libm": 4020766,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 6.981193401145447e-12,
+    "peak_dbc": -250.63020528307248,
+    "rms_dbc": -253.89921567593777,
+    "line_dbc": -257.82712108635525,
+    "iterations": 4020766,
+    "iterations_libm": 4020766,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 100.0,
+   "fund_v": 74.99079560298598,
+   "fast": {
+    "max_abs_v": 1.6299850358336698e-11,
+    "peak_dbc": -253.25648687689943,
+    "rms_dbc": -258.36487097483473,
+    "line_dbc": -262.12443258901664,
+    "iterations": 2645245,
+    "iterations_libm": 2645245,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.6299850358336698e-11,
+    "peak_dbc": -253.25648687689943,
+    "rms_dbc": -258.36487097483473,
+    "line_dbc": -262.12443258901664,
+    "iterations": 2645245,
+    "iterations_libm": 2645245,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 1000.0,
+   "fund_v": 75.00109744788516,
+   "fast": {
+    "max_abs_v": 1.7926993223227328e-11,
+    "peak_dbc": -252.4312032781778,
+    "rms_dbc": -257.3000204806317,
+    "line_dbc": -261.8862036173804,
+    "iterations": 2687841,
+    "iterations_libm": 2687841,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.7926993223227328e-11,
+    "peak_dbc": -252.4312032781778,
+    "rms_dbc": -257.3000204806317,
+    "line_dbc": -261.8862036173804,
+    "iterations": 2687841,
+    "iterations_libm": 2687841,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 15000.0,
+   "fund_v": 74.94057633692685,
+   "fast": {
+    "max_abs_v": 1.057287590811029e-11,
+    "peak_dbc": -257.01047787493644,
+    "rms_dbc": -261.011452047238,
+    "line_dbc": -264.6009456119453,
+    "iterations": 4692540,
+    "iterations_libm": 4692540,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.057287590811029e-11,
+    "peak_dbc": -257.01047787493644,
+    "rms_dbc": -261.011452047238,
+    "line_dbc": -264.6009456119453,
+    "iterations": 4692540,
+    "iterations_libm": 4692540,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 100.0,
+   "fund_v": 0.5994278554325255,
+   "fast": {
+    "max_abs_v": 2.938216336900723e-11,
+    "peak_dbc": -206.19306303220048,
+    "rms_dbc": -211.807110194627,
+    "line_dbc": -216.99683927251317,
+    "iterations": 883064,
+    "iterations_libm": 883064,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.938216336900723e-11,
+    "peak_dbc": -206.19306303220048,
+    "rms_dbc": -211.807110194627,
+    "line_dbc": -216.99683927251317,
+    "iterations": 883064,
+    "iterations_libm": 883064,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 1000.0,
+   "fund_v": 0.5995529548886167,
+   "fast": {
+    "max_abs_v": 2.3489044043145668e-11,
+    "peak_dbc": -208.13924411020568,
+    "rms_dbc": -211.95602839816303,
+    "line_dbc": -217.0055257405665,
+    "iterations": 1340337,
+    "iterations_libm": 1340337,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.3489044043145668e-11,
+    "peak_dbc": -208.13924411020568,
+    "rms_dbc": -211.95602839816303,
+    "line_dbc": -217.0055257405665,
+    "iterations": 1340337,
+    "iterations_libm": 1340337,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 15000.0,
+   "fund_v": 0.5993914286655042,
+   "fast": {
+    "max_abs_v": 3.551048344263563e-12,
+    "peak_dbc": -224.5470788670701,
+    "rms_dbc": -226.14249787463382,
+    "line_dbc": -227.6579587975124,
+    "iterations": 1936869,
+    "iterations_libm": 1936869,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.551048344263563e-12,
+    "peak_dbc": -224.5470788670701,
+    "rms_dbc": -226.14249787463382,
+    "line_dbc": -227.6579587975124,
+    "iterations": 1936869,
+    "iterations_libm": 1936869,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 100.0,
+   "fund_v": 5.990640337705273,
+   "fast": {
+    "max_abs_v": 3.553335403694291e-11,
+    "peak_dbc": -224.5367408692071,
+    "rms_dbc": -231.10641761191627,
+    "line_dbc": -242.2714791870729,
+    "iterations": 1306313,
+    "iterations_libm": 1306313,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.553335403694291e-11,
+    "peak_dbc": -224.5367408692071,
+    "rms_dbc": -231.10641761191627,
+    "line_dbc": -242.2714791870729,
+    "iterations": 1306313,
+    "iterations_libm": 1306313,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 1000.0,
+   "fund_v": 5.991889796722842,
+   "fast": {
+    "max_abs_v": 1.8891554987021664e-11,
+    "peak_dbc": -230.02592220970382,
+    "rms_dbc": -235.86023986563615,
+    "line_dbc": -244.46347881655,
+    "iterations": 1343883,
+    "iterations_libm": 1343883,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.8891554987021664e-11,
+    "peak_dbc": -230.02592220970382,
+    "rms_dbc": -235.86023986563615,
+    "line_dbc": -244.46347881655,
+    "iterations": 1343883,
+    "iterations_libm": 1343883,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 15000.0,
+   "fund_v": 5.990269605925421,
+   "fast": {
+    "max_abs_v": 6.45528075438051e-12,
+    "peak_dbc": -239.35062467637886,
+    "rms_dbc": -242.4996582618941,
+    "line_dbc": -247.18339294335254,
+    "iterations": 2005168,
+    "iterations_libm": 2005168,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 6.45528075438051e-12,
+    "peak_dbc": -239.35062467637886,
+    "rms_dbc": -242.4996582618941,
+    "line_dbc": -247.18339294335254,
+    "iterations": 2005168,
+    "iterations_libm": 2005168,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 100.0,
+   "fund_v": 23.73963636795408,
+   "fast": {
+    "max_abs_v": 2.956213052129897e-11,
+    "peak_dbc": -238.09476664443667,
+    "rms_dbc": -244.23124928805336,
+    "line_dbc": -255.95085780991093,
+    "iterations": 1335840,
+    "iterations_libm": 1335840,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.956213052129897e-11,
+    "peak_dbc": -238.09476664443667,
+    "rms_dbc": -244.23124928805336,
+    "line_dbc": -255.95085780991093,
+    "iterations": 1335840,
+    "iterations_libm": 1335840,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 1000.0,
+   "fund_v": 23.744539065552686,
+   "fast": {
+    "max_abs_v": 1.0683010032153106e-11,
+    "peak_dbc": -246.93740214292376,
+    "rms_dbc": -254.97154966657837,
+    "line_dbc": -259.96357022169656,
+    "iterations": 1405159,
+    "iterations_libm": 1405159,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.0683010032153106e-11,
+    "peak_dbc": -246.93740214292376,
+    "rms_dbc": -254.97154966657837,
+    "line_dbc": -259.96357022169656,
+    "iterations": 1405159,
+    "iterations_libm": 1405159,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 15000.0,
+   "fund_v": 23.7377136071671,
+   "fast": {
+    "max_abs_v": 9.799938638366257e-12,
+    "peak_dbc": -247.6843105885306,
+    "rms_dbc": -252.05918065170584,
+    "line_dbc": -256.05158799323596,
+    "iterations": 2550965,
+    "iterations_libm": 2550965,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 9.799938638366257e-12,
+    "peak_dbc": -247.6843105885306,
+    "rms_dbc": -252.05918065170584,
+    "line_dbc": -256.05158799323596,
+    "iterations": 2550965,
+    "iterations_libm": 2550965,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 100.0,
+   "fund_v": 74.99079541205394,
+   "fast": {
+    "max_abs_v": 1.6157741811184678e-11,
+    "peak_dbc": -253.33254591905518,
+    "rms_dbc": -258.2958187602188,
+    "line_dbc": -262.1312453866208,
+    "iterations": 1343899,
+    "iterations_libm": 1343899,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.6157741811184678e-11,
+    "peak_dbc": -253.33254591905518,
+    "rms_dbc": -258.2958187602188,
+    "line_dbc": -262.1312453866208,
+    "iterations": 1343899,
+    "iterations_libm": 1343899,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 1000.0,
+   "fund_v": 75.00109733367108,
+   "fast": {
+    "max_abs_v": 2.0897061858704546e-11,
+    "peak_dbc": -251.09964778516076,
+    "rms_dbc": -256.9005207981277,
+    "line_dbc": -260.5267982160844,
+    "iterations": 1807512,
+    "iterations_libm": 1807512,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.0897061858704546e-11,
+    "peak_dbc": -251.09964778516076,
+    "rms_dbc": -256.9005207981277,
+    "line_dbc": -260.5267982160844,
+    "iterations": 1807512,
+    "iterations_libm": 1807512,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.6,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 15000.0,
+   "fund_v": 74.94147595084257,
+   "fast": {
+    "max_abs_v": 1.0192735544478637e-11,
+    "peak_dbc": -257.3286297154436,
+    "rms_dbc": -260.1417885802203,
+    "line_dbc": -260.9946368703211,
+    "iterations": 2761050,
+    "iterations_libm": 2761050,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.0192735544478637e-11,
+    "peak_dbc": -257.3286297154436,
+    "rms_dbc": -260.1417885802203,
+    "line_dbc": -260.9946368703211,
+    "iterations": 2761050,
+    "iterations_libm": 2761050,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 100.0,
+   "fund_v": 0.1018839080045297,
+   "fast": {
+    "max_abs_v": 9.989786775577159e-13,
+    "peak_dbc": -220.1709875278254,
+    "rms_dbc": -225.4644596326586,
+    "line_dbc": -232.55458899496873,
+    "iterations": 1344019,
+    "iterations_libm": 1344019,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 9.989786775577159e-13,
+    "peak_dbc": -220.1709875278254,
+    "rms_dbc": -225.4644596326586,
+    "line_dbc": -232.55458899496873,
+    "iterations": 1344019,
+    "iterations_libm": 1344019,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 1000.0,
+   "fund_v": 0.10190522661003687,
+   "fast": {
+    "max_abs_v": 7.882999808472846e-13,
+    "peak_dbc": -222.23009886131578,
+    "rms_dbc": -225.7227237398321,
+    "line_dbc": -232.55090067399064,
+    "iterations": 2309635,
+    "iterations_libm": 2309635,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 7.882999808472846e-13,
+    "peak_dbc": -222.23009886131578,
+    "rms_dbc": -225.7227237398321,
+    "line_dbc": -232.55090067399064,
+    "iterations": 2309635,
+    "iterations_libm": 2309635,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 15000.0,
+   "fund_v": 0.10194030212472135,
+   "fast": {
+    "max_abs_v": 5.383193890651228e-14,
+    "peak_dbc": -245.54611787948284,
+    "rms_dbc": -250.6153638635456,
+    "line_dbc": -251.92048163176653,
+    "iterations": 2682367,
+    "iterations_libm": 2682367,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 5.383193890651228e-14,
+    "peak_dbc": -245.54611787948284,
+    "rms_dbc": -250.6153638635456,
+    "line_dbc": -251.92048163176653,
+    "iterations": 2682367,
+    "iterations_libm": 2682367,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 100.0,
+   "fund_v": 1.0187955059507254,
+   "fast": {
+    "max_abs_v": 1.5971668432257502e-12,
+    "peak_dbc": -236.0947346957684,
+    "rms_dbc": -243.81241621575637,
+    "line_dbc": -256.7221287356723,
+    "iterations": 1344191,
+    "iterations_libm": 1344191,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.5971668432257502e-12,
+    "peak_dbc": -236.0947346957684,
+    "rms_dbc": -243.81241621575637,
+    "line_dbc": -256.7221287356723,
+    "iterations": 1344191,
+    "iterations_libm": 1344191,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 1000.0,
+   "fund_v": 1.0190086657155877,
+   "fast": {
+    "max_abs_v": 6.041833700010102e-13,
+    "peak_dbc": -244.54018220075505,
+    "rms_dbc": -252.67841337901896,
+    "line_dbc": -259.30460629800325,
+    "iterations": 2649094,
+    "iterations_libm": 2649094,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 6.041833700010102e-13,
+    "peak_dbc": -244.54018220075505,
+    "rms_dbc": -252.67841337901896,
+    "line_dbc": -259.30460629800325,
+    "iterations": 2649094,
+    "iterations_libm": 2649094,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 15000.0,
+   "fund_v": 1.019358105551211,
+   "fast": {
+    "max_abs_v": 2.5079938126282286e-13,
+    "peak_dbc": -252.18000639770196,
+    "rms_dbc": -254.0750708761685,
+    "line_dbc": -259.20551253279007,
+    "iterations": 3459079,
+    "iterations_libm": 3459079,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.5079938126282286e-13,
+    "peak_dbc": -252.18000639770196,
+    "rms_dbc": -254.0750708761685,
+    "line_dbc": -259.20551253279007,
+    "iterations": 3459079,
+    "iterations_libm": 3459079,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 100.0,
+   "fund_v": 4.072509741831099,
+   "fast": {
+    "max_abs_v": 1.779909553079051e-12,
+    "peak_dbc": -247.18928395718794,
+    "rms_dbc": -259.10394247820165,
+    "line_dbc": -274.0880747145423,
+    "iterations": 1345408,
+    "iterations_libm": 1345408,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.779909553079051e-12,
+    "peak_dbc": -247.18928395718794,
+    "rms_dbc": -259.10394247820165,
+    "line_dbc": -274.0880747145423,
+    "iterations": 1345408,
+    "iterations_libm": 1345408,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 1000.0,
+   "fund_v": 4.073360758826216,
+   "fast": {
+    "max_abs_v": 4.0589753780295723e-13,
+    "peak_dbc": -260.03072916766433,
+    "rms_dbc": -269.12414577410493,
+    "line_dbc": -276.6160719700155,
+    "iterations": 2677148,
+    "iterations_libm": 2677148,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 4.0589753780295723e-13,
+    "peak_dbc": -260.03072916766433,
+    "rms_dbc": -269.12414577410493,
+    "line_dbc": -276.6160719700155,
+    "iterations": 2677148,
+    "iterations_libm": 2677148,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 15000.0,
+   "fund_v": 4.074676508453728,
+   "fast": {
+    "max_abs_v": 2.278177646530821e-13,
+    "peak_dbc": -265.050110984789,
+    "rms_dbc": -269.232248435751,
+    "line_dbc": -274.2084815472962,
+    "iterations": 3899930,
+    "iterations_libm": 3899930,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.278177646530821e-13,
+    "peak_dbc": -265.050110984789,
+    "rms_dbc": -269.232248435751,
+    "line_dbc": -274.2084815472962,
+    "iterations": 3899930,
+    "iterations_libm": 3899930,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 100.0,
+   "fund_v": 16.078230879090224,
+   "fast": {
+    "max_abs_v": 5.258016244624741e-13,
+    "peak_dbc": -269.7083267439938,
+    "rms_dbc": -282.3940420685522,
+    "line_dbc": -298.2312582996102,
+    "iterations": 2476850,
+    "iterations_libm": 2476850,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 5.258016244624741e-13,
+    "peak_dbc": -269.7083267439938,
+    "rms_dbc": -282.3940420685522,
+    "line_dbc": -298.2312582996102,
+    "iterations": 2476850,
+    "iterations_libm": 2476850,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 1000.0,
+   "fund_v": 16.081483792162494,
+   "fast": {
+    "max_abs_v": 3.0875302314825603e-13,
+    "peak_dbc": -274.33429797376436,
+    "rms_dbc": -280.0838477526815,
+    "line_dbc": -286.42080780400585,
+    "iterations": 2684201,
+    "iterations_libm": 2684201,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.0875302314825603e-13,
+    "peak_dbc": -274.33429797376436,
+    "rms_dbc": -280.0838477526815,
+    "line_dbc": -286.42080780400585,
+    "iterations": 2684201,
+    "iterations_libm": 2684201,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 15000.0,
+   "fund_v": 16.078101003016513,
+   "fast": {
+    "max_abs_v": 2.419175970658216e-13,
+    "peak_dbc": -276.4513458505596,
+    "rms_dbc": -281.8577078795718,
+    "line_dbc": -287.63858498136307,
+    "iterations": 4004978,
+    "iterations_libm": 4004978,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.419175970658216e-13,
+    "peak_dbc": -276.4513458505596,
+    "rms_dbc": -281.8577078795718,
+    "line_dbc": -287.63858498136307,
+    "iterations": 4004978,
+    "iterations_libm": 4004978,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 100.0,
+   "fund_v": 0.10188390805765406,
+   "fast": {
+    "max_abs_v": 1.0051265375565777e-12,
+    "peak_dbc": -220.11769711570145,
+    "rms_dbc": -225.46253031949266,
+    "line_dbc": -232.5533344573694,
+    "iterations": 672072,
+    "iterations_libm": 672072,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.0051265375565777e-12,
+    "peak_dbc": -220.11769711570145,
+    "rms_dbc": -225.46253031949266,
+    "line_dbc": -232.5533344573694,
+    "iterations": 672072,
+    "iterations_libm": 672072,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 1000.0,
+   "fund_v": 0.10190522662161394,
+   "fast": {
+    "max_abs_v": 7.983613770079501e-13,
+    "peak_dbc": -222.11993881127964,
+    "rms_dbc": -225.72049750081175,
+    "line_dbc": -232.5537476085793,
+    "iterations": 1315799,
+    "iterations_libm": 1315799,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 7.983613770079501e-13,
+    "peak_dbc": -222.11993881127964,
+    "rms_dbc": -225.72049750081175,
+    "line_dbc": -232.5537476085793,
+    "iterations": 1315799,
+    "iterations_libm": 1315799,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 15000.0,
+   "fund_v": 0.10194056534136635,
+   "fast": {
+    "max_abs_v": 1.1947300787573667e-13,
+    "peak_dbc": -238.6215448010787,
+    "rms_dbc": -241.51285151878685,
+    "line_dbc": -243.13366523220412,
+    "iterations": 1606224,
+    "iterations_libm": 1606224,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.1947300787573667e-13,
+    "peak_dbc": -238.6215448010787,
+    "rms_dbc": -241.51285151878685,
+    "line_dbc": -243.13366523220412,
+    "iterations": 1606224,
+    "iterations_libm": 1606224,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 100.0,
+   "fund_v": 1.0187955064912655,
+   "fast": {
+    "max_abs_v": 1.6097123634040145e-12,
+    "peak_dbc": -236.02677482250132,
+    "rms_dbc": -243.81124626175233,
+    "line_dbc": -256.72050928186025,
+    "iterations": 1030951,
+    "iterations_libm": 1030951,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.6097123634040145e-12,
+    "peak_dbc": -236.02677482250132,
+    "rms_dbc": -243.81124626175233,
+    "line_dbc": -256.72050928186025,
+    "iterations": 1030951,
+    "iterations_libm": 1030951,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 1000.0,
+   "fund_v": 1.019008665821156,
+   "fast": {
+    "max_abs_v": 6.021849685566849e-13,
+    "peak_dbc": -244.56895933334954,
+    "rms_dbc": -252.65056431467042,
+    "line_dbc": -258.84686874581587,
+    "iterations": 1340340,
+    "iterations_libm": 1340340,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 6.021849685566849e-13,
+    "peak_dbc": -244.56895933334954,
+    "rms_dbc": -252.65056431467042,
+    "line_dbc": -258.84686874581587,
+    "iterations": 1340340,
+    "iterations_libm": 1340340,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 15000.0,
+   "fund_v": 1.0193607250185082,
+   "fast": {
+    "max_abs_v": 3.176348073452573e-13,
+    "peak_dbc": -250.12799618029993,
+    "rms_dbc": -253.09115038181758,
+    "line_dbc": -257.84224701944106,
+    "iterations": 1984115,
+    "iterations_libm": 1984115,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.176348073452573e-13,
+    "peak_dbc": -250.12799618029993,
+    "rms_dbc": -253.09115038181758,
+    "line_dbc": -257.84224701944106,
+    "iterations": 1984115,
+    "iterations_libm": 1984115,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 100.0,
+   "fund_v": 4.072509744115976,
+   "fast": {
+    "max_abs_v": 1.787903158856352e-12,
+    "peak_dbc": -247.1503628081922,
+    "rms_dbc": -259.09749941682395,
+    "line_dbc": -274.072680141319,
+    "iterations": 1272781,
+    "iterations_libm": 1272781,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.787903158856352e-12,
+    "peak_dbc": -247.1503628081922,
+    "rms_dbc": -259.09749941682395,
+    "line_dbc": -274.072680141319,
+    "iterations": 1272781,
+    "iterations_libm": 1272781,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 1000.0,
+   "fund_v": 4.073360759098429,
+   "fast": {
+    "max_abs_v": 5.865724572728936e-13,
+    "peak_dbc": -256.8326241723617,
+    "rms_dbc": -263.15333197165575,
+    "line_dbc": -270.69819277862325,
+    "iterations": 1343869,
+    "iterations_libm": 1343869,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 5.865724572728936e-13,
+    "peak_dbc": -256.8326241723617,
+    "rms_dbc": -263.15333197165575,
+    "line_dbc": -270.69819277862325,
+    "iterations": 1343869,
+    "iterations_libm": 1343869,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 15000.0,
+   "fund_v": 4.074686193658489,
+   "fast": {
+    "max_abs_v": 3.632649736573512e-13,
+    "peak_dbc": -260.99741285929167,
+    "rms_dbc": -267.58207328315086,
+    "line_dbc": -273.8209354941697,
+    "iterations": 2005163,
+    "iterations_libm": 2005163,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.632649736573512e-13,
+    "peak_dbc": -260.99741285929167,
+    "rms_dbc": -267.58207328315086,
+    "line_dbc": -273.8209354941697,
+    "iterations": 2005163,
+    "iterations_libm": 2005163,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 100.0,
+   "fund_v": 16.07823089030481,
+   "fast": {
+    "max_abs_v": 5.329070518200751e-13,
+    "peak_dbc": -269.5917358768377,
+    "rms_dbc": -280.9485452249143,
+    "line_dbc": -297.05207332293105,
+    "iterations": 1327767,
+    "iterations_libm": 1327767,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 5.329070518200751e-13,
+    "peak_dbc": -269.5917358768377,
+    "rms_dbc": -280.9485452249143,
+    "line_dbc": -297.05207332293105,
+    "iterations": 1327767,
+    "iterations_libm": 1327767,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 1000.0,
+   "fund_v": 16.081483788952866,
+   "fast": {
+    "max_abs_v": 4.796163466380676e-13,
+    "peak_dbc": -270.50864281301574,
+    "rms_dbc": -277.70952012447384,
+    "line_dbc": -285.82383026500924,
+    "iterations": 1343955,
+    "iterations_libm": 1343955,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 4.796163466380676e-13,
+    "peak_dbc": -270.50864281301574,
+    "rms_dbc": -277.70952012447384,
+    "line_dbc": -285.82383026500924,
+    "iterations": 1343955,
+    "iterations_libm": 1343955,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.1,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 15000.0,
+   "fund_v": 16.078059683950762,
+   "fast": {
+    "max_abs_v": 2.4513724383723456e-13,
+    "peak_dbc": -276.3364867524699,
+    "rms_dbc": -278.81257875512165,
+    "line_dbc": -285.2267806241799,
+    "iterations": 2577199,
+    "iterations_libm": 2577199,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.4513724383723456e-13,
+    "peak_dbc": -276.3364867524699,
+    "rms_dbc": -278.81257875512165,
+    "line_dbc": -285.2267806241799,
+    "iterations": 2577199,
+    "iterations_libm": 2577199,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 100.0,
+   "fund_v": 0.2973787039966558,
+   "fast": {
+    "max_abs_v": 4.632280670158195e-12,
+    "peak_dbc": -216.15029997967207,
+    "rms_dbc": -226.74965763103881,
+    "line_dbc": -234.64541960239683,
+    "iterations": 1344071,
+    "iterations_libm": 1344071,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 4.632280670158195e-12,
+    "peak_dbc": -216.15029997967207,
+    "rms_dbc": -226.74965763103881,
+    "line_dbc": -234.64541960239683,
+    "iterations": 1344071,
+    "iterations_libm": 1344071,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 1000.0,
+   "fund_v": 0.29744264298017187,
+   "fast": {
+    "max_abs_v": 2.054176273524888e-12,
+    "peak_dbc": -223.21531045583927,
+    "rms_dbc": -227.59957765428268,
+    "line_dbc": -234.65140139675287,
+    "iterations": 2556320,
+    "iterations_libm": 2556320,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.054176273524888e-12,
+    "peak_dbc": -223.21531045583927,
+    "rms_dbc": -227.59957765428268,
+    "line_dbc": -234.65140139675287,
+    "iterations": 2556320,
+    "iterations_libm": 2556320,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 15000.0,
+   "fund_v": 0.2973874804645367,
+   "fast": {
+    "max_abs_v": 1.6159296123419153e-13,
+    "peak_dbc": -245.29800483773056,
+    "rms_dbc": -247.22005578096292,
+    "line_dbc": -247.41577884488154,
+    "iterations": 2687650,
+    "iterations_libm": 2687650,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.6159296123419153e-13,
+    "peak_dbc": -245.29800483773056,
+    "rms_dbc": -247.22005578096292,
+    "line_dbc": -247.41577884488154,
+    "iterations": 2687650,
+    "iterations_libm": 2687650,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 100.0,
+   "fund_v": 2.9736170952548338,
+   "fast": {
+    "max_abs_v": 2.9398705692074145e-12,
+    "peak_dbc": -240.09913668533926,
+    "rms_dbc": -246.5267705313691,
+    "line_dbc": -258.4806088916125,
+    "iterations": 1344312,
+    "iterations_libm": 1344312,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.9398705692074145e-12,
+    "peak_dbc": -240.09913668533926,
+    "rms_dbc": -246.5267705313691,
+    "line_dbc": -258.4806088916125,
+    "iterations": 1344312,
+    "iterations_libm": 1344312,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 1000.0,
+   "fund_v": 2.9742563832216806,
+   "fast": {
+    "max_abs_v": 9.388045896230324e-13,
+    "peak_dbc": -250.01606396429008,
+    "rms_dbc": -260.15144964307655,
+    "line_dbc": -267.1152911941333,
+    "iterations": 2677126,
+    "iterations_libm": 2677126,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 9.388045896230324e-13,
+    "peak_dbc": -250.01606396429008,
+    "rms_dbc": -260.15144964307655,
+    "line_dbc": -267.1152911941333,
+    "iterations": 2677126,
+    "iterations_libm": 2677126,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 15000.0,
+   "fund_v": 2.97370125489519,
+   "fast": {
+    "max_abs_v": 4.1255887595070817e-13,
+    "peak_dbc": -257.15622801979225,
+    "rms_dbc": -260.86369279165837,
+    "line_dbc": -265.42370002422734,
+    "iterations": 3800205,
+    "iterations_libm": 3800205,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 4.1255887595070817e-13,
+    "peak_dbc": -257.15622801979225,
+    "rms_dbc": -260.86369279165837,
+    "line_dbc": -265.42370002422734,
+    "iterations": 3800205,
+    "iterations_libm": 3800205,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 100.0,
+   "fund_v": 11.884013380007824,
+   "fast": {
+    "max_abs_v": 2.0943247136528953e-12,
+    "peak_dbc": -255.07838229073272,
+    "rms_dbc": -264.8098375620123,
+    "line_dbc": -279.5482612532604,
+    "iterations": 2354033,
+    "iterations_libm": 2354033,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.0943247136528953e-12,
+    "peak_dbc": -255.07838229073272,
+    "rms_dbc": -264.8098375620123,
+    "line_dbc": -279.5482612532604,
+    "iterations": 2354033,
+    "iterations_libm": 2354033,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 1000.0,
+   "fund_v": 11.886564211882613,
+   "fast": {
+    "max_abs_v": 1.170619157164765e-12,
+    "peak_dbc": -260.1328142745758,
+    "rms_dbc": -270.88317555165827,
+    "line_dbc": -279.2881926913524,
+    "iterations": 2684174,
+    "iterations_libm": 2684174,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.170619157164765e-12,
+    "peak_dbc": -260.1328142745758,
+    "rms_dbc": -270.88317555165827,
+    "line_dbc": -279.2881926913524,
+    "iterations": 2684174,
+    "iterations_libm": 2684174,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 15000.0,
+   "fund_v": 11.884124269397972,
+   "fast": {
+    "max_abs_v": 5.044853423896711e-13,
+    "peak_dbc": -267.4423726391043,
+    "rms_dbc": -270.54993254284597,
+    "line_dbc": -276.24340576391864,
+    "iterations": 3978705,
+    "iterations_libm": 3978705,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 5.044853423896711e-13,
+    "peak_dbc": -267.4423726391043,
+    "rms_dbc": -270.54993254284597,
+    "line_dbc": -276.24340576391864,
+    "iterations": 3978705,
+    "iterations_libm": 3978705,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 100.0,
+   "fund_v": 46.65499901860354,
+   "fast": {
+    "max_abs_v": 2.1671553440683056e-12,
+    "peak_dbc": -266.66016282978,
+    "rms_dbc": -281.65567540915663,
+    "line_dbc": -285.2816630799145,
+    "iterations": 2616201,
+    "iterations_libm": 2616201,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.1671553440683056e-12,
+    "peak_dbc": -266.66016282978,
+    "rms_dbc": -281.65567540915663,
+    "line_dbc": -285.2816630799145,
+    "iterations": 2616201,
+    "iterations_libm": 2616201,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 1000.0,
+   "fund_v": 46.66456348481981,
+   "fast": {
+    "max_abs_v": 1.1866063687193673e-12,
+    "peak_dbc": -271.893610654282,
+    "rms_dbc": -279.0252193615074,
+    "line_dbc": -282.52942229547466,
+    "iterations": 2687747,
+    "iterations_libm": 2687747,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.1866063687193673e-12,
+    "peak_dbc": -271.893610654282,
+    "rms_dbc": -279.0252193615074,
+    "line_dbc": -282.52942229547466,
+    "iterations": 2687747,
+    "iterations_libm": 2687747,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 15000.0,
+   "fund_v": 46.629757010456174,
+   "fast": {
+    "max_abs_v": 7.531752999057062e-13,
+    "peak_dbc": -275.8353416655336,
+    "rms_dbc": -280.0071888302874,
+    "line_dbc": -283.8627260769694,
+    "iterations": 4288415,
+    "iterations_libm": 4288415,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 7.531752999057062e-13,
+    "peak_dbc": -275.8353416655336,
+    "rms_dbc": -280.0071888302874,
+    "line_dbc": -283.8627260769694,
+    "iterations": 4288415,
+    "iterations_libm": 4288415,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 100.0,
+   "fund_v": 0.2973787041010919,
+   "fast": {
+    "max_abs_v": 4.649974849613159e-12,
+    "peak_dbc": -216.1171852131902,
+    "rms_dbc": -226.7484185166931,
+    "line_dbc": -234.64430721596096,
+    "iterations": 672125,
+    "iterations_libm": 672125,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 4.649974849613159e-12,
+    "peak_dbc": -216.1171852131902,
+    "rms_dbc": -226.7484185166931,
+    "line_dbc": -234.64430721596096,
+    "iterations": 672125,
+    "iterations_libm": 672125,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 1000.0,
+   "fund_v": 0.29744264299372497,
+   "fast": {
+    "max_abs_v": 2.076533389683277e-12,
+    "peak_dbc": -223.12128625425817,
+    "rms_dbc": -227.59494568726566,
+    "line_dbc": -234.6456855799533,
+    "iterations": 1331562,
+    "iterations_libm": 1331562,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.076533389683277e-12,
+    "peak_dbc": -223.12128625425817,
+    "rms_dbc": -227.59494568726566,
+    "line_dbc": -234.6456855799533,
+    "iterations": 1331562,
+    "iterations_libm": 1331562,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 15000.0,
+   "fund_v": 0.2973870475373473,
+   "fast": {
+    "max_abs_v": 3.9612757518625585e-13,
+    "peak_dbc": -237.5097394744957,
+    "rms_dbc": -241.11604908078874,
+    "line_dbc": -244.91252386616162,
+    "iterations": 1837140,
+    "iterations_libm": 1837140,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.9612757518625585e-13,
+    "peak_dbc": -237.5097394744957,
+    "rms_dbc": -241.11604908078874,
+    "line_dbc": -244.91252386616162,
+    "iterations": 1837140,
+    "iterations_libm": 1837140,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 100.0,
+   "fund_v": 2.973617096327416,
+   "fast": {
+    "max_abs_v": 2.9669600110082683e-12,
+    "peak_dbc": -240.01946704219225,
+    "rms_dbc": -246.52474024645494,
+    "line_dbc": -258.4816958403457,
+    "iterations": 1236805,
+    "iterations_libm": 1236805,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.9669600110082683e-12,
+    "peak_dbc": -240.01946704219225,
+    "rms_dbc": -246.52474024645494,
+    "line_dbc": -258.4816958403457,
+    "iterations": 1236805,
+    "iterations_libm": 1236805,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 1000.0,
+   "fund_v": 2.9742563833263795,
+   "fast": {
+    "max_abs_v": 9.50794998288984e-13,
+    "peak_dbc": -249.90583027813523,
+    "rms_dbc": -259.358399246754,
+    "line_dbc": -266.990466488684,
+    "iterations": 1340356,
+    "iterations_libm": 1340356,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 9.50794998288984e-13,
+    "peak_dbc": -249.90583027813523,
+    "rms_dbc": -259.358399246754,
+    "line_dbc": -266.990466488684,
+    "iterations": 1340356,
+    "iterations_libm": 1340356,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 15000.0,
+   "fund_v": 2.9736968943878166,
+   "fast": {
+    "max_abs_v": 7.971401316808624e-13,
+    "peak_dbc": -251.4352405047547,
+    "rms_dbc": -256.84627608134525,
+    "line_dbc": -260.0466209430433,
+    "iterations": 1999888,
+    "iterations_libm": 1999888,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 7.971401316808624e-13,
+    "peak_dbc": -251.4352405047547,
+    "rms_dbc": -256.84627608134525,
+    "line_dbc": -260.0466209430433,
+    "iterations": 1999888,
+    "iterations_libm": 1999888,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 100.0,
+   "fund_v": 11.88401338467083,
+   "fast": {
+    "max_abs_v": 2.113864638886298e-12,
+    "peak_dbc": -254.99771916819202,
+    "rms_dbc": -264.80480634615253,
+    "line_dbc": -279.5432752223028,
+    "iterations": 1317648,
+    "iterations_libm": 1317648,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.113864638886298e-12,
+    "peak_dbc": -254.99771916819202,
+    "rms_dbc": -264.80480634615253,
+    "line_dbc": -279.5432752223028,
+    "iterations": 1317648,
+    "iterations_libm": 1317648,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 1000.0,
+   "fund_v": 11.88656421185091,
+   "fast": {
+    "max_abs_v": 1.1457501614131615e-12,
+    "peak_dbc": -260.3193282737275,
+    "rms_dbc": -267.002033201964,
+    "line_dbc": -275.6993199444386,
+    "iterations": 1343899,
+    "iterations_libm": 1343899,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.1457501614131615e-12,
+    "peak_dbc": -260.3193282737275,
+    "rms_dbc": -267.002033201964,
+    "line_dbc": -275.6993199444386,
+    "iterations": 1343899,
+    "iterations_libm": 1343899,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 15000.0,
+   "fund_v": 11.884104877043603,
+   "fast": {
+    "max_abs_v": 6.963318810448982e-13,
+    "peak_dbc": -264.6430039261063,
+    "rms_dbc": -268.421687327454,
+    "line_dbc": -273.13779757280093,
+    "iterations": 2398751,
+    "iterations_libm": 2398751,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 6.963318810448982e-13,
+    "peak_dbc": -264.6430039261063,
+    "rms_dbc": -268.421687327454,
+    "line_dbc": -273.13779757280093,
+    "iterations": 2398751,
+    "iterations_libm": 2398751,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 100.0,
+   "fund_v": 46.65499904516325,
+   "fast": {
+    "max_abs_v": 2.2168933355715126e-12,
+    "peak_dbc": -266.4630677412916,
+    "rms_dbc": -279.0293332409304,
+    "line_dbc": -285.23391743514753,
+    "iterations": 1338089,
+    "iterations_libm": 1338089,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.2168933355715126e-12,
+    "peak_dbc": -266.4630677412916,
+    "rms_dbc": -279.0293332409304,
+    "line_dbc": -285.23391743514753,
+    "iterations": 1338089,
+    "iterations_libm": 1338089,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 1000.0,
+   "fund_v": 46.66456347370227,
+   "fast": {
+    "max_abs_v": 1.4921397450962104e-12,
+    "peak_dbc": -269.9035541804859,
+    "rms_dbc": -276.7147111671819,
+    "line_dbc": -281.2820414252788,
+    "iterations": 1711282,
+    "iterations_libm": 1711282,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.4921397450962104e-12,
+    "peak_dbc": -269.9035541804859,
+    "rms_dbc": -276.7147111671819,
+    "line_dbc": -281.2820414252788,
+    "iterations": 1711282,
+    "iterations_libm": 1711282,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.25,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 15000.0,
+   "fund_v": 46.62950902933625,
+   "fast": {
+    "max_abs_v": 1.1652900866465643e-12,
+    "peak_dbc": -272.0445358174326,
+    "rms_dbc": -277.0732706022569,
+    "line_dbc": -280.7706521054513,
+    "iterations": 2755639,
+    "iterations_libm": 2755639,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.1652900866465643e-12,
+    "peak_dbc": -272.0445358174326,
+    "rms_dbc": -277.0732706022569,
+    "line_dbc": -280.7706521054513,
+    "iterations": 2755639,
+    "iterations_libm": 2755639,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 100.0,
+   "fund_v": 0.7568153666134645,
+   "fast": {
+    "max_abs_v": 3.993860797635307e-12,
+    "peak_dbc": -225.55194035342544,
+    "rms_dbc": -231.03855069466678,
+    "line_dbc": -241.17262316428122,
+    "iterations": 1344155,
+    "iterations_libm": 1344155,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.993860797635307e-12,
+    "peak_dbc": -225.55194035342544,
+    "rms_dbc": -231.03855069466678,
+    "line_dbc": -241.17262316428122,
+    "iterations": 1344155,
+    "iterations_libm": 1344155,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 1000.0,
+   "fund_v": 0.756988137321604,
+   "fast": {
+    "max_abs_v": 2.6393331964413846e-12,
+    "peak_dbc": -229.15189707201324,
+    "rms_dbc": -233.53465791315867,
+    "line_dbc": -241.17483112411497,
+    "iterations": 2635086,
+    "iterations_libm": 2635086,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.6393331964413846e-12,
+    "peak_dbc": -229.15189707201324,
+    "rms_dbc": -233.53465791315867,
+    "line_dbc": -241.17483112411497,
+    "iterations": 2635086,
+    "iterations_libm": 2635086,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 15000.0,
+   "fund_v": 0.7563571977032754,
+   "fast": {
+    "max_abs_v": 5.789813073420191e-13,
+    "peak_dbc": -242.32124803094922,
+    "rms_dbc": -244.01382213006752,
+    "line_dbc": -244.34184083336692,
+    "iterations": 2687688,
+    "iterations_libm": 2687688,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 5.789813073420191e-13,
+    "peak_dbc": -242.32124803094922,
+    "rms_dbc": -244.01382213006752,
+    "line_dbc": -244.34184083336692,
+    "iterations": 2687688,
+    "iterations_libm": 2687688,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 100.0,
+   "fund_v": 7.569593670955724,
+   "fast": {
+    "max_abs_v": 3.3137936839011672e-12,
+    "peak_dbc": -247.17494203486234,
+    "rms_dbc": -253.77527888159455,
+    "line_dbc": -266.17230603913134,
+    "iterations": 2118267,
+    "iterations_libm": 2118267,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.3137936839011672e-12,
+    "peak_dbc": -247.17494203486234,
+    "rms_dbc": -253.77527888159455,
+    "line_dbc": -266.17230603913134,
+    "iterations": 2118267,
+    "iterations_libm": 2118267,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 1000.0,
+   "fund_v": 7.571321848327618,
+   "fast": {
+    "max_abs_v": 1.3571366253017914e-12,
+    "peak_dbc": -254.93096273806427,
+    "rms_dbc": -262.7118718425296,
+    "line_dbc": -265.6566994003891,
+    "iterations": 2684164,
+    "iterations_libm": 2684164,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.3571366253017914e-12,
+    "peak_dbc": -254.93096273806427,
+    "rms_dbc": -262.7118718425296,
+    "line_dbc": -265.6566994003891,
+    "iterations": 2684164,
+    "iterations_libm": 2684164,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 15000.0,
+   "fund_v": 7.564996869863622,
+   "fast": {
+    "max_abs_v": 7.265299473147024e-13,
+    "peak_dbc": -260.3511046438162,
+    "rms_dbc": -263.81331442416473,
+    "line_dbc": -268.3010693945682,
+    "iterations": 3926192,
+    "iterations_libm": 3926192,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 7.265299473147024e-13,
+    "peak_dbc": -260.3511046438162,
+    "rms_dbc": -263.81331442416473,
+    "line_dbc": -268.3010693945682,
+    "iterations": 3926192,
+    "iterations_libm": 3926192,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 100.0,
+   "fund_v": 30.36952657659397,
+   "fast": {
+    "max_abs_v": 4.447997525858227e-12,
+    "peak_dbc": -256.68546969706404,
+    "rms_dbc": -267.76485645128685,
+    "line_dbc": -271.02541717803166,
+    "iterations": 2556576,
+    "iterations_libm": 2556576,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 4.447997525858227e-12,
+    "peak_dbc": -256.68546969706404,
+    "rms_dbc": -267.76485645128685,
+    "line_dbc": -271.02541717803166,
+    "iterations": 2556576,
+    "iterations_libm": 2556576,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 1000.0,
+   "fund_v": 30.376470578811258,
+   "fast": {
+    "max_abs_v": 1.552535877635819e-12,
+    "peak_dbc": -265.82991333964094,
+    "rms_dbc": -269.5116182312713,
+    "line_dbc": -270.6052691873434,
+    "iterations": 2685973,
+    "iterations_libm": 2685973,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.552535877635819e-12,
+    "peak_dbc": -265.82991333964094,
+    "rms_dbc": -269.5116182312713,
+    "line_dbc": -270.6052691873434,
+    "iterations": 2685973,
+    "iterations_libm": 2685973,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 15000.0,
+   "fund_v": 30.350199798330767,
+   "fast": {
+    "max_abs_v": 1.028510610012745e-12,
+    "peak_dbc": -269.3990555646268,
+    "rms_dbc": -271.5182035782275,
+    "line_dbc": -272.280175929066,
+    "iterations": 4005000,
+    "iterations_libm": 4005000,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.028510610012745e-12,
+    "peak_dbc": -269.3990555646268,
+    "rms_dbc": -271.5182035782275,
+    "line_dbc": -272.280175929066,
+    "iterations": 4005000,
+    "iterations_libm": 4005000,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 100.0,
+   "fund_v": 89.83351738170118,
+   "fast": {
+    "max_abs_v": 4.533262654149439e-12,
+    "peak_dbc": -265.94055044120404,
+    "rms_dbc": -275.18986659431545,
+    "line_dbc": -278.21928975260573,
+    "iterations": 2657030,
+    "iterations_libm": 2657030,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 4.533262654149439e-12,
+    "peak_dbc": -265.94055044120404,
+    "rms_dbc": -275.18986659431545,
+    "line_dbc": -278.21928975260573,
+    "iterations": 2657030,
+    "iterations_libm": 2657030,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 1000.0,
+   "fund_v": 89.8551401507791,
+   "fast": {
+    "max_abs_v": 2.3163693185779266e-12,
+    "peak_dbc": -271.7747024410029,
+    "rms_dbc": -275.5008807662487,
+    "line_dbc": -277.3018639496586,
+    "iterations": 2988302,
+    "iterations_libm": 2988302,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.3163693185779266e-12,
+    "peak_dbc": -271.7747024410029,
+    "rms_dbc": -275.5008807662487,
+    "line_dbc": -277.3018639496586,
+    "iterations": 2988302,
+    "iterations_libm": 2988302,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 15000.0,
+   "fund_v": 89.6452378230099,
+   "fast": {
+    "max_abs_v": 9.521272659185342e-13,
+    "peak_dbc": -279.47664443110216,
+    "rms_dbc": -284.88039207000116,
+    "line_dbc": -289.52708556328344,
+    "iterations": 4798530,
+    "iterations_libm": 4798530,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 9.521272659185342e-13,
+    "peak_dbc": -279.47664443110216,
+    "rms_dbc": -284.88039207000116,
+    "line_dbc": -289.52708556328344,
+    "iterations": 4798530,
+    "iterations_libm": 4798530,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 100.0,
+   "fund_v": 0.7568153668562673,
+   "fast": {
+    "max_abs_v": 4.027334021827755e-12,
+    "peak_dbc": -225.47944581506823,
+    "rms_dbc": -231.03935442690045,
+    "line_dbc": -241.16681014025306,
+    "iterations": 672178,
+    "iterations_libm": 672178,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 4.027334021827755e-12,
+    "peak_dbc": -225.47944581506823,
+    "rms_dbc": -231.03935442690045,
+    "line_dbc": -241.16681014025306,
+    "iterations": 672178,
+    "iterations_libm": 672178,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 1000.0,
+   "fund_v": 0.7569881372960766,
+   "fast": {
+    "max_abs_v": 2.698175016746518e-12,
+    "peak_dbc": -228.96037914113515,
+    "rms_dbc": -233.52733745667607,
+    "line_dbc": -241.07065616770473,
+    "iterations": 1340330,
+    "iterations_libm": 1340330,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.698175016746518e-12,
+    "peak_dbc": -228.96037914113515,
+    "rms_dbc": -233.52733745667607,
+    "line_dbc": -241.07065616770473,
+    "iterations": 1340330,
+    "iterations_libm": 1340330,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 15000.0,
+   "fund_v": 0.7563523602493013,
+   "fast": {
+    "max_abs_v": 1.0752509993494641e-12,
+    "peak_dbc": -236.94428623234316,
+    "rms_dbc": -241.24018602684578,
+    "line_dbc": -244.89347753686783,
+    "iterations": 1926369,
+    "iterations_libm": 1926369,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.0752509993494641e-12,
+    "peak_dbc": -236.94428623234316,
+    "rms_dbc": -241.24018602684578,
+    "line_dbc": -244.89347753686783,
+    "iterations": 1926369,
+    "iterations_libm": 1926369,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 100.0,
+   "fund_v": 7.569593673480073,
+   "fast": {
+    "max_abs_v": 3.354649891207373e-12,
+    "peak_dbc": -247.06850732202503,
+    "rms_dbc": -253.77335363093547,
+    "line_dbc": -266.15200679352307,
+    "iterations": 1300718,
+    "iterations_libm": 1300718,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.354649891207373e-12,
+    "peak_dbc": -247.06850732202503,
+    "rms_dbc": -253.77335363093547,
+    "line_dbc": -266.15200679352307,
+    "iterations": 1300718,
+    "iterations_libm": 1300718,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 1000.0,
+   "fund_v": 7.571321847979624,
+   "fast": {
+    "max_abs_v": 1.305622276959184e-12,
+    "peak_dbc": -255.26708312749494,
+    "rms_dbc": -260.98523871663815,
+    "line_dbc": -267.70089901957647,
+    "iterations": 1340382,
+    "iterations_libm": 1340382,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.305622276959184e-12,
+    "peak_dbc": -255.26708312749494,
+    "rms_dbc": -260.98523871663815,
+    "line_dbc": -267.70089901957647,
+    "iterations": 1340382,
+    "iterations_libm": 1340382,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 15000.0,
+   "fund_v": 7.564948382991392,
+   "fast": {
+    "max_abs_v": 9.725553695716371e-13,
+    "peak_dbc": -257.81783266245156,
+    "rms_dbc": -261.0382924595664,
+    "line_dbc": -266.48846705972636,
+    "iterations": 2005163,
+    "iterations_libm": 2005163,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 9.725553695716371e-13,
+    "peak_dbc": -257.81783266245156,
+    "rms_dbc": -261.0382924595664,
+    "line_dbc": -266.48846705972636,
+    "iterations": 2005163,
+    "iterations_libm": 2005163,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 100.0,
+   "fund_v": 30.369526587953608,
+   "fast": {
+    "max_abs_v": 4.462208380573429e-12,
+    "peak_dbc": -256.6577634897776,
+    "rms_dbc": -267.6774443949548,
+    "line_dbc": -271.0272390772393,
+    "iterations": 1332884,
+    "iterations_libm": 1332884,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 4.462208380573429e-12,
+    "peak_dbc": -256.6577634897776,
+    "rms_dbc": -267.6774443949548,
+    "line_dbc": -271.0272390772393,
+    "iterations": 1332884,
+    "iterations_libm": 1332884,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 1000.0,
+   "fund_v": 30.37647057645579,
+   "fast": {
+    "max_abs_v": 1.7479351299698465e-12,
+    "peak_dbc": -264.80024002302866,
+    "rms_dbc": -269.2572230608175,
+    "line_dbc": -271.1509256513735,
+    "iterations": 1343956,
+    "iterations_libm": 1343956,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.7479351299698465e-12,
+    "peak_dbc": -264.80024002302866,
+    "rms_dbc": -269.2572230608175,
+    "line_dbc": -271.1509256513735,
+    "iterations": 1343956,
+    "iterations_libm": 1343956,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 15000.0,
+   "fund_v": 30.349998787125518,
+   "fast": {
+    "max_abs_v": 2.0321522242738865e-12,
+    "peak_dbc": -263.4840488226735,
+    "rms_dbc": -268.19247378955134,
+    "line_dbc": -271.09462035145697,
+    "iterations": 2540459,
+    "iterations_libm": 2540459,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.0321522242738865e-12,
+    "peak_dbc": -263.4840488226735,
+    "rms_dbc": -268.19247378955134,
+    "line_dbc": -271.09462035145697,
+    "iterations": 2540459,
+    "iterations_libm": 2540459,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 100.0,
+   "fund_v": 89.83351782421536,
+   "fast": {
+    "max_abs_v": 4.774847184307873e-12,
+    "peak_dbc": -265.48957859733696,
+    "rms_dbc": -274.7933635929668,
+    "line_dbc": -277.91136944695313,
+    "iterations": 1341191,
+    "iterations_libm": 1341191,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 4.774847184307873e-12,
+    "peak_dbc": -265.48957859733696,
+    "rms_dbc": -274.7933635929668,
+    "line_dbc": -277.91136944695313,
+    "iterations": 1341191,
+    "iterations_libm": 1341191,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 1000.0,
+   "fund_v": 89.85514058159721,
+   "fast": {
+    "max_abs_v": 2.758682171588589e-12,
+    "peak_dbc": -270.256825195995,
+    "rms_dbc": -274.7459351518995,
+    "line_dbc": -277.31435544291344,
+    "iterations": 1752533,
+    "iterations_libm": 1752533,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.758682171588589e-12,
+    "peak_dbc": -270.256825195995,
+    "rms_dbc": -274.7459351518995,
+    "line_dbc": -277.31435544291344,
+    "iterations": 1752533,
+    "iterations_libm": 1752533,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "T",
+   "bias_ma": 0.5,
+   "grid_hardness": 1.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 15000.0,
+   "fund_v": 89.63246055665626,
+   "fast": {
+    "max_abs_v": 1.4068746168049984e-12,
+    "peak_dbc": -276.0841984924266,
+    "rms_dbc": -281.22759164151535,
+    "line_dbc": -285.06823337047643,
+    "iterations": 2920425,
+    "iterations_libm": 2920425,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.4068746168049984e-12,
+    "peak_dbc": -276.0841984924266,
+    "rms_dbc": -281.22759164151535,
+    "line_dbc": -285.06823337047643,
+    "iterations": 2920425,
+    "iterations_libm": 2920425,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 100.0,
+   "fund_v": 0.49238683622643437,
+   "fast": {
+    "max_abs_v": 2.649630514994783e-11,
+    "peak_dbc": -205.3824223389147,
+    "rms_dbc": -210.44438256307524,
+    "line_dbc": -213.69121409899185,
+    "iterations": 1344158,
+    "iterations_libm": 1344158,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.649630514994783e-11,
+    "peak_dbc": -205.3824223389147,
+    "rms_dbc": -210.44438256307524,
+    "line_dbc": -213.69121409899185,
+    "iterations": 1344158,
+    "iterations_libm": 1344158,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 1000.0,
+   "fund_v": 0.49248825576170685,
+   "fast": {
+    "max_abs_v": 2.3788832015370076e-11,
+    "peak_dbc": -206.3204551778079,
+    "rms_dbc": -210.4797345351534,
+    "line_dbc": -213.6933580318377,
+    "iterations": 2638587,
+    "iterations_libm": 2638587,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.3788832015370076e-11,
+    "peak_dbc": -206.3204551778079,
+    "rms_dbc": -210.4797345351534,
+    "line_dbc": -213.6933580318377,
+    "iterations": 2638587,
+    "iterations_libm": 2638587,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "hq",
+   "drive": 0.05,
+   "tone_hz": 15000.0,
+   "fund_v": 0.49236460190974557,
+   "fast": {
+    "max_abs_v": 3.9498404547089194e-12,
+    "peak_dbc": -221.9141453719351,
+    "rms_dbc": -222.172324004798,
+    "line_dbc": -222.196122802537,
+    "iterations": 2687695,
+    "iterations_libm": 2687695,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.9498404547089194e-12,
+    "peak_dbc": -221.9141453719351,
+    "rms_dbc": -222.172324004798,
+    "line_dbc": -222.196122802537,
+    "iterations": 2687695,
+    "iterations_libm": 2687695,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 100.0,
+   "fund_v": 4.92147706352475,
+   "fast": {
+    "max_abs_v": 3.154099204039085e-11,
+    "peak_dbc": -223.86440233209635,
+    "rms_dbc": -231.36012196803983,
+    "line_dbc": -239.40634630781037,
+    "iterations": 2170441,
+    "iterations_libm": 2170441,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.154099204039085e-11,
+    "peak_dbc": -223.86440233209635,
+    "rms_dbc": -231.36012196803983,
+    "line_dbc": -239.40634630781037,
+    "iterations": 2170441,
+    "iterations_libm": 2170441,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 1000.0,
+   "fund_v": 4.922490244490819,
+   "fast": {
+    "max_abs_v": 1.3806067400423672e-11,
+    "peak_dbc": -231.04229749715503,
+    "rms_dbc": -233.13214038958873,
+    "line_dbc": -239.55999441594716,
+    "iterations": 2680668,
+    "iterations_libm": 2680668,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.3806067400423672e-11,
+    "peak_dbc": -231.04229749715503,
+    "rms_dbc": -233.13214038958873,
+    "line_dbc": -239.55999441594716,
+    "iterations": 2680668,
+    "iterations_libm": 2680668,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "hq",
+   "drive": 0.5,
+   "tone_hz": 15000.0,
+   "fund_v": 4.921250482719804,
+   "fast": {
+    "max_abs_v": 5.182521078950231e-12,
+    "peak_dbc": -239.55068786430812,
+    "rms_dbc": -245.3048107882947,
+    "line_dbc": -247.4914337472601,
+    "iterations": 3936688,
+    "iterations_libm": 3936688,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 5.182521078950231e-12,
+    "peak_dbc": -239.55068786430812,
+    "rms_dbc": -245.3048107882947,
+    "line_dbc": -247.4914337472601,
+    "iterations": 3936688,
+    "iterations_libm": 3936688,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 100.0,
+   "fund_v": 19.53862729736475,
+   "fast": {
+    "max_abs_v": 2.389199948993337e-11,
+    "peak_dbc": -238.2528310385676,
+    "rms_dbc": -243.19909445945956,
+    "line_dbc": -255.11957582616088,
+    "iterations": 2574313,
+    "iterations_libm": 2574313,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.389199948993337e-11,
+    "peak_dbc": -238.2528310385676,
+    "rms_dbc": -243.19909445945956,
+    "line_dbc": -255.11957582616088,
+    "iterations": 2574313,
+    "iterations_libm": 2574313,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 1000.0,
+   "fund_v": 19.54261681743694,
+   "fast": {
+    "max_abs_v": 1.1365131058482802e-11,
+    "peak_dbc": -244.7081653690256,
+    "rms_dbc": -252.4460694764579,
+    "line_dbc": -254.8796662330902,
+    "iterations": 2687724,
+    "iterations_libm": 2687724,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.1365131058482802e-11,
+    "peak_dbc": -244.7081653690256,
+    "rms_dbc": -252.4460694764579,
+    "line_dbc": -254.8796662330902,
+    "iterations": 2687724,
+    "iterations_libm": 2687724,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "hq",
+   "drive": 2.0,
+   "tone_hz": 15000.0,
+   "fund_v": 19.537433343062197,
+   "fast": {
+    "max_abs_v": 4.373390538603417e-12,
+    "peak_dbc": -253.00098496526277,
+    "rms_dbc": -254.36742348180348,
+    "line_dbc": -255.19448731579882,
+    "iterations": 4005012,
+    "iterations_libm": 4005012,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 4.373390538603417e-12,
+    "peak_dbc": -253.00098496526277,
+    "rms_dbc": -254.36742348180348,
+    "line_dbc": -255.19448731579882,
+    "iterations": 4005012,
+    "iterations_libm": 4005012,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 100.0,
+   "fund_v": 64.38781985063403,
+   "fast": {
+    "max_abs_v": 3.036859652638668e-11,
+    "peak_dbc": -246.52757997317633,
+    "rms_dbc": -255.41332979955484,
+    "line_dbc": -257.3596904992962,
+    "iterations": 2645176,
+    "iterations_libm": 2645176,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.036859652638668e-11,
+    "peak_dbc": -246.52757997317633,
+    "rms_dbc": -255.41332979955484,
+    "line_dbc": -257.3596904992962,
+    "iterations": 2645176,
+    "iterations_libm": 2645176,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 1000.0,
+   "fund_v": 64.3971775271546,
+   "fast": {
+    "max_abs_v": 1.2519763004092965e-11,
+    "peak_dbc": -254.22541450309615,
+    "rms_dbc": -256.71989620821654,
+    "line_dbc": -257.5584665219178,
+    "iterations": 2687819,
+    "iterations_libm": 2687819,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.2519763004092965e-11,
+    "peak_dbc": -254.22541450309615,
+    "rms_dbc": -256.71989620821654,
+    "line_dbc": -257.5584665219178,
+    "iterations": 2687819,
+    "iterations_libm": 2687819,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "hq",
+   "drive": 8.0,
+   "tone_hz": 15000.0,
+   "fund_v": 64.35057734446453,
+   "fast": {
+    "max_abs_v": 9.634959496906959e-12,
+    "peak_dbc": -256.49405108727757,
+    "rms_dbc": -257.3797138083193,
+    "line_dbc": -257.95784065023673,
+    "iterations": 4645310,
+    "iterations_libm": 4645310,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 9.634959496906959e-12,
+    "peak_dbc": -256.49405108727757,
+    "rms_dbc": -257.3797138083193,
+    "line_dbc": -257.95784065023673,
+    "iterations": 4645310,
+    "iterations_libm": 4645310,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 100.0,
+   "fund_v": 0.4923868364197458,
+   "fast": {
+    "max_abs_v": 2.6514873630034685e-11,
+    "peak_dbc": -205.37633744555058,
+    "rms_dbc": -210.4443439018096,
+    "line_dbc": -213.69109003214828,
+    "iterations": 672179,
+    "iterations_libm": 672179,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.6514873630034685e-11,
+    "peak_dbc": -205.37633744555058,
+    "rms_dbc": -210.4443439018096,
+    "line_dbc": -213.69109003214828,
+    "iterations": 672179,
+    "iterations_libm": 672179,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 1000.0,
+   "fund_v": 0.4924882557753201,
+   "fast": {
+    "max_abs_v": 2.3813784277848526e-11,
+    "peak_dbc": -206.31134926602738,
+    "rms_dbc": -210.48022749306216,
+    "line_dbc": -213.69354703936926,
+    "iterations": 1340334,
+    "iterations_libm": 1340334,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.3813784277848526e-11,
+    "peak_dbc": -206.31134926602738,
+    "rms_dbc": -210.48022749306216,
+    "line_dbc": -213.69354703936926,
+    "iterations": 1340334,
+    "iterations_libm": 1340334,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "standard",
+   "drive": 0.05,
+   "tone_hz": 15000.0,
+   "fund_v": 0.4923636392860961,
+   "fast": {
+    "max_abs_v": 3.8588021666896566e-12,
+    "peak_dbc": -222.11666918782248,
+    "rms_dbc": -222.07429861325102,
+    "line_dbc": -222.18142961243728,
+    "iterations": 1931615,
+    "iterations_libm": 1931615,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.8588021666896566e-12,
+    "peak_dbc": -222.11666918782248,
+    "rms_dbc": -222.07429861325102,
+    "line_dbc": -222.18142961243728,
+    "iterations": 1931615,
+    "iterations_libm": 1931615,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 100.0,
+   "fund_v": 4.921477065233037,
+   "fast": {
+    "max_abs_v": 3.155253835984695e-11,
+    "peak_dbc": -223.86122324346732,
+    "rms_dbc": -231.3598240476594,
+    "line_dbc": -239.40675213365563,
+    "iterations": 1298629,
+    "iterations_libm": 1298629,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.155253835984695e-11,
+    "peak_dbc": -223.86122324346732,
+    "rms_dbc": -231.3598240476594,
+    "line_dbc": -239.40675213365563,
+    "iterations": 1298629,
+    "iterations_libm": 1298629,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 1000.0,
+   "fund_v": 4.922490244767444,
+   "fast": {
+    "max_abs_v": 1.403988036940973e-11,
+    "peak_dbc": -230.89642913708005,
+    "rms_dbc": -233.166880731621,
+    "line_dbc": -239.59091229194337,
+    "iterations": 1343879,
+    "iterations_libm": 1343879,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.403988036940973e-11,
+    "peak_dbc": -230.89642913708005,
+    "rms_dbc": -233.166880731621,
+    "line_dbc": -239.59091229194337,
+    "iterations": 1343879,
+    "iterations_libm": 1343879,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "standard",
+   "drive": 0.5,
+   "tone_hz": 15000.0,
+   "fund_v": 4.921240809592693,
+   "fast": {
+    "max_abs_v": 4.659383989746857e-12,
+    "peak_dbc": -240.47492227399397,
+    "rms_dbc": -242.44538984661662,
+    "line_dbc": -245.5873882787294,
+    "iterations": 2005163,
+    "iterations_libm": 2005163,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 4.659383989746857e-12,
+    "peak_dbc": -240.47492227399397,
+    "rms_dbc": -242.44538984661662,
+    "line_dbc": -245.5873882787294,
+    "iterations": 2005163,
+    "iterations_libm": 2005163,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 100.0,
+   "fund_v": 19.538627299272658,
+   "fast": {
+    "max_abs_v": 2.403588439392479e-11,
+    "peak_dbc": -238.20067884532807,
+    "rms_dbc": -243.19966173870614,
+    "line_dbc": -255.1188080770567,
+    "iterations": 1333227,
+    "iterations_libm": 1333227,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 2.403588439392479e-11,
+    "peak_dbc": -238.20067884532807,
+    "rms_dbc": -243.19966173870614,
+    "line_dbc": -255.1188080770567,
+    "iterations": 1333227,
+    "iterations_libm": 1333227,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 1000.0,
+   "fund_v": 19.54261681833166,
+   "fast": {
+    "max_abs_v": 1.1162626378791174e-11,
+    "peak_dbc": -244.86432655702632,
+    "rms_dbc": -252.2340247859117,
+    "line_dbc": -254.92633204624985,
+    "iterations": 1343962,
+    "iterations_libm": 1343962,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.1162626378791174e-11,
+    "peak_dbc": -244.86432655702632,
+    "rms_dbc": -252.2340247859117,
+    "line_dbc": -254.92633204624985,
+    "iterations": 1343962,
+    "iterations_libm": 1343962,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "standard",
+   "drive": 2.0,
+   "tone_hz": 15000.0,
+   "fund_v": 19.537391461105752,
+   "fast": {
+    "max_abs_v": 7.764899834228345e-12,
+    "peak_dbc": -248.01461441105647,
+    "rms_dbc": -249.53524793918834,
+    "line_dbc": -252.695000527939,
+    "iterations": 2540467,
+    "iterations_libm": 2540467,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 7.764899834228345e-12,
+    "peak_dbc": -248.01461441105647,
+    "rms_dbc": -249.53524793918834,
+    "line_dbc": -252.695000527939,
+    "iterations": 2540467,
+    "iterations_libm": 2540467,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 100.0,
+   "fund_v": 64.38781982464603,
+   "fast": {
+    "max_abs_v": 3.0325963962241076e-11,
+    "peak_dbc": -246.5397821111829,
+    "rms_dbc": -255.41082850349693,
+    "line_dbc": -257.3738398573733,
+    "iterations": 1343895,
+    "iterations_libm": 1343895,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 3.0325963962241076e-11,
+    "peak_dbc": -246.5397821111829,
+    "rms_dbc": -255.41082850349693,
+    "line_dbc": -257.3738398573733,
+    "iterations": 1343895,
+    "iterations_libm": 1343895,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 1000.0,
+   "fund_v": 64.3971775162443,
+   "fast": {
+    "max_abs_v": 1.1766587704187259e-11,
+    "peak_dbc": -254.76432593416797,
+    "rms_dbc": -257.2551628973714,
+    "line_dbc": -258.1243384860955,
+    "iterations": 1802261,
+    "iterations_libm": 1802261,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.1766587704187259e-11,
+    "peak_dbc": -254.76432593416797,
+    "rms_dbc": -257.2551628973714,
+    "line_dbc": -258.1243384860955,
+    "iterations": 1802261,
+    "iterations_libm": 1802261,
+    "nonconverged": 0
+   }
+  },
+  {
+   "mode": "P1",
+   "bias_ma": 0.45,
+   "grid_hardness": 0.0,
+   "quality": "standard",
+   "drive": 8.0,
+   "tone_hz": 15000.0,
+   "fund_v": 64.35130728471069,
+   "fast": {
+    "max_abs_v": 1.2782663816324202e-11,
+    "peak_dbc": -254.03872013604695,
+    "rms_dbc": -256.39806737129356,
+    "line_dbc": -258.16460189693373,
+    "iterations": 2728917,
+    "iterations_libm": 2728917,
+    "nonconverged": 0
+   },
+   "fast_stereo": {
+    "max_abs_v": 1.2782663816324202e-11,
+    "peak_dbc": -254.03872013604695,
+    "rms_dbc": -256.39806737129356,
+    "line_dbc": -258.16460189693373,
+    "iterations": 2728917,
+    "iterations_libm": 2728917,
+    "nonconverged": 0
+   }
+  }
+ ]
+}
