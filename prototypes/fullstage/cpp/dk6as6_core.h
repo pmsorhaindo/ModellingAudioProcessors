@@ -52,6 +52,11 @@
  *     (Stats::nonfinite_outputs).
  *   - Python's out-of-law check warns; here it is counted (Stats::out_of_law).
  *
+ * CPU (#135; cpp/RESULTS-cpu-6as6.md). Settings::math selects the law's maths per pack: LawMath::libm (default,
+ * Python's arithmetic, bit-exact; #104's law and solvers, namespace fused) or LawMath::fast (dk/fastmath.h; the law in
+ * two passes, namespace twopass). cpp/dk6as6_stereo.h adds StereoStage, the two-lane kernel (the twopass law and
+ * solvers on two lanes). The lazier Jacobian is a research switch (-DDK6AS6_LAZY_JACOBIAN), off by default.
+ *
  * Do not build with -ffast-math (dk_core.h #errors): the fallbacks rely on NaN / inf comparisons.
  */
 #ifndef DK6AS6_CORE_H
@@ -63,6 +68,17 @@
 #include <limits>
 
 namespace dk6as6 {
+
+/* The per-sample helpers below are forced inline (#135 review): with the libm and fast instantiations of the law and
+ * solvers (and the stereo kernel's three lane maths) in one translation unit, GCC's -O3 reaches its per-unit inlining
+ * budget (--param inline-unit-growth) and stops inlining them, which cost 12-16 % on CI's x86-64 runner (the paired
+ * control in cpp/RESULTS-cpu-6as6.md). Forcing them keeps every build's per-sample code as #104's was; it changes
+ * no arithmetic (the -ffp-contract=off builds stay bit-exact with Python). */
+#if defined(__GNUC__) || defined(__clang__)
+#define DK6AS6_HOT inline __attribute__((always_inline))
+#else
+#define DK6AS6_HOT inline
+#endif
 
 using dkcore::FirDesign;
 using dkcore::Newton;
@@ -183,7 +199,7 @@ using dkcore::detail::pmax;   // Python's max(a, b): b > a ? b : a, NaN included
 
 // CPython's float ** float for the bases used here (all >= 0): libm pow, plus the OverflowError CPython raises when
 // a finite pair overflows (Python's ** never returns inf from finite operands; it raises).
-inline double pypow(double x, double y, bool& raised) {
+DK6AS6_HOT double pypow(double x, double y, bool& raised) {
     const double r = std::pow(x, y);
     if (std::isinf(r) && std::isfinite(x) && std::isfinite(y)) raised = true;
     return r;
@@ -206,7 +222,7 @@ inline void softplus_sigmoid(double x, double& sp, double& sg) {
 }
 // CPython >= 3.12's sum() of four floats from the int start 0 (Neumaier compensated summation, bltinmodule.c): the
 // 2-current solver's dR/di entries use Python's sum(), so this keeps them bit-equal.
-inline double pysum4(double a0, double a1, double a2, double a3) {
+DK6AS6_HOT double pysum4(double a0, double a1, double a2, double a3) {
     double f = 0.0 + a0, c = 0.0;
     const double xs[3] = {a1, a2, a3};
     for (double x : xs) {
@@ -218,6 +234,485 @@ inline double pysum4(double a0, double a1, double a2, double a3) {
     if (c != 0.0 && std::isfinite(c)) f += c;
     return f;
 }
+}  // namespace detail
+
+/* The maths of the valve law (#135), per pack (Settings::math), dispatched once per block:
+ *   LawMath::libm  (default) Python's arithmetic: libm exp / log1p / pow / atan, every ** a pow call (LibmLaw); the
+ *                  law and the solvers are bit-exact with pentode.py / solver.py (cpp/tests: test_bit_exact_*)
+ *   LawMath::fast  dk/fastmath.h's exp / log1p / pow (#18) for the exp / log1p / pow of the law (FastLaw), and two
+ *                  identities where Python calls pow: E1^(EX - 1) = E1^EX / E1 and (Va / KVB)^2 = q q. atan stays libm.
+ *                  Error bounds over the 6AS6's argument domain and the stage-level evidence (dk/validate.CRIT
+ *                  reproduced, the aliasing gates, the deviation from libm in dBc): cpp/README-6as6.md, "CPU (#135)".
+ * The DC solves of a build (prepare(): Rk, the operating point) always use libm, as dk_core.h's TriodeMath. */
+enum class LawMath : std::uint8_t { libm, fast };
+inline const char* to_string(LawMath m) { return m == LawMath::fast ? "fast" : "libm"; }
+
+/* Research probes (#135), compiled in only with -DDK6AS6_PROBES (cpp/test_core_6as6.cpp, which defines them; never
+ * the plugin): every argument FastLaw's functions receive (the fast maths' domain on the 6AS6, as #18's
+ * dk/fastmath_domain.py), and every converging trial whose Jacobian the lazier Jacobian skips, with whether that
+ * Jacobian would have been finite (solve_grid below). */
+#ifdef DK6AS6_PROBES
+namespace probe {
+void fastlaw_arg(const char* fn, double x, double y);
+void skipped_jacobian(bool finite);
+}  // namespace probe
+#define DK6AS6_PROBE_ARG(fn, x, y) probe::fastlaw_arg(fn, x, y)
+#else
+#define DK6AS6_PROBE_ARG(fn, x, y) ((void)0)
+#endif
+
+struct LibmLaw {
+    DK6AS6_HOT static double exp(double x) { return std::exp(x); }
+    DK6AS6_HOT static double log1p(double x) { return std::log1p(x); }
+    DK6AS6_HOT static double pow(double x, double y, bool& raised) { return detail::pypow(x, y, raised); }
+    DK6AS6_HOT static double atan(double x) { return std::atan(x); }
+    // E1^(EX - 1), given pe = E1^EX: Python's own ** call
+    DK6AS6_HOT static double pow_m1(double e1, double ex, double /*pe*/, bool& raised) { return detail::pypow(e1, ex - 1.0, raised); }
+    // (Va / KVB) ** 2: a libm pow call, as CPython's
+    DK6AS6_HOT static double sq(double q, bool& raised) { return detail::pypow(q, detail::opaque(2.0), raised); }
+};
+struct FastLaw {
+    DK6AS6_HOT static double exp(double x) { DK6AS6_PROBE_ARG("exp", x, 0.0); return fm_exp(x); }
+    DK6AS6_HOT static double log1p(double x) { DK6AS6_PROBE_ARG("log1p", x, 0.0); return fm_log1p(x); }
+    DK6AS6_HOT static double pow(double x, double y, bool& raised) {      // fm_pow, and the same overflow report as pypow
+        DK6AS6_PROBE_ARG("pow", x, y);
+        const double r = fm_pow(x, y);
+        if (std::isinf(r) && std::isfinite(x) && std::isfinite(y)) raised = true;
+        return r;
+    }
+    DK6AS6_HOT static double atan(double x) { DK6AS6_PROBE_ARG("atan", x, 0.0); return std::atan(x); }
+    // E1^(EX - 1) = E1^EX / E1 for E1 > 0; E1^(EX - 1) = 0 at E1 = 0 (EX > 1), where the quotient would be 0 / 0
+    DK6AS6_HOT static double pow_m1(double e1, double /*ex*/, double pe, bool& /*raised*/) { return e1 > 0.0 ? pe / e1 : 0.0; }
+    DK6AS6_HOT static double sq(double q, bool& /*raised*/) { DK6AS6_PROBE_ARG("sq", q, 0.0); return q * q; }
+};
+
+namespace detail {
+/* One evaluation point of the law, split in two passes (#135): values() computes the currents and keeps what the
+ * Jacobian needs; jacobian() adds the gradients from it. values() then jacobian() is pentode.currents(_grid) operation
+ * for operation (the same expressions, the same values), so splitting changes no bit; it lets a solver evaluate a trial
+ * without its Jacobian and add the Jacobian only where it is used. What is deferred is what costs: the two pow calls
+ * (E1^(EX - 1), (Va / KVB)^2) and the arithmetic after them. The gradients' other parts, divisions mostly, are
+ * computed in the values pass, where they overlap the libm calls' latency: deferred, they ran as one burst of ~15
+ * divisions on the Newton step's critical path, 14-16 % slower on CI's x86-64 runner (#135 review, the paired
+ * control in cpp/RESULTS-cpu-6as6.md). */
+struct LawWork {
+    double va, e1, pe, s, knee, ik0, kf, ik, f;                                     // cathode share
+    double sa, de1_g2, dz_g3, dz_a, ds, dik_z;                                      // ... its gradients' parts
+    double ig1, dig1;                                                               // grid current
+};
+
+/* pentode.cathode_share, the values: Ik and f; `raised` where Python's evaluation of the currents would raise. The
+ * Jacobian's own ** calls raise only where these do (pow(E1, EX - 1) overflows only where pow(E1, EX) does; (Va / KVB)
+ * ** 2 is checked here directly), so the values alone already say whether Python would raise. */
+template <class M>
+DK6AS6_HOT void cathode_values(double vg1, double vg2, double vg3, double va, const PentodeParams& p, LawWork& w,
+                               bool& raised) {
+    // computed in locals and stored into w once at the end: GCC keeps w in memory, and a chain through its fields pays
+    // a store-to-load forward at every step (12-16 % on x86-64, #135 review); the arithmetic is the same
+    const bool floor = vg2 <= VG2_FLOOR;
+    const double g2 = floor ? VG2_FLOOR : vg2;
+    const double a = p.KP * (1.0 / p.MU + vg1 / g2);
+    const double ea = M::exp(-std::fabs(a));                         // softplus_sigmoid(a)'s shared exp
+    const double spa = (a > 0.0 ? a : 0.0) + M::log1p(ea);
+    const double e1 = g2 / p.KP * spa;
+    const double pe = M::pow(e1, p.EX, raised);
+    const double ik0 = 2.0 * pe / p.KG1;
+    double up, x = 1.0, xa = 1.0;                                    // (x, xa: unused when XA == 1)
+    if (p.XA == 1.0) {
+        up = va > 0.0 ? va / p.MU3 : 0.0;
+    } else {
+        x = (va > VA_FLOOR ? va : VA_FLOOR) / VA0;
+        xa = M::pow(x, p.XA, raised);
+        up = VA0 / p.MU3 * (1.0 + (xa - 1.0) / p.XA);
+    }
+    const double mz = -((vg3 + up - p.V3C - p.RI * ik0) / p.S3);     // softplus_sigmoid(-z)
+    const double ez = M::exp(-std::fabs(mz));
+    const double spz = (mz > 0.0 ? mz : 0.0) + M::log1p(ez);
+    const double sm = mz >= 0.0 ? 1.0 / (1.0 + ez) : ez / (1.0 + ez);
+    const double s = M::exp(-p.P3 * spz);
+    const double knee = va > 0.0 ? 2.0 / PI * M::atan(va / p.KVB) : 0.0;
+    const double f = p.FMAX * knee * s;
+    const double kf = 1.0 - p.KR * sm;
+    const double ik = ik0 * kf;
+    if (va > 0.0) { const double q = va / p.KVB; if (std::isinf(q * q) && std::isfinite(q)) raised = true; }
+    // the gradients' parts that need no pow (pentode.cathode_share's expressions)
+    const double sa = a >= 0.0 ? 1.0 / (1.0 + ea) : ea / (1.0 + ea);
+    const double de1_g2 = floor ? 0.0 : spa / p.KP - sa * vg1 / g2;
+    double dup;
+    if (p.XA == 1.0) dup = va > 0.0 ? 1.0 / p.MU3 : 0.0;
+    else dup = va > VA_FLOOR ? xa / x / p.MU3 : 0.0;
+    w.va = va; w.e1 = e1; w.pe = pe; w.s = s; w.knee = knee; w.ik0 = ik0; w.kf = kf; w.ik = ik; w.f = f;
+    w.sa = sa; w.de1_g2 = de1_g2; w.dz_g3 = 1.0 / p.S3; w.dz_a = dup / p.S3; w.ds = s * p.P3 * sm;
+    w.dik_z = ik0 * p.KR * sm * (1.0 - sm);
+}
+// pentode.cathode_share, the gradients d/d(Vg1k, Vg2k, Vg3k, Vak) of Ik and f at w
+template <class M>
+DK6AS6_HOT void cathode_jacobian(const LawWork& w, const PentodeParams& p, double (&dik)[4], double (&dfs)[4], bool& raised) {
+    const double de1_g1 = w.sa;
+    const double dik0 = 2.0 * p.EX * M::pow_m1(w.e1, p.EX, w.pe, raised) / p.KG1;
+    const double dik0_g1 = dik0 * de1_g1, dik0_g2 = dik0 * w.de1_g2;
+    const double dz_g1 = -p.RI * dik0_g1 / p.S3, dz_g2 = -p.RI * dik0_g2 / p.S3, dz_g3 = w.dz_g3, dz_a = w.dz_a;
+    const double dknee = w.va > 0.0 ? 2.0 / PI / p.KVB / (1.0 + M::sq(w.va / p.KVB, raised)) : 0.0;
+    const double df_z = p.FMAX * w.knee * w.ds, df_a = p.FMAX * dknee * w.s;
+    const double dik_z = w.dik_z;
+    dik[0] = dik0_g1 * w.kf + dik_z * dz_g1;
+    dik[1] = dik0_g2 * w.kf + dik_z * dz_g2;
+    dik[2] = dik_z * dz_g3;
+    dik[3] = dik_z * dz_a;
+    dfs[0] = df_z * dz_g1; dfs[1] = df_z * dz_g2; dfs[2] = df_z * dz_g3; dfs[3] = df_z * dz_a + df_a;
+}
+
+// pentode.grid_current, the value Ig1 (0 where softplus underflows) ...
+template <class M>
+DK6AS6_HOT double grid_values(double vg1, const GridParams& g, LawWork& w, bool& raised) {
+    const double zg = g.CG * vg1;                                    // locals first, as cathode_values
+    const double eg = M::exp(-std::fabs(zg));
+    const double sp = zg >= 0.0 ? zg + M::log1p(eg) : M::log1p(eg);
+    const double sg1 = sp / g.CG;
+    if (sg1 <= 0.0) { w.ig1 = 0.0; w.dig1 = 0.0; return 0.0; }       // (0, 0) where softplus underflows
+    const double pg = M::pow(sg1, g.XI, raised);
+    const double sg = zg >= 0.0 ? 1.0 / (1.0 + eg) : eg / (1.0 + eg);
+    w.ig1 = g.GG * pg;
+    w.dig1 = g.GG * g.XI * pg / sg1 * sg;                            // dIg1/dVg1k: no pow of its own, so here
+    return w.ig1;
+}
+// ... and dIg1/dVg1k
+DK6AS6_HOT double grid_jacobian(const LawWork& w, const GridParams&) { return w.dig1; }
+}  // namespace detail
+
+// i = (Ip, Ig2[, Ig1]) and J = d i / d(Vg1k, Vg2k, Vg3k, Vak); `raised`: where Python would raise
+struct Law { double i[3]; double J[3][4]; bool raised; };
+
+namespace detail {
+// pentode.currents in two passes: values (i, raised) into o, then the Jacobian into o.J
+template <class M> DK6AS6_HOT void values2(const double (&v)[4], const PentodeParams& p, Law& o, LawWork& w) {
+    o.raised = false;
+    cathode_values<M>(v[0], v[1], v[2], v[3], p, w, o.raised);
+    const double ip = w.ik * w.f;
+    o.i[0] = ip; o.i[1] = w.ik - ip; o.i[2] = 0.0;
+}
+template <class M> DK6AS6_HOT void jacobian2(const LawWork& w, const PentodeParams& p, Law& o) {
+    double dik[4], dfs[4];
+    cathode_jacobian<M>(w, p, dik, dfs, o.raised);
+    for (int j = 0; j < 4; ++j) {
+        const double dip = dik[j] * w.f + w.ik * dfs[j];
+        o.J[0][j] = dip; o.J[1][j] = dik[j] - dip; o.J[2][j] = 0.0;
+    }
+}
+// pentode.currents_grid in two passes: Ip = (Ik - Ig1) f, Ig2 = (Ik - Ig1)(1 - f)
+template <class M>
+DK6AS6_HOT void values3(const double (&v)[4], const PentodeParams& p, const GridParams& g, Law& o, LawWork& w) {
+    o.raised = false;
+    cathode_values<M>(v[0], v[1], v[2], v[3], p, w, o.raised);
+    const double ig1 = grid_values<M>(v[0], g, w, o.raised);
+    const double ipk = w.ik - ig1;
+    const double ip = ipk * w.f;
+    o.i[0] = ip; o.i[1] = ipk - ip; o.i[2] = ig1;
+}
+template <class M> DK6AS6_HOT void jacobian3(const LawWork& w, const PentodeParams& p, const GridParams& g, Law& o) {
+    double dik[4], dfs[4];
+    cathode_jacobian<M>(w, p, dik, dfs, o.raised);
+    const double dig1 = grid_jacobian(w, g);
+    const double ipk = w.ik - w.ig1;
+    const double dipk[4] = {dik[0] - dig1, dik[1], dik[2], dik[3]};
+    for (int j = 0; j < 4; ++j) {
+        const double dip = dipk[j] * w.f + ipk * dfs[j];
+        o.J[0][j] = dip; o.J[1][j] = dipk[j] - dip;
+    }
+    o.J[2][0] = dig1; o.J[2][1] = 0.0; o.J[2][2] = 0.0; o.J[2][3] = 0.0;
+}
+}  // namespace detail
+
+// pentode.currents (JAC) / currents_only: (Ip, Ig2), no grid current
+namespace twopass {
+template <bool JAC, class M> inline void currents(const double (&v)[4], const PentodeParams& p, Law& o) {
+    detail::LawWork w;
+    detail::values2<M>(v, p, o, w);
+    if (JAC) detail::jacobian2<M>(w, p, o);
+}
+}  // namespace twopass
+// pentode.currents_grid (JAC) / currents_grid_only: (Ip, Ig2, Ig1), Ip = (Ik - Ig1) f, Ig2 = (Ik - Ig1)(1 - f)
+namespace twopass {
+template <bool JAC, class M>
+inline void currents_grid(const double (&v)[4], const PentodeParams& p, const GridParams& g, Law& o) {
+    detail::LawWork w;
+    detail::values3<M>(v, p, g, o, w);
+    if (JAC) detail::jacobian3<M>(w, p, g, o);
+}
+}  // namespace twopass
+
+// ---- per-sample Newton-Raphson (dk6as6/solver.py) -----------------------------------------------------------------
+
+/* v = (Vg1k, Vg2k, Vg3k, Vak) at the returned iterate; i = the valve law there (as solver.py returns it: i - R);
+ * it = iterations (summed over restarts); fv = ||K R||inf there (inf if no finite iterate); attempts = starts tried.
+ *
+ * The lazier Jacobian (#135; twopass, with -DDK6AS6_LAZY_JACOBIAN only, see EAGER_JACOBIAN below; the libm path is
+ * fused's): solver.py evaluates the law with its Jacobian at every accepted trial, the one that converges included,
+ * whose Jacobian is never used. Here a trial is evaluated without it (detail::values*) and the
+ * Jacobian is added from the same evaluation (detail::jacobian*) only where the next Newton step uses it: at the
+ * start and at an accepted trial that has not converged. The line search, whose trials need no Jacobian in Python
+ * either, takes it at the point it accepts, from that point's own values pass instead of a second evaluation. The
+ * 2-current solve's result is that of solver.solve bit for bit (it never reads the Jacobian of a converged trial).
+ * The 3-current solve's differs in one case only: solver._resid3_safe also rejects a trial whose values are finite
+ * and whose Jacobian is not, so a converging trial with a non-finite Jacobian fails there and converges here.
+ * Measured not to occur (cpp/RESULTS-cpu-6as6.md: 0 of 191 411 640 skipped Jacobians; the fuzzed solves). */
+struct Solution { double v[4]; double i[3]; int it; bool ok; double fv; int attempts; };
+
+/* The lazier Jacobian is OFF by default (#135 review): measured, it gains nothing (lazy / eager 0.996-1.004 on an
+ * Intel Xeon 6975P-C and 8573C, 1.000-1.009 on an AMD EPYC 9V74, 0.4-0.7 % fewer instructions on the M1; the paired
+ * control in cpp/RESULTS-cpu-6as6.md). By default the solvers evaluate the Jacobian at every accepted trial, the
+ * converging one included, as solver.py does, with solver._resid3_safe's Jacobian check there too.
+ * -DDK6AS6_LAZY_JACOBIAN (research and control builds only) skips the converging trial's Jacobian. */
+#ifdef DK6AS6_LAZY_JACOBIAN
+inline constexpr bool EAGER_JACOBIAN = false;
+#else
+inline constexpr bool EAGER_JACOBIAN = true;
+#endif
+
+namespace detail {
+// solver._resid: R = i - i(p - K i) and ||K R||inf, the values pass only (w: for the Jacobian)
+template <class M>
+DK6AS6_HOT void resid2(const double (&p)[4], const double (&K)[4][3], double i0, double i1, const PentodeParams& par,
+                   double& r0, double& r1, double& fv, double (&v)[4], Law& L, LawWork& w) {
+    for (int r = 0; r < 4; ++r) v[r] = p[r] - K[r][0] * i0 - K[r][1] * i1;
+    values2<M>(v, par, L, w);
+    r0 = i0 - L.i[0]; r1 = i1 - L.i[1];
+    fv = std::fabs(K[0][0] * r0 + K[0][1] * r1);
+    for (int r = 1; r < 4; ++r) fv = pmax(fv, std::fabs(K[r][0] * r0 + K[r][1] * r1));
+}
+}  // namespace detail
+
+// solver.solve: the two-current law (no grid current); K is 4x3 storage, its first two columns used
+namespace twopass {
+template <class M>
+inline Solution solve(const double (&p)[4], const double (&K)[4][3], double i0, double i1, const PentodeParams& par,
+                      const Newton& nw) {
+    using detail::resid2;
+    Solution best{};
+    double r0, r1, fv, v[4];
+    Law L;
+    detail::LawWork w;
+    resid2<M>(p, K, i0, i1, par, r0, r1, fv, v, L, w);
+    detail::jacobian2<M>(w, par, L);
+    double fb = fv;
+    auto keep = [&](Solution& b) {
+        for (int k = 0; k < 4; ++k) b.v[k] = v[k];
+        b.i[0] = i0 - r0; b.i[1] = i1 - r1; b.i[2] = 0.0;
+    };
+    keep(best);
+    for (int it = 1; it <= nw.max_it; ++it) {
+        const auto& J = L.J;
+        const double a = 1.0 + detail::pysum4(J[0][0] * K[0][0], J[0][1] * K[1][0], J[0][2] * K[2][0], J[0][3] * K[3][0]);
+        const double b = detail::pysum4(J[0][0] * K[0][1], J[0][1] * K[1][1], J[0][2] * K[2][1], J[0][3] * K[3][1]);
+        const double c = detail::pysum4(J[1][0] * K[0][0], J[1][1] * K[1][0], J[1][2] * K[2][0], J[1][3] * K[3][0]);
+        const double d = 1.0 + detail::pysum4(J[1][0] * K[0][1], J[1][1] * K[1][1], J[1][2] * K[2][1], J[1][3] * K[3][1]);
+        const double det = a * d - b * c;
+        const double s0 = -(d * r0 - b * r1) / det;
+        const double s1 = -(-c * r0 + a * r1) / det;
+        double lam = 1.0;
+        double g0, g1, gv, gvolt[4];
+        Law gL;
+        detail::LawWork gw;
+        resid2<M>(p, K, i0 + s0, i1 + s1, par, g0, g1, gv, gvolt, gL, gw);
+        if (!(gv < fv || fv < nw.tol_f)) {
+            for (int h = 0; h < LS_MAX - 1; ++h) {
+                lam *= 0.5;
+                resid2<M>(p, K, i0 + lam * s0, i1 + lam * s1, par, g0, g1, gv, gvolt, gL, gw);
+                if (gv < fv) break;
+            }
+        }
+        double dv = std::fabs(K[0][0] * lam * s0 + K[0][1] * lam * s1);
+        for (int r = 1; r < 4; ++r) dv = detail::pmax(dv, std::fabs(K[r][0] * lam * s0 + K[r][1] * lam * s1));
+        i0 = i0 + lam * s0; i1 = i1 + lam * s1;
+        r0 = g0; r1 = g1; fv = gv;
+        for (int k = 0; k < 4; ++k) v[k] = gvolt[k];
+        if (EAGER_JACOBIAN) detail::jacobian2<M>(gw, par, gL);
+        if (dv < nw.tol_v && fv < nw.tol_f) {
+            Solution s{};
+            keep(s);
+            s.it = it; s.ok = true; s.fv = fv; s.attempts = 1;
+            return s;
+        }
+        if (!EAGER_JACOBIAN) detail::jacobian2<M>(gw, par, gL);   // the Jacobian at the accepted point, for the next step
+        for (int q = 0; q < 2; ++q) for (int j = 0; j < 4; ++j) L.J[q][j] = gL.J[q][j];
+        if ((fv < fb || !(fb < INFINITY)) && std::fabs(r0) + std::fabs(r1) < INFINITY) { fb = fv; keep(best); }
+    }
+    best.it = nw.max_it; best.ok = false; best.fv = fb; best.attempts = 1;
+    return best;
+}
+}  // namespace twopass
+
+namespace detail {
+// solver._resid3_safe, the values pass: false where Python's evaluation raises or the residual is not finite (the
+// trial counts as failed; fv = inf)
+template <class M>
+DK6AS6_HOT bool resid3(const double (&p)[4], const double (&K)[4][3], const double (&i)[3], const PentodeParams& par,
+                   const GridParams& g, double (&r)[3], double& fv, double (&v)[4], Law& L, LawWork& w) {
+    for (int q = 0; q < 4; ++q) v[q] = p[q] - K[q][0] * i[0] - K[q][1] * i[1] - K[q][2] * i[2];
+    values3<M>(v, par, g, L, w);
+    if (L.raised) { fv = INFINITY; return false; }
+    for (int k = 0; k < 3; ++k) r[k] = i[k] - L.i[k];
+    fv = std::fabs(K[0][0] * r[0] + K[0][1] * r[1] + K[0][2] * r[2]);
+    for (int q = 1; q < 4; ++q) fv = pmax(fv, std::fabs(K[q][0] * r[0] + K[q][1] * r[1] + K[q][2] * r[2]));
+    if (!(fv < INFINITY)) { fv = INFINITY; return false; }
+    return true;
+}
+// ... and its Jacobian check: the Jacobian at w into L.J; false (fv = inf) where it raises or is not finite
+template <class M>
+DK6AS6_HOT bool jacobian3_safe(const LawWork& w, const PentodeParams& par, const GridParams& g, Law& L, double& fv) {
+    jacobian3<M>(w, par, g, L);
+    bool ok = !L.raised;
+    for (int a = 0; a < 3; ++a) for (int b = 0; b < 4; ++b) ok = ok && std::isfinite(L.J[a][b]);
+    if (!ok) fv = INFINITY;
+    return ok;
+}
+// a converging trial whose Jacobian is skipped: nothing, or (DK6AS6_PROBES) whether it would have been finite
+template <class M>
+inline void skipped_jacobian(const LawWork& w, const PentodeParams& par, const GridParams& g, const Law& L) {
+#ifdef DK6AS6_PROBES
+    Law t = L;
+    double f = 0.0;
+    probe::skipped_jacobian(jacobian3_safe<M>(w, par, g, t, f));
+#else
+    (void)w; (void)par; (void)g; (void)L;
+#endif
+}
+// ||lam K s||inf, as solver.solve_grid's dv
+DK6AS6_HOT double step_norm3(const double (&K)[4][3], const double (&s)[3], double lam) {
+    double dv = std::fabs(lam * (K[0][0] * s[0] + K[0][1] * s[1] + K[0][2] * s[2]));
+    for (int q = 1; q < 4; ++q) dv = pmax(dv, std::fabs(lam * (K[q][0] * s[0] + K[q][1] * s[1] + K[q][2] * s[2])));
+    return dv;
+}
+// solver._step3: -(I + J K)^-1 r by Cramer's rule; false where Python's division by det raises (det == 0)
+DK6AS6_HOT bool step3(const double (&J)[3][4], const double (&K)[4][3], const double (&r)[3], double (&x)[3]) {
+    const double j00 = J[0][0], j01 = J[0][1], j02 = J[0][2], j03 = J[0][3];
+    const double j10 = J[1][0], j11 = J[1][1], j12 = J[1][2], j13 = J[1][3], j20 = J[2][0];
+    const double m00 = 1.0 + j00 * K[0][0] + j01 * K[1][0] + j02 * K[2][0] + j03 * K[3][0];
+    const double m01 = j00 * K[0][1] + j01 * K[1][1] + j02 * K[2][1] + j03 * K[3][1];
+    const double m02 = j00 * K[0][2] + j01 * K[1][2] + j02 * K[2][2] + j03 * K[3][2];
+    const double m10 = j10 * K[0][0] + j11 * K[1][0] + j12 * K[2][0] + j13 * K[3][0];
+    const double m11 = 1.0 + j10 * K[0][1] + j11 * K[1][1] + j12 * K[2][1] + j13 * K[3][1];
+    const double m12 = j10 * K[0][2] + j11 * K[1][2] + j12 * K[2][2] + j13 * K[3][2];
+    const double m20 = j20 * K[0][0], m21 = j20 * K[0][1], m22 = 1.0 + j20 * K[0][2];
+    const double r0 = r[0], r1 = r[1], r2 = r[2];
+    const double c0 = m11 * m22 - m12 * m21;
+    const double c1 = m12 * m20 - m10 * m22;
+    const double c2 = m10 * m21 - m11 * m20;
+    const double det = m00 * c0 + m01 * c1 + m02 * c2;
+    if (det == 0.0) return false;
+    const double x0 = (r0 * c0 + m01 * (r2 * m12 - r1 * m22) + m02 * (r1 * m21 - r2 * m11)) / det;
+    const double x1 = (m00 * (r1 * m22 - r2 * m12) + r0 * c1 + m02 * (r2 * m10 - r1 * m20)) / det;
+    const double x2 = (m00 * (r2 * m11 - r1 * m21) + m01 * (r1 * m20 - r2 * m10) + r0 * c2) / det;
+    x[0] = -x0; x[1] = -x1; x[2] = -x2;
+    return true;
+}
+}  // namespace detail
+
+// solver.solve_grid: the three-current law (#112), K 4x3, i the start
+namespace twopass {
+template <class M>
+inline Solution solve_grid(const double (&p)[4], const double (&K)[4][3], const double (&i_start)[3],
+                           const PentodeParams& par, const GridParams& g, const Newton& nw) {
+    double i[3] = {i_start[0], i_start[1], i_start[2]}, r[3], fv, v[4];
+    Law L;
+    detail::LawWork w;
+    Solution best{};
+    if (!detail::resid3<M>(p, K, i, par, g, r, fv, v, L, w) || !detail::jacobian3_safe<M>(w, par, g, L, fv)) {
+        for (int q = 0; q < 4; ++q) best.v[q] = p[q] - K[q][0] * i[0] - K[q][1] * i[1] - K[q][2] * i[2];
+        for (int k = 0; k < 3; ++k) best.i[k] = i[k];
+        best.it = 0; best.ok = false; best.fv = INFINITY; best.attempts = 1;
+        return best;
+    }
+    auto keep = [&](Solution& b) {
+        for (int q = 0; q < 4; ++q) b.v[q] = v[q];
+        for (int k = 0; k < 3; ++k) b.i[k] = i[k] - r[k];
+    };
+    double fb = fv;
+    keep(best);
+    int it = 0;
+    for (it = 1; it <= nw.max_it; ++it) {
+        double s[3];
+        if (!detail::step3(L.J, K, r, s)) break;                          // singular I + J K
+        if (!(std::isfinite(s[0]) && std::isfinite(s[1]) && std::isfinite(s[2]))) break;
+        double lam = 1.0, t[3] = {i[0] + s[0], i[1] + s[1], i[2] + s[2]}, gr[3], gv, gvolt[4];
+        Law gL;
+        detail::LawWork gw;
+        bool gok = detail::resid3<M>(p, K, t, par, g, gr, gv, gvolt, gL, gw);
+        // the full step accepted on its values: its Jacobian, unless it converges (solver._resid3_safe would reject
+        // it, gv = inf, where that Jacobian is not finite: then the line search below, as in Python)
+        if (gok && (gv < fv || fv < nw.tol_f)) {
+            if (EAGER_JACOBIAN || !(detail::step_norm3(K, s, lam) < nw.tol_v && gv < nw.tol_f))
+                gok = detail::jacobian3_safe<M>(gw, par, g, gL, gv);
+            else detail::skipped_jacobian<M>(gw, par, g, gL);
+        }
+        if (!(gv < fv || fv < nw.tol_f)) {
+            for (int h = 0; h < LS_MAX - 1; ++h) {
+                lam *= 0.5;
+                for (int k = 0; k < 3; ++k) t[k] = i[k] + lam * s[k];
+                gok = detail::resid3<M>(p, K, t, par, g, gr, gv, gvolt, gL, gw);
+                if (gv < fv) break;
+            }
+            if (gok) {
+                if (EAGER_JACOBIAN || !(detail::step_norm3(K, s, lam) < nw.tol_v && gv < nw.tol_f))
+                    gok = detail::jacobian3_safe<M>(gw, par, g, gL, gv);
+                else detail::skipped_jacobian<M>(gw, par, g, gL);
+            }
+        }
+        if (!gok) break;                                                    // no finite trial along the step
+        const double dv = detail::step_norm3(K, s, lam);
+        for (int k = 0; k < 3; ++k) { i[k] = t[k]; r[k] = gr[k]; }
+        fv = gv;
+        for (int q = 0; q < 4; ++q) v[q] = gvolt[q];
+        if (dv < nw.tol_v && fv < nw.tol_f) {
+            Solution s2{};
+            keep(s2);
+            s2.it = it; s2.ok = true; s2.fv = fv; s2.attempts = 1;
+            return s2;
+        }
+        L = gL;
+        if (fv < fb) { fb = fv; keep(best); }
+    }
+    if (it > nw.max_it) it = nw.max_it;     // Python's loop variable after a full range(1, max_it + 1)
+    best.it = it; best.ok = false; best.fv = fb; best.attempts = 1;
+    return best;
+}
+}  // namespace twopass
+
+// solver.solve_grid_restarts: each start in turn until one converges; else the smallest finite residual of all
+namespace twopass {
+template <class M>
+inline Solution solve_grid_restarts(const double (&p)[4], const double (&K)[4][3], const double (&starts)[3][3],
+                                    const PentodeParams& par, const GridParams& g, const Newton& nw) {
+    Solution best{};
+    bool have = false;
+    int total = 0;
+    for (int k = 0; k < 3; ++k) {
+        Solution s = twopass::solve_grid<M>(p, K, starts[k], par, g, nw);
+        total += s.it;
+        if (s.ok) { s.it = total; s.attempts = k + 1; return s; }
+        if (!have || s.fv < best.fv) { best = s; have = true; }
+    }
+    best.it = total; best.ok = false; best.attempts = 3;
+    return best;
+}
+}  // namespace twopass
+
+// ---- the libm path: #104's valve law and solvers, unchanged -------------------------------------------------------
+
+/* LawMath::libm runs these: #104's law (values and Jacobian in one pass) and solvers, as merged, with Python's evaluation
+ * order (the Jacobian at every accepted trial). #135 measured the two-pass law with the lazier Jacobian (twopass
+ * below) on this path too: bit-identical, 0.95x the instructions on the M1 and 0.98x the time on an Intel Xeon 8573C,
+ * but 1.11-1.15x the time on CI's AMD EPYC 7763 / 9V74 runners (g++ 15, the paired control; eager and lazy
+ * Jacobian alike), so the libm path keeps this code (cpp/RESULTS-cpu-6as6.md, "Lazier Jacobian"). */
+namespace fused {
+namespace detail {
+using dk6as6::detail::pmax;
+using dk6as6::detail::pypow;
+using dk6as6::detail::opaque;
+using dk6as6::detail::softplus;
+using dk6as6::detail::softplus_sigmoid;
+using dk6as6::detail::pysum4;
+using dk6as6::detail::step3;
 
 /* pentode.cathode_share: (Ik, dIk, f, df), gradients d/d(Vg1k, Vg2k, Vg3k, Vak). JAC = false skips what only the
  * gradients need (pentode.currents_only computes them and drops them): the values are the same, and so is whether
@@ -288,9 +783,6 @@ inline void grid_current(double vg1, const GridParams& g, double& ig1, double& d
 }
 }  // namespace detail
 
-// i = (Ip, Ig2[, Ig1]) and J = d i / d(Vg1k, Vg2k, Vg3k, Vak); `raised`: where Python would raise
-struct Law { double i[3]; double J[3][4]; bool raised; };
-
 // pentode.currents (JAC) / currents_only: (Ip, Ig2), no grid current
 template <bool JAC = true> inline void currents(const double (&v)[4], const PentodeParams& p, Law& o) {
     double ik, dik[4], f, dfs[4];
@@ -323,19 +815,13 @@ template <bool JAC = true> inline void currents_grid(const double (&v)[4], const
     o.J[2][0] = dig1; o.J[2][1] = 0.0; o.J[2][2] = 0.0; o.J[2][3] = 0.0;
 }
 
-// ---- per-sample Newton-Raphson (dk6as6/solver.py) -----------------------------------------------------------------
-
-/* v = (Vg1k, Vg2k, Vg3k, Vak) at the returned iterate; i = the valve law there (as solver.py returns it: i - R);
- * it = iterations (summed over restarts); fv = ||K R||inf there (inf if no finite iterate); attempts = starts tried. */
-struct Solution { double v[4]; double i[3]; int it; bool ok; double fv; int attempts; };
-
 namespace detail {
 // solver._resid: R = i - i(p - K i) and ||K R||inf
 template <bool JAC>
 inline void resid2(const double (&p)[4], const double (&K)[4][3], double i0, double i1, const PentodeParams& par,
                    double& r0, double& r1, double& fv, double (&v)[4], Law& L) {
     for (int r = 0; r < 4; ++r) v[r] = p[r] - K[r][0] * i0 - K[r][1] * i1;
-    currents<JAC>(v, par, L);
+    fused::currents<JAC>(v, par, L);
     r0 = i0 - L.i[0]; r1 = i1 - L.i[1];
     fv = std::fabs(K[0][0] * r0 + K[0][1] * r1);
     for (int r = 1; r < 4; ++r) fv = pmax(fv, std::fabs(K[r][0] * r0 + K[r][1] * r1));
@@ -375,7 +861,7 @@ inline Solution solve(const double (&p)[4], const double (&K)[4][3], double i0, 
                 resid2<false>(p, K, i0 + lam * s0, i1 + lam * s1, par, g0, g1, gv, gvolt, gL);
                 if (gv < fv) break;
             }
-            currents<true>(gvolt, par, gL);      // the Jacobian at the accepted point (its currents equal gL's)
+            fused::currents<true>(gvolt, par, gL);      // the Jacobian at the accepted point (its currents equal gL's)
         }
         double dv = std::fabs(K[0][0] * lam * s0 + K[0][1] * lam * s1);
         for (int r = 1; r < 4; ++r) dv = detail::pmax(dv, std::fabs(K[r][0] * lam * s0 + K[r][1] * lam * s1));
@@ -402,7 +888,7 @@ template <bool JAC>
 inline bool resid3(const double (&p)[4], const double (&K)[4][3], const double (&i)[3], const PentodeParams& par,
                    const GridParams& g, double (&r)[3], double& fv, double (&v)[4], Law& L) {
     for (int q = 0; q < 4; ++q) v[q] = p[q] - K[q][0] * i[0] - K[q][1] * i[1] - K[q][2] * i[2];
-    currents_grid<JAC>(v, par, g, L);
+    fused::currents_grid<JAC>(v, par, g, L);
     if (L.raised) { fv = INFINITY; return false; }
     for (int k = 0; k < 3; ++k) r[k] = i[k] - L.i[k];
     fv = std::fabs(K[0][0] * r[0] + K[0][1] * r[1] + K[0][2] * r[2]);
@@ -410,29 +896,6 @@ inline bool resid3(const double (&p)[4], const double (&K)[4][3], const double (
     if (!(fv < INFINITY)) { fv = INFINITY; return false; }
     if (JAC)
         for (int a = 0; a < 3; ++a) for (int b = 0; b < 4; ++b) if (!std::isfinite(L.J[a][b])) { fv = INFINITY; return false; }
-    return true;
-}
-// solver._step3: -(I + J K)^-1 r by Cramer's rule; false where Python's division by det raises (det == 0)
-inline bool step3(const double (&J)[3][4], const double (&K)[4][3], const double (&r)[3], double (&x)[3]) {
-    const double j00 = J[0][0], j01 = J[0][1], j02 = J[0][2], j03 = J[0][3];
-    const double j10 = J[1][0], j11 = J[1][1], j12 = J[1][2], j13 = J[1][3], j20 = J[2][0];
-    const double m00 = 1.0 + j00 * K[0][0] + j01 * K[1][0] + j02 * K[2][0] + j03 * K[3][0];
-    const double m01 = j00 * K[0][1] + j01 * K[1][1] + j02 * K[2][1] + j03 * K[3][1];
-    const double m02 = j00 * K[0][2] + j01 * K[1][2] + j02 * K[2][2] + j03 * K[3][2];
-    const double m10 = j10 * K[0][0] + j11 * K[1][0] + j12 * K[2][0] + j13 * K[3][0];
-    const double m11 = 1.0 + j10 * K[0][1] + j11 * K[1][1] + j12 * K[2][1] + j13 * K[3][1];
-    const double m12 = j10 * K[0][2] + j11 * K[1][2] + j12 * K[2][2] + j13 * K[3][2];
-    const double m20 = j20 * K[0][0], m21 = j20 * K[0][1], m22 = 1.0 + j20 * K[0][2];
-    const double r0 = r[0], r1 = r[1], r2 = r[2];
-    const double c0 = m11 * m22 - m12 * m21;
-    const double c1 = m12 * m20 - m10 * m22;
-    const double c2 = m10 * m21 - m11 * m20;
-    const double det = m00 * c0 + m01 * c1 + m02 * c2;
-    if (det == 0.0) return false;
-    const double x0 = (r0 * c0 + m01 * (r2 * m12 - r1 * m22) + m02 * (r1 * m21 - r2 * m11)) / det;
-    const double x1 = (m00 * (r1 * m22 - r2 * m12) + r0 * c1 + m02 * (r2 * m10 - r1 * m20)) / det;
-    const double x2 = (m00 * (r2 * m11 - r1 * m21) + m01 * (r1 * m20 - r2 * m10) + r0 * c2) / det;
-    x[0] = -x0; x[1] = -x1; x[2] = -x2;
     return true;
 }
 }  // namespace detail
@@ -506,6 +969,60 @@ inline Solution solve_grid_restarts(const double (&p)[4], const double (&K)[4][3
     }
     best.it = total; best.ok = false; best.attempts = 3;
     return best;
+}
+}  // namespace fused
+
+// ---- the law and the solvers by LawMath: libm -> fused (#104's), fast -> twopass ----------------------------------
+
+namespace detail {
+/* pentode.cathode_share: (Ik, dIk, f, df), gradients d/d(Vg1k, Vg2k, Vg3k, Vak). JAC = false skips what only the
+ * gradients need (pentode.currents_only computes them and drops them): the values are the same, and so is whether
+ * Python would raise. (Used by the #136 / #154 research screens.) */
+template <bool JAC, class M = LibmLaw>
+inline void cathode_share(double vg1, double vg2, double vg3, double va, const PentodeParams& p, double& ik,
+                          double (&dik)[4], double& f, double (&dfs)[4], bool& raised) {
+    if constexpr (std::is_same<M, LibmLaw>::value) {
+        fused::detail::cathode_share<JAC>(vg1, vg2, vg3, va, p, ik, dik, f, dfs, raised);
+    } else {
+        LawWork w;
+        cathode_values<M>(vg1, vg2, vg3, va, p, w, raised);
+        ik = w.ik; f = w.f;
+        if (JAC) cathode_jacobian<M>(w, p, dik, dfs, raised);
+    }
+}
+}  // namespace detail
+
+// pentode.currents (JAC) / currents_only: (Ip, Ig2), no grid current
+template <bool JAC = true, class M = LibmLaw> inline void currents(const double (&v)[4], const PentodeParams& p, Law& o) {
+    if constexpr (std::is_same<M, LibmLaw>::value) fused::currents<JAC>(v, p, o);
+    else twopass::currents<JAC, M>(v, p, o);
+}
+// pentode.currents_grid (JAC) / currents_grid_only: (Ip, Ig2, Ig1), Ip = (Ik - Ig1) f, Ig2 = (Ik - Ig1)(1 - f)
+template <bool JAC = true, class M = LibmLaw>
+inline void currents_grid(const double (&v)[4], const PentodeParams& p, const GridParams& g, Law& o) {
+    if constexpr (std::is_same<M, LibmLaw>::value) fused::currents_grid<JAC>(v, p, g, o);
+    else twopass::currents_grid<JAC, M>(v, p, g, o);
+}
+// solver.solve: the two-current law (no grid current); K is 4x3 storage, its first two columns used
+template <class M = LibmLaw>
+inline Solution solve(const double (&p)[4], const double (&K)[4][3], double i0, double i1, const PentodeParams& par,
+                      const Newton& nw) {
+    if constexpr (std::is_same<M, LibmLaw>::value) return fused::solve(p, K, i0, i1, par, nw);
+    else return twopass::solve<M>(p, K, i0, i1, par, nw);
+}
+// solver.solve_grid: the three-current law (#112), K 4x3, i the start
+template <class M = LibmLaw>
+inline Solution solve_grid(const double (&p)[4], const double (&K)[4][3], const double (&i_start)[3],
+                           const PentodeParams& par, const GridParams& g, const Newton& nw) {
+    if constexpr (std::is_same<M, LibmLaw>::value) return fused::solve_grid(p, K, i_start, par, g, nw);
+    else return twopass::solve_grid<M>(p, K, i_start, par, g, nw);
+}
+// solver.solve_grid_restarts: each start in turn until one converges; else the smallest finite residual of all
+template <class M = LibmLaw>
+inline Solution solve_grid_restarts(const double (&p)[4], const double (&K)[4][3], const double (&starts)[3][3],
+                                    const PentodeParams& par, const GridParams& g, const Newton& nw) {
+    if constexpr (std::is_same<M, LibmLaw>::value) return fused::solve_grid_restarts(p, K, starts, par, g, nw);
+    else return twopass::solve_grid_restarts<M>(p, K, starts, par, g, nw);
 }
 
 // ---- the netlist and its nodal-DK matrices (dk6as6/circuit.py) -----------------------------------------------------
@@ -712,6 +1229,7 @@ struct Pack {
     double bias_ma = BIAS_MA, rk = 0.0;   // target cathode current (mA) and the solved rheostat (ohm)
     Mode mode = Mode::P1;
     bool grid = true;                     // the g1 current port (hardness > 0)
+    LawMath math = LawMath::libm;         // the valve law's maths in process() (#135); the DC solves are libm
     int nu = 3, ni = 3;
     PentodeParams par = DUAL_CONTROL;
     GridParams g{0.0, 0.0, 0.0, 0.0};
@@ -867,6 +1385,7 @@ struct Settings {
     Lpf lpf = Lpf::off;                  // #103: the initial post-filter position (set_lpf() changes it)
     bool experimental = false;           // false: settings outside supported() are refused (Python raises)
     Newton newton{};                     // solver.MAX_IT / TOL_V / TOL_F (dk/solver.py, the 12AX7 stage's, unchanged)
+    LawMath math = LawMath::libm;        // #135: the valve law's maths in process() (LawMath above)
     PentodeParams par = DUAL_CONTROL;
     Values values{};
     FirDesign fir = DEFAULT_FIR;
@@ -881,7 +1400,7 @@ inline Status build_pack_with_grid(Pack& out, double fs, const Settings& s, cons
         || !std::isfinite(s.grid_hardness) || s.newton.max_it < 1 || !(s.newton.tol_v >= 0.0) || !(s.newton.tol_f >= 0.0))
         return Status::bad_argument;
     Pack c{};
-    c.fs = fs; c.bias_ma = s.bias_ma; c.mode = s.mode; c.par = s.par; c.newton = s.newton;
+    c.fs = fs; c.bias_ma = s.bias_ma; c.mode = s.mode; c.par = s.par; c.newton = s.newton; c.math = s.math;
     c.grid = s.grid_hardness != 0.0;
     c.g = g ? *g : grid(s.grid_hardness, s.par);
     c.supported = supported(s.mode, s.bias_ma, s.grid_hardness);
@@ -940,7 +1459,7 @@ struct Svf {
         return true;
     }
     void reset() { ic1 = ic2 = 0.0; }
-    double tick(double x) {
+    DK6AS6_HOT double tick(double x) {
         const double v3 = x - ic2;
         const double d1 = a2 * v3 - b1 * ic1;
         const double d2 = a2 * ic1 + a3 * v3;
@@ -979,7 +1498,7 @@ public:
         const double w = std::fmin(double(t_) / double(n_fade_), 1.0);
         for (int k = 0; k < 3; ++k) g[k] = g_from_[k] + (g_to_[k] - g_from_[k]) * w;
     }
-    double tick(double x) {
+    DK6AS6_HOT double tick(double x) {
         const double y1 = svf_[0].tick(x), y2 = svf_[1].tick(x);
         const double w = std::fmin(double(t_ + 1) / double(n_fade_), 1.0);
         if (t_ < n_fade_) ++t_;
@@ -1074,7 +1593,10 @@ public:
         for (std::size_t i = 0; i < n; ++i) {
             double x = vin[i];
             if (!std::isfinite(x)) { x = 0.0; ++stats_.nonfinite_inputs; }
-            const double y = lpf_.tick(pack_.grid ? tick<true>(x, rec, i) : tick<false>(x, rec, i));
+            const double y = lpf_.tick(pack_.math == LawMath::fast ? (pack_.grid ? tick<true, FastLaw>(x, rec, i)
+                                                                                 : tick<false, FastLaw>(x, rec, i))
+                                                                    : (pack_.grid ? tick<true, LibmLaw>(x, rec, i)
+                                                                                 : tick<false, LibmLaw>(x, rec, i)));
             if (!(std::isfinite(y) && state_finite())) { recover(); out[i] = 0.0; continue; }
             out[i] = y;
         }
@@ -1115,7 +1637,7 @@ private:
     // one internal-rate sample (the loop body of dk6as6 Stage.process_internal); returns the "out" node voltage.
     // Deviation form (#70): x_ is the deviation from x_dc, the currents enter as i - i_dc, the supplies only through
     // p_dc and y_dc.
-    template <bool GRID> double tick(double s, const Record* rec, std::size_t idx) noexcept {
+    template <bool GRID, class M> double tick(double s, const Record* rec, std::size_t idx) noexcept {
         const Pack& c = pack_;
         double p[NV];
         for (int r = 0; r < NV; ++r) {
@@ -1130,10 +1652,10 @@ private:
         Solution r;
         if (GRID) {
             const double starts[3][3] = {{e[0], e[1], e[2]}, {q_[0], q_[1], q_[2]}, {c.i_dc[0], c.i_dc[1], c.i_dc[2]}};
-            r = solve_grid_restarts(p, c.K, starts, c.par, c.g, c.newton);
+            r = solve_grid_restarts<M>(p, c.K, starts, c.par, c.g, c.newton);
             if (r.attempts > 1) ++stats_.restarted;
         } else {
-            r = solve(p, c.K, e[0], e[1], c.par, c.newton);
+            r = solve<M>(p, c.K, e[0], e[1], c.par, c.newton);
         }
         for (int k = 0; k < NI_MAX; ++k) i_[k] = r.i[k];     // kept even when !r.ok: the best finite iterate (#7)
         ++stats_.samples;
@@ -1172,14 +1694,14 @@ private:
         return y;
     }
 
-    template <bool GRID, class S> void run(const S* in, S* out, std::size_t n, double drive, double og, const Record* rec) noexcept {
+    template <bool GRID, class M, class S> void run(const S* in, S* out, std::size_t n, double drive, double og, const Record* rec) noexcept {
         double u[MaxOs], y[MaxOs];
         const int os = rs_.os();
         for (std::size_t i = 0; i < n; ++i) {
             double x = drive * double(in[i]);            // checked after the gain: a finite sample times a gain can overflow
             if (!std::isfinite(x)) { x = 0.0; ++stats_.nonfinite_inputs; }
             rs_.up(x, u);
-            for (int j = 0; j < os; ++j) y[j] = lpf_.tick(tick<GRID>(u[j], rec, i * std::size_t(os) + std::size_t(j)));
+            for (int j = 0; j < os; ++j) y[j] = lpf_.tick(tick<GRID, M>(u[j], rec, i * std::size_t(os) + std::size_t(j)));
             const double yd = rs_.down(y);
             // an input finite but far outside any signal (e.g. the largest double) can still drive the solve to inf /
             // NaN; it must not stay in the state: back to the operating point, filters cleared, this sample silent
@@ -1211,8 +1733,13 @@ private:
         begin_block();
         if (!prepared_) { for (std::size_t i = 0; i < n; ++i) out[i] = S(0); return; }
         const double drive = drive_.load(std::memory_order_relaxed), og = output_.load(std::memory_order_relaxed);
-        if (pack_.grid) run<true>(in, out, n, drive, og, rec);
-        else run<false>(in, out, n, drive, og, rec);
+        if (pack_.math == LawMath::fast) {
+            if (pack_.grid) run<true, FastLaw>(in, out, n, drive, og, rec);
+            else run<false, FastLaw>(in, out, n, drive, og, rec);
+        } else {
+            if (pack_.grid) run<true, LibmLaw>(in, out, n, drive, og, rec);
+            else run<false, LibmLaw>(in, out, n, drive, og, rec);
+        }
     }
 
     // audio-thread state

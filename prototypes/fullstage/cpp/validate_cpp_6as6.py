@@ -9,10 +9,13 @@ analysis itself, dk6as6/linear.py, and the resampler's analytical response stay 
 against Python's sample by sample in cpp/test_core_6as6.cpp). compare() lists every deviation from the committed Python
 result of the same setting; LIMITS are the tolerances cpp/tests/test_cpp_core_6as6.py asserts. Every criterion
 (dk/validate.CRIT, unchanged) must read the same as the Python result's, and every supported setting must pass.
-Run from prototypes/fullstage:  python -m cpp.validate_cpp_6as6 [--workers N] [--fir shipped]   (~1 min; writes
-cpp/results_6as6.json: k140, the parity run against the committed Python results, which use k140 since #134; or with
---fir shipped cpp/results_6as6_shipped.json: the #102-#113 resampler, which the
-Python results do not use, judged on dk/validate.CRIT alone)
+Run from prototypes/fullstage:  python -m cpp.validate_cpp_6as6 [--workers N] [--fir shipped] [--math fast] [--stereo]
+(~1 min; writes cpp/results_6as6.json: k140, the parity run against the committed Python results, which use k140 since
+#134; or with --fir shipped cpp/results_6as6_shipped.json: the #102-#113 resampler, which the Python results do not
+use, judged on dk/validate.CRIT alone). #135: --math fast runs the fast valve law (LawMath::fast) and --stereo the
+two-lane kernel (the signal on the left lane, another on the right; --lanes per_lane its scalar lane maths), each
+against the same LIMITS and criteria (cpp/results_6as6_fast.json, results_6as6_stereo.json,
+results_6as6_stereo_fast.json).
 """
 import argparse
 import json
@@ -34,6 +37,11 @@ from cpp.export_vectors_6as6 import K140  # noqa: E402 -- after the sys.path set
 EXE = None          # test_core_6as6 used by CppStage (set by run(), or by the caller)
 PARITY_FIR = "k140"  # the design of the committed Python results (dk6as6.stage.FIR, the default since #134)
 FIR = PARITY_FIR     # CppStage's resampler: PARITY_FIR (the parity run) or "shipped" (--fir shipped, CRIT alone)
+MATH = "libm"        # CppStage's valve-law maths (#135): "libm" (LawMath::libm) or "fast"
+STEREO = False       # CppStage on the two-lane kernel (#135), its lane maths LANES ("vector" / "per_lane")
+LANES = "vector"
+PROBE = False        # collect the research probes' records (test_core_6as6 cli ... probe) in PROBES
+PROBES = []
 MODELS = {"dual": MODE_BIASES, "dualg": GRID_BIASES}     # (ii) references: no grid current / the default grid law
 
 
@@ -43,11 +51,14 @@ def exe():
     return EXE
 
 
-def cli(vin, fs, os_, mode, bias, hardness, lpf="off", drive=1.0, output=1.0, fir="default", rec=False):
-    """Stage::process on vin through `test_core_6as6 cli`: (out, internal (Vg1k, Vg2k) or None, info dict)."""
+def cli(vin, fs, os_, mode, bias, hardness, lpf="off", drive=1.0, output=1.0, fir="default", rec=False, math="libm",
+        stereo=False, lanes="vector", probe=False):
+    """Stage::process on vin through `test_core_6as6 cli`: (out, internal (Vg1k, Vg2k) or None, info dict). math,
+    stereo, lanes, probe: #135 (test_core_6as6.cpp's usage)."""
     vin = np.ascontiguousarray(vin, dtype=np.float64)
     args = [exe(), "cli", repr(float(fs)), str(int(os_)), mode, repr(float(bias)), repr(float(hardness)), lpf,
-            repr(float(drive)), repr(float(output)), fir] + (["rec"] if rec else [])
+            repr(float(drive)), repr(float(output)), fir] + (["rec"] if rec else []) + [f"math={math}"] + \
+        ([f"lanes={lanes}", "stereo"] if stereo else []) + (["probe"] if probe else [])
     p = subprocess.run(args, input=vin.tobytes(), capture_output=True)
     info = json.loads(p.stderr.decode().strip().splitlines()[-1])
     if p.returncode != 0:
@@ -77,7 +88,7 @@ class CppStage:
         self.grid_hardness = grid_hardness
         self.grid = validate.pentode.grid(grid_hardness, pentode) if grid_hardness else None
         self.supported = supported(mode, bias, grid_hardness)
-        _, _, info = cli(np.zeros(0), fs, self.os, mode, bias, grid_hardness, fir=FIR)
+        _, _, info = cli(np.zeros(0), fs, self.os, mode, bias, grid_hardness, fir=FIR, math=MATH)
         self.info, self.fs, self.rk = info, info["fs"], info["rk"]
         nx, nv, no, nu, ni = 7, 4, 5, info["nu"], info["ni"]
         shapes = dict(A=(nx, nx), B=(nx, nu), C=(nx, ni), D=(no, nx), E=(no, nu), F=(no, ni), G=(nv, nx), H=(nv, nu),
@@ -107,8 +118,12 @@ class CppStage:
             raise RuntimeError("CppStage: one process() call per instance")
         self._used = True
         rec = bool({"vgk", "vg2k"} & set(record))
+        # with STEREO the signal is the left lane of the two-lane kernel, and so are the internal signals
         y, internal, info = cli(vin, self.fs_base, self.os, self.mode, self.bias, self.grid_hardness,
-                                drive=self.drive, output=self.output, fir=FIR, rec=rec)
+                                drive=self.drive, output=self.output, fir=FIR, rec=rec, math=MATH, stereo=STEREO,
+                                lanes=LANES, probe=PROBE)
+        if PROBE:
+            PROBES.append(info["probe"])
         self._stats = info["stats"]
         out = {"out": y, "_internal": {}}
         if internal is not None:
@@ -231,19 +246,31 @@ def check_crit_alone(d):
 def one(job):
     model, mode, b, q = job
     ref = json.load(open(validate.results_file(mode, model)))[f"{b:g}"][q]
+    PROBES.clear()
     r = run(q, model, b, mode)
     d = compare(r, ref)
-    return dict(model=model, mode=mode, bias_ma=b, quality=q, fir=FIR, deviation=d,
-                failed=check(d) if FIR == PARITY_FIR else check_crit_alone(d))
+    row = dict(model=model, mode=mode, bias_ma=b, quality=q, fir=FIR, math=MATH, stereo=STEREO,
+               lanes=LANES if STEREO else None, deviation=d,
+               failed=check(d) if FIR == PARITY_FIR else check_crit_alone(d))
+    if PROBE:
+        row["probes"] = list(PROBES)
+    return row
 
 
-def _init(path, fir):
-    global EXE, FIR
-    EXE, FIR = path, fir
+def _init(path, fir, math="libm", stereo=False, lanes="vector", probe=False):
+    global EXE, FIR, MATH, STEREO, LANES, PROBE
+    EXE, FIR, MATH, STEREO, LANES, PROBE = path, fir, math, stereo, lanes, probe
 
 
-def main(workers=1, write=True, fir=PARITY_FIR):
-    with ProcessPoolExecutor(workers, initializer=_init, initargs=(exe(), fir)) as ex:
+def results_name(fir=PARITY_FIR, math="libm", stereo=False, lanes="vector"):
+    """cpp/results_6as6[_<fir>][_stereo][_fast][_per_lane].json"""
+    parts = ([] if fir == PARITY_FIR else [fir]) + (["stereo"] if stereo else []) + \
+        ([] if math == "libm" else [math]) + (["per_lane"] if stereo and math == "fast" and lanes == "per_lane" else [])
+    return "results_6as6" + "".join("_" + p for p in parts) + ".json"
+
+
+def main(workers=1, write=True, fir=PARITY_FIR, math="libm", stereo=False, lanes="vector", probe=False):
+    with ProcessPoolExecutor(workers, initializer=_init, initargs=(exe(), fir, math, stereo, lanes, probe)) as ex:
         rows = list(ex.map(one, jobs()))
     worst = {k: max(r["deviation"][k] for r in rows) for k in list(LIMITS) + ["harm_db_all"]}
     comp = subprocess.run([os.environ.get("CXX", "c++"), "--version"], capture_output=True, text=True).stdout
@@ -254,9 +281,12 @@ def main(workers=1, write=True, fir=PARITY_FIR):
     if fir != PARITY_FIR:
         out["method"] += (f"; resampler {fir} (not the core's DEFAULT_FIR): judged on dk/validate.CRIT alone, the "
                           "deviations from the k140 Python results are for information")
+    if math != "libm" or stereo:
+        out["method"] += (f"; #135: valve-law maths {math}" + (f", the two-lane StereoStage (lane maths {lanes}; the "
+                          "signal on the left lane, 0.6 x it reversed on the right)" if stereo else "") +
+                          ", against the same LIMITS and criteria")
     if write:
-        name = "results_6as6.json" if fir == PARITY_FIR else f"results_6as6_{fir}.json"
-        json.dump(out, open(os.path.join(HERE, name), "w"), indent=1, default=float)
+        json.dump(out, open(os.path.join(HERE, results_name(fir, math, stereo, lanes)), "w"), indent=1, default=float)
     for r in rows:
         print(r["model"], r["mode"], r["bias_ma"], r["quality"], r["deviation"]["status"],
               "python:", r["deviation"]["status_python"], "supported" if r["deviation"]["supported"] else "exp",
@@ -271,7 +301,10 @@ if __name__ == "__main__":
     ap.add_argument("--workers", type=int, default=os.cpu_count())
     ap.add_argument("--fir", choices=("k140", "shipped"), default=PARITY_FIR,
                     help="k140: parity with the committed Python results; shipped: the #102-#113 resampler, CRIT alone")
+    ap.add_argument("--math", choices=("libm", "fast"), default="libm", help="#135: the valve law's maths")
+    ap.add_argument("--stereo", action="store_true", help="#135: run the two-lane kernel")
+    ap.add_argument("--lanes", choices=("vector", "per_lane"), default="vector", help="#135: its lane maths (fast)")
     a = ap.parse_args()
-    _, bad = main(a.workers, fir=a.fir)
+    _, bad = main(a.workers, fir=a.fir, math=a.math, stereo=a.stereo, lanes=a.lanes)
     failed = [(r["model"], r["mode"], r["bias_ma"], r["quality"], r["failed"]) for r in bad]
     sys.exit(f"C++ core deviates from the Python results: {failed}" if bad else 0)

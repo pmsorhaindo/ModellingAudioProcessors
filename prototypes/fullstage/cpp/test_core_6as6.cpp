@@ -2,17 +2,29 @@
  * realtime properties: no allocation in process(), FTZ/DAZ scoping, block-size invariance, the #7 / #112 fallbacks.
  *
  *   test_core_6as6 [vectors_6as6.txt]   run every test; one JSON line of measured errors; exit 1 on any failure
- *   test_core_6as6 cli FS OS MODE BIAS HARDNESS LPF DRIVE OUTPUT FIR [rec]     (FIR: default / shipped / k140)
+ *   test_core_6as6 stereo [vectors_6as6.txt]   the two-lane kernel (#135, cpp/dk6as6_stereo.h) against two mono
+ *                    Stages on every case, per lane maths, and its solvers on fuzzed pairs; one JSON line
+ *   test_core_6as6 cli FS OS MODE BIAS HARDNESS LPF DRIVE OUTPUT FIR [rec] [math=fast] [stereo] [lanes=per_lane]
+ *                    [probe]     (FIR: default / shipped / k140)
  *                    stdin: float64 base-rate input; stdout: float64 output (then, with "rec", the internal-rate
  *                    Vg1k and Vg2k); stderr: one JSON line (pack, operating point, latency, stats). MODE P1 / T / P2,
  *                    LPF off / 4k / 7k, FIR default (the stage's DEFAULT_FIR) / shipped / k140. Experimental
  *                    settings are allowed (as validate.py runs
- *                    them). Used by cpp/validate_cpp_6as6.py and cpp/aliasing_6as6.py.
+ *                    them). Used by cpp/validate_cpp_6as6.py and cpp/aliasing_6as6.py. #135: math=fast runs the
+ *                    fast valve law (LawMath::fast); stereo runs the input as the left lane of a StereoStage (the right
+ *                    lane gets 0.6 x the input reversed, so the lanes diverge) and outputs the left lane (lanes=: its
+ *                    lane maths; with rec, the left lane's internal signals); probe adds the research probes' record (FastLaw's argument ranges, the converging
+ *                    trials whose Jacobian was skipped) to the JSON line.
  *   test_core_6as6 law | solve2 | solve3 | restarts
  *                    stdin rows -> stdout: the valve law / the solvers, for the bit-exact comparison with the live
  *                    Python functions (cpp/tests/test_cpp_core_6as6.py)
+ *   test_core_6as6 fastlaw | fm
+ *                    stdin rows -> stdout: the law in libm and fast maths (fastlaw: v (4) -> 2 x (grid law i (3), J (12),
+ *                    raised, two-port law i (2), J (8))); dk/fastmath.h's kernels against libm (fm: fn (0 exp, 1 log1p,
+ *                    2 pow), x, y -> libm, fast), for the #135 error bounds (cpp/tests/test_cpp_core_6as6.py)
  * Build: c++ -std=c++17 -O2 -Wall -Wextra -pedantic -pthread -o test_core_6as6 cpp/test_core_6as6.cpp */
-#include "dk6as6_core.h"
+#define DK6AS6_PROBES 1        // the #135 research probes (defined below); not in the plugin or the bench
+#include "dk6as6_stereo.h"     // includes dk6as6_core.h
 
 #include <algorithm>
 #include <cfloat>
@@ -28,6 +40,37 @@
 #include "alloc_hooks.h"   // allocation counting: g_count, CountAllocs, ALLOC_HOOKS
 
 using namespace dk6as6;
+
+// ---- the #135 research probes (dk6as6_core.h, DK6AS6_PROBES): fixed storage, no allocation on the audio thread ----
+namespace dk6as6 {
+namespace probe {
+struct Range { const char* fn; double y, lo, hi; std::uint64_t n; };
+static Range g_range[32];
+static int g_nrange = 0;
+static bool g_on = false;
+static std::uint64_t g_skipped = 0, g_skipped_nonfinite = 0;
+static void update(const char* fn, double y, double x) {
+    int k = 0;
+    while (k < g_nrange && !(std::strcmp(g_range[k].fn, fn) == 0 && g_range[k].y == y)) ++k;
+    if (k == g_nrange) {
+        if (g_nrange == 32) return;
+        g_range[g_nrange++] = Range{fn, y, x, x, 0};
+    }
+    Range& r = g_range[k];
+    r.lo = std::min(r.lo, x); r.hi = std::max(r.hi, x); ++r.n;
+}
+void fastlaw_arg(const char* fn, double x, double y) {
+    if (!g_on) return;
+    update(fn, y, x);
+    if (std::strcmp(fn, "pow") == 0 && x > 0.0) update("pow_ylog", y, y * std::log(x));   // fm_pow's exp argument
+}
+void skipped_jacobian(bool finite) {
+    if (!g_on) return;
+    ++g_skipped;
+    if (!finite) ++g_skipped_nonfinite;
+}
+}  // namespace probe
+}  // namespace dk6as6
 
 // ---- tolerances (cpp/README-6as6.md, "Tolerances") ----------------------------------------------------------------
 // Set from the worst error measured (Apple clang 17 -O2 on arm64, with and without FP contraction) with the margin in
@@ -742,30 +785,55 @@ static int cli(int argc, char** argv) {
     const int os = std::atoi(argv[3]);
     Settings set = settings_of(parse_mode(argv[4]), std::strtod(argv[6], nullptr), std::strtod(argv[5], nullptr),
                                parse_lpf(argv[7]), parse_fir(argv[10]));
-    const bool rec = argc > 11 && std::string(argv[11]) == "rec";
+    bool rec = false, stereo = false, probe_on = false;
+    LaneMath lanes = LaneMath::vector;
+    for (int k = 11; k < argc; ++k) {
+        const std::string o = argv[k];
+        if (o == "rec") rec = true;
+        else if (o == "math=fast") set.math = LawMath::fast;
+        else if (o == "math=libm") set.math = LawMath::libm;
+        else if (o == "stereo") stereo = true;
+        else if (o == "lanes=per_lane") lanes = LaneMath::per_lane;
+        else if (o == "lanes=vector") lanes = LaneMath::vector;
+        else if (o == "probe") probe_on = true;
+        else { std::fprintf(stderr, "{\"status\": \"bad option %s\"}\n", o.c_str()); return 2; }
+    }
     dk6as6::Stage s;
     const Status st = s.prepare(fs, Quality{os, 0.0}, set);
     if (st != Status::ok) { std::fprintf(stderr, "{\"status\": \"%s\"}\n", to_string(st)); return 1; }
     s.set_drive(std::strtod(argv[8], nullptr));
     s.set_output(std::strtod(argv[9], nullptr));
     s.reset();
+    StereoStage ss;
+    if (stereo) {
+        if (ss.prepare_pack(fs, os, s.pack(), set.lpf, set.fir) != Status::ok) return 1;
+        ss.set_drive(std::strtod(argv[8], nullptr));
+        ss.set_output(std::strtod(argv[9], nullptr));
+        ss.set_lane_math(lanes);
+        ss.reset();
+    }
     const Vec x = read_stdin();
-    Vec y(x.size()), vgk(rec ? x.size() * os : 0), vg2k(rec ? x.size() * os : 0);
+    Vec y(x.size()), vgk(rec ? x.size() * os : 0), vg2k(rec ? x.size() * os : 0), xr(stereo ? x.size() : 0), yr(xr.size());
+    for (size_t i = 0; i < xr.size(); ++i) xr[i] = 0.6 * x[x.size() - 1 - i];
     Record r; r.vgk = rec ? vgk.data() : nullptr; r.vg2k = rec ? vg2k.data() : nullptr;
+    probe::g_on = probe_on;
     // in chunks of 256, as the plugin engine runs
     for (size_t i = 0; i < x.size(); i += 256) {
         const size_t n = std::min<size_t>(256, x.size() - i);
         Record ri = r;
         if (rec) { ri.vgk = &vgk[i * os]; ri.vg2k = &vg2k[i * os]; }
-        s.process(&x[i], &y[i], n, rec ? &ri : nullptr);
+        if (stereo) ss.process(&x[i], &xr[i], &y[i], &yr[i], n, rec ? &ri : nullptr);   // rec: the left lane's
+        else s.process(&x[i], &y[i], n, rec ? &ri : nullptr);
     }
+    probe::g_on = false;
     write_stdout(y.data(), y.size());
     if (rec) { write_stdout(vgk.data(), vgk.size()); write_stdout(vg2k.data(), vg2k.size()); }
     const Pack& p = s.pack();
-    const Stats& a = s.stats();
+    const Stats& a = stereo ? ss.stats(0) : s.stats();
     std::ostringstream o;
     o.precision(17);
-    o << "{\"status\": \"ok\", \"fs\": " << p.fs << ", \"rk\": " << p.rk << ", \"nu\": " << p.nu << ", \"ni\": " << p.ni
+    o << "{\"status\": \"ok\", \"math\": \"" << to_string(p.math) << "\", \"stereo\": " << (stereo ? "true" : "false")
+      << ", \"fs\": " << p.fs << ", \"rk\": " << p.rk << ", \"nu\": " << p.nu << ", \"ni\": " << p.ni
       << ", \"supported\": " << (p.supported ? "true" : "false") << ", \"fir\": \"" << fir_name(parse_fir(argv[10]))
       << "\", \"default_fir\": \"" << fir_name(DEFAULT_FIR) << "\""
       << ", \"latency_samples\": " << s.latency_samples() << ", \"up_delay_internal\": " << s.up_delay_internal()
@@ -784,7 +852,18 @@ static int cli(int argc, char** argv) {
     bool first = true;
     for (int b = 0; b < Stats::HIST; ++b)
         if (a.histogram[b]) { o << (first ? "" : ", ") << "\"" << b << "\": " << a.histogram[b]; first = false; }
-    o << "}}}";
+    o << "}}";
+    if (probe_on) {
+        o << ", \"probe\": {\"skipped_jacobians\": " << probe::g_skipped << ", \"skipped_nonfinite\": "
+          << probe::g_skipped_nonfinite << ", \"ranges\": [";
+        for (int k = 0; k < probe::g_nrange; ++k) {
+            const probe::Range& q = probe::g_range[k];
+            o << (k ? ", " : "") << "{\"fn\": \"" << q.fn << "\", \"y\": " << q.y << ", \"min\": " << q.lo
+              << ", \"max\": " << q.hi << ", \"calls\": " << q.n << "}";
+        }
+        o << "]}";
+    }
+    o << "}";
     std::fprintf(stderr, "%s\n", o.str().c_str());
     return 0;
 }
@@ -831,11 +910,357 @@ static int pipe_mode(const std::string& mode) {
             out.insert(out.end(), {s.v[0], s.v[1], s.v[2], s.v[3], s.i[0], s.i[1], s.i[2], double(s.it),
                                    s.ok ? 1.0 : 0.0, s.fv, double(s.attempts)});
         }
+    } else if (mode == "fastlaw") {         // rows: v (4) -> per maths (libm, fast): grid law i (3), J (12), raised,
+        for (size_t k = 0; k + 4 <= in.size(); k += 4) {   // two-port law i (2), J (8)
+            const double v[4] = {in[k], in[k + 1], in[k + 2], in[k + 3]};
+            Law a[2], b[2];
+            currents_grid<true, LibmLaw>(v, DUAL_CONTROL, g, a[0]); currents_grid<true, FastLaw>(v, DUAL_CONTROL, g, a[1]);
+            currents<true, LibmLaw>(v, DUAL_CONTROL, b[0]); currents<true, FastLaw>(v, DUAL_CONTROL, b[1]);
+            for (int m = 0; m < 2; ++m) {
+                out.insert(out.end(), {a[m].i[0], a[m].i[1], a[m].i[2]});
+                for (int q = 0; q < 3; ++q) for (int j = 0; j < 4; ++j) out.push_back(a[m].J[q][j]);
+                out.push_back(a[m].raised ? 1.0 : 0.0);
+                out.insert(out.end(), {b[m].i[0], b[m].i[1]});
+                for (int q = 0; q < 2; ++q) for (int j = 0; j < 4; ++j) out.push_back(b[m].J[q][j]);
+            }
+        }
+    } else if (mode == "fm") {              // rows: fn (0 exp, 1 log1p, 2 pow), x, y -> libm, fast
+        for (size_t k = 0; k + 3 <= in.size(); k += 3) {
+            const int fn = int(in[k]);
+            const double x = in[k + 1], y = in[k + 2];
+            if (fn == 0) out.insert(out.end(), {std::exp(x), fm_exp(x)});
+            else if (fn == 1) out.insert(out.end(), {std::log1p(x), fm_log1p(x)});
+            else out.insert(out.end(), {std::pow(x, y), fm_pow(x, y)});
+        }
     } else {
         return 2;
     }
     write_stdout(out.data(), out.size());
     return 0;
+}
+
+// ---- #135: the fast valve law on every case (mono), and the two-lane kernel against two mono Stages ---------------
+
+/* The fast maths on every case (built pack, LawMath::fast): the realtime properties of the libm path (no allocation,
+ * block-size invariance bit for bit, a finite output, every sample converged where libm converges) and its distance
+ * from the libm stage on the same case: max |y_fast - y_libm| over the case, reported as V and relative to the
+ * case's output peak; Newton iteration sums within TOL_ITER_FRAC. The CRIT and aliasing evidence is the Python side
+ * (cpp/validate_cpp_6as6.py --math fast, cpp/aliasing_6as6.py --math fast). */
+static void test_fast_mono(const Vectors& V) {
+    double worst_v = 0.0, worst_rel = 0.0, worst_it = 0.0;
+    long cases = 0, allocs = 0, block_diff = 0, nonconv_more = 0;
+    std::string worst_name;
+    for (const auto& kv : V) {
+        const std::string& key = kv.first;
+        if (key.rfind("case.", 0) != 0 || key.compare(key.size() - 4, 4, ".cfg") != 0) continue;
+        const std::string name = key.substr(0, key.size() - 4);
+        const CaseCfg k = parse_cfg(kv.second);
+        const Vec& x = need(V, name + ".in");
+        dk6as6::Stage lib, fast;
+        if (setup(lib, V, k, false) != Status::ok) continue;
+        Pack p = lib.pack();
+        p.math = LawMath::fast;
+        check(fast.prepare_pack(k.fs, k.os, p, k.lpf, fir_of(k.fir)) == Status::ok, name + " fast prepares");
+        fast.set_drive(k.drive); fast.set_output(k.output); fast.set_lpf(k.lpf); fast.reset();
+        ++cases;
+        Vec yl, yf, y1, y37;
+        run_blocks(lib, k, x, yl, 0);
+        const Stats sl = lib.stats();
+        allocs += run_blocks(fast, k, x, yf, 0);
+        const Stats sf = fast.stats();
+        double e = 0.0, peak = 0.0;
+        bool fin = true;
+        for (size_t i = 0; i < x.size(); ++i) {
+            fin = fin && std::isfinite(yf[i]);
+            e = std::max(e, std::fabs(yf[i] - yl[i]));
+            peak = std::max(peak, std::fabs(yl[i] - lib.pack().y_dc[0] * k.output));
+        }
+        check(fin, name + " fast: finite output");
+        if (e > worst_v) { worst_v = e; worst_name = name; }
+        if (peak > 0.0) worst_rel = std::max(worst_rel, e / peak);
+        const double fi = std::fabs(double(sf.iterations) - double(sl.iterations)) / double(sl.iterations);
+        worst_it = std::max(worst_it, fi);
+        nonconv_more += sf.nonconverged > sl.nonconverged + std::uint64_t(TOL_ITER_FRAC * double(sl.samples));
+        fast.set_lpf(k.lpf); fast.reset(); allocs += run_blocks(fast, k, x, y1, 1);
+        fast.set_lpf(k.lpf); fast.reset(); allocs += run_blocks(fast, k, x, y37, 37);
+        for (size_t i = 0; i < x.size(); ++i) block_diff += !same_bits(yf[i], y1[i]) || !same_bits(yf[i], y37[i]);
+    }
+    metric("fast_cases", double(cases));
+    metric("fast_vs_libm_max_v", worst_v);
+    metric("fast_vs_libm_max_rel_peak", worst_rel);
+    metric("fast_iter_frac", worst_it);
+    std::fprintf(stderr, "fast vs libm: worst %s %.3g V (%.3g of its output peak)\n", worst_name.c_str(), worst_v, worst_rel);
+    check(cases >= 40, "fast: case count");
+    check(!ALLOC_HOOKS || allocs == 0, "fast: no allocation in process()");
+    check(block_diff == 0, "fast: block-size invariance, bit for bit");
+    check(worst_it <= TOL_ITER_FRAC && nonconv_more == 0, "fast: Newton iterations and convergence as libm");
+}
+
+/* stereo vs mono: outputs and state per lane bit-equal (g_stereo_exact; asserted by cpp/tests where the build
+ * guarantees it, as cpp/README.md "Stereo"), else within TOL_PINNED_ABS; per-channel Stats equal (iterations, flags,
+ * restarts, histogram: exact builds) or within TOL_ITER_FRAC */
+static bool g_stereo_exact = true, g_vec_exact = true;
+static long g_stereo_runs = 0, g_vec_runs = 0, g_lanes_differ = 0, g_restart_lanes_differ = 0, g_stereo_allocs = 0;
+static double g_stereo_err = 0.0;
+// rel: the error relative to max(1 V, |mono|) (the misc test's absurd-but-finite outputs around a +-DBL_MAX input)
+static void stereo_compare(const std::string& what, bool vec, const Vec& a, const Vec& b, const Stats& ma, const Stats& sa,
+                           bool rel = false) {
+    bool exact = ma.iterations == sa.iterations && ma.nonconverged == sa.nonconverged && ma.restarted == sa.restarted &&
+                 ma.out_of_law == sa.out_of_law && ma.max_iterations == sa.max_iterations && ma.recoveries == sa.recoveries &&
+                 ma.nonfinite_inputs == sa.nonfinite_inputs && ma.samples == sa.samples;
+    for (int k = 0; k < Stats::HIST; ++k) exact = exact && ma.histogram[k] == sa.histogram[k];
+    double e = 0.0;
+    for (size_t i = 0; i < a.size(); ++i) {
+        exact = exact && same_bits(a[i], b[i]);
+        e = std::max(e, std::fabs(a[i] - b[i]) / (rel ? std::max(1.0, std::fabs(a[i])) : 1.0));
+    }
+    (vec ? g_vec_exact : g_stereo_exact) &= exact;
+    g_stereo_err = std::max(g_stereo_err, e);
+    const double fi = std::fabs(double(ma.iterations) - double(sa.iterations)) / std::max(1.0, double(ma.iterations));
+    check(e <= TOL_PINNED_ABS, what + " output abs " + fmt(e));
+    check(fi <= TOL_ITER_FRAC && ma.samples == sa.samples, what + " stats");
+    if (!exact) std::fprintf(stderr, "stereo not bit-equal: %s (%.3g V)\n", what.c_str(), e);
+}
+// internal-rate signals of one lane (Record's six), sized for n base samples at os
+struct RecBuf {
+    Vec vgk, vg2k, vak, ig1, ipk;
+    std::vector<std::uint16_t> it;
+    explicit RecBuf(size_t m) : vgk(m), vg2k(m), vak(m), ig1(m), ipk(m), it(m) {}
+    Record at(size_t o) { Record r; r.vgk = &vgk[o]; r.vg2k = &vg2k[o]; r.vak = &vak[o]; r.ig1 = &ig1[o]; r.ipk = &ipk[o]; r.it = &it[o]; return r; }
+    bool same(const RecBuf& b) const {
+        bool e = it == b.it;
+        for (size_t i = 0; i < vgk.size(); ++i)
+            e = e && same_bits(vgk[i], b.vgk[i]) && same_bits(vg2k[i], b.vg2k[i]) && same_bits(vak[i], b.vak[i]) &&
+                same_bits(ig1[i], b.ig1[i]) && same_bits(ipk[i], b.ipk[i]);
+        return e;
+    }
+    double maxdiff(const RecBuf& b) const {
+        double e = 0.0;
+        for (size_t i = 0; i < vgk.size(); ++i)
+            e = std::max({e, std::fabs(vgk[i] - b.vgk[i]), std::fabs(vg2k[i] - b.vg2k[i]), std::fabs(vak[i] - b.vak[i])});
+        return e;
+    }
+};
+static long g_rec_runs = 0;
+static double g_rec_err = 0.0;
+static void test_stereo_cases(const Vectors& V) {
+    const struct { LawMath m; LaneMath l; const char* name; } paths[3] = {
+        {LawMath::libm, LaneMath::per_lane, "libm"}, {LawMath::fast, LaneMath::per_lane, "fast_per_lane"},
+        {LawMath::fast, LaneMath::vector, "fast_vector"}};
+    for (const auto& kv : V) {
+        const std::string& key = kv.first;
+        if (key.rfind("case.", 0) != 0 || key.compare(key.size() - 4, 4, ".cfg") != 0) continue;
+        const std::string name = key.substr(0, key.size() - 4);
+        const CaseCfg k = parse_cfg(kv.second);
+        const Vec& x = need(V, name + ".in");
+        Vec xr(x.size());
+        for (size_t i = 0; i < x.size(); ++i) xr[i] = 0.6 * x[x.size() - 1 - i];   // the right lane: another signal
+        for (const auto& path : paths) {
+            dk6as6::Stage L, R;
+            if (setup(L, V, k, false) != Status::ok) continue;
+            Pack p = L.pack();
+            p.math = path.m;
+            L.prepare_pack(k.fs, k.os, p, k.lpf, fir_of(k.fir)); R.prepare_pack(k.fs, k.os, p, k.lpf, fir_of(k.fir));
+            for (dk6as6::Stage* s : {&L, &R}) { s->set_drive(k.drive); s->set_output(k.output); s->set_lpf(k.lpf); s->reset(); }
+            StereoStage S;
+            check(S.prepare_pack(k.fs, k.os, p, k.lpf, fir_of(k.fir)) == Status::ok, name + " stereo prepares");
+            S.set_drive(k.drive); S.set_output(k.output); S.set_lpf(k.lpf); S.set_lane_math(path.l); S.reset();
+            Vec yl(x.size()), yr(x.size()), sl(x.size()), sr(x.size());
+            const size_t os = size_t(k.os), m = x.size() * os;
+            RecBuf ml(m), mr(m), rl(m), rr(m);       // each lane's internal signals, mono and stereo
+            // one call, split at the filter switch (run_blocks(.., 0)'s blocks), with the internal records
+            size_t i = 0;
+            while (i < x.size()) {
+                size_t n = x.size() - i;
+                if (k.switch_at >= 0 && i < size_t(k.switch_at)) n = std::min(n, size_t(k.switch_at) - i);
+                if (k.switch_at >= 0 && i == size_t(k.switch_at)) { L.set_lpf(k.to); R.set_lpf(k.to); S.set_lpf(k.to); }
+                const Record a = ml.at(i * os), b = mr.at(i * os), c = rl.at(i * os), d = rr.at(i * os);
+                L.process(&x[i], &yl[i], n, &a);
+                R.process(&xr[i], &yr[i], n, &b);
+                CountAllocs ca;
+                S.process(&x[i], &xr[i], &sl[i], &sr[i], n, &c, &d);
+                g_stereo_allocs += ca.n();
+                i += n;
+            }
+            const bool vec = path.m == LawMath::fast && path.l == LaneMath::vector;
+            stereo_compare(name + " " + path.name + " L", vec, yl, sl, L.stats(), S.stats(0));
+            stereo_compare(name + " " + path.name + " R", vec, yr, sr, R.stats(), S.stats(1));
+            // the stereo lanes' internal signals (Vg1k, Vg2k, Vak, Ig1, Ip + Ig2, iterations) are their mono Stages'
+            const bool rex = ml.same(rl) && mr.same(rr);
+            (vec ? g_vec_exact : g_stereo_exact) &= rex;
+            const double re = std::max(ml.maxdiff(rl), mr.maxdiff(rr));
+            g_rec_err = std::max(g_rec_err, re);
+            check(re <= TOL_PINNED_ABS, name + " " + path.name + " internal record within TOL_PINNED_ABS: " + fmt(re));
+            if (!rex) std::fprintf(stderr, "stereo record not bit-equal: %s %s (%.3g V)\n", name.c_str(), path.name, re);
+            ++g_rec_runs;
+            ++(vec ? g_vec_runs : g_stereo_runs);
+            g_lanes_differ += L.stats().iterations != R.stats().iterations;
+            g_restart_lanes_differ += L.stats().restarted != R.stats().restarted;
+        }
+    }
+}
+
+/* the solvers alone on fuzzed pairs: lane 0 and lane 1 two different problems (the stage's p_dc + dp, warm starts
+ * near the operating point and wild ones, non-finite ones), Newton settings from the defaults to max_it 1 with zero
+ * tolerances (every lane fails, restarts, or breaks at a different iteration); each lane against the mono solver,
+ * bit for bit (or TOL_SOLVE) */
+static long g_solve_lanes = 0, g_solve_exact = 0, g_solve_flag_mismatch = 0, g_solve_reported = 0, g_solve_lanes_differ = 0,
+            g_solve_restart_differ = 0;
+static double g_solve_err = 0.0;
+static long g_kernel_mismatch = 0, g_kernel_longest_changes = 0;
+template <class M, class L> static void stereo_solve_pairs(const Pack& c, std::uint32_t seed, bool vec) {
+    std::uint32_t r = seed;
+    auto uni = [&](double lo, double hi) { r = r * 1664525u + 1013904223u; return lo + (hi - lo) * double(r >> 8) / 16777216.0; };
+    const Newton nws[4] = {Newton{}, Newton{1, 0.0, 0.0}, Newton{3, 0.0, 0.0}, Newton{6, 1e-6, 1e-6}};
+    using dkcore::simd::make;
+    using dkcore::simd::lane;
+    for (int t = 0; t < 600; ++t) {
+        const Newton nw = nws[t % 4];
+        double p[2][4], st[2][3][3];
+        for (int l = 0; l < 2; ++l) {
+            for (int q = 0; q < 4; ++q) p[l][q] = c.p_dc[q] + (q == 2 ? 0.0 : uni(q == 3 ? -250.0 : -8.0, q == 3 ? 200.0 : 8.0));
+            for (int a = 0; a < 3; ++a)
+                for (int k = 0; k < 3; ++k)
+                    st[l][a][k] = (t / 4) % 4 == 0 ? uni(-0.05, 0.05) : c.i_dc[k] + uni(-1e-3, 1e-3) * (k == 2 ? 0.1 : 1.0);
+            if (t % 37 == 5) st[l][0][0] = l ? NAN : INFINITY;            // a non-finite first start
+        }
+        if (t % 37 == 11) { st[0][0][0] = NAN; st[1][1][0] = NAN; }      // the longer lane swaps between starts
+        dkcore::simd::V2 P[4], S[3][3];
+        for (int q = 0; q < 4; ++q) P[q] = make(p[0][q], p[1][q]);
+        for (int a = 0; a < 3; ++a) for (int k = 0; k < 3; ++k) S[a][k] = make(st[0][a][k], st[1][a][k]);
+        Solution m[2][3];
+        for (int l = 0; l < 2; ++l) {
+            m[l][0] = solve<M>(p[l], c.K, st[l][0][0], st[l][0][1], c.par, nw);
+            m[l][1] = solve_grid<M>(p[l], c.K, st[l][0], c.par, c.g, nw);
+            m[l][2] = solve_grid_restarts<M>(p[l], c.K, st[l], c.par, c.g, nw);
+        }
+        const Solution2 s2[3] = {solve2<L>(P, c.K, S[0][0], S[0][1], c.par, nw),
+                                 solve_grid2<L>(P, c.K, S[0], c.par, c.g, nw, dkcore::simd::all()),
+                                 solve_grid_restarts2<L>(P, c.K, S, c.par, c.g, nw)};
+        // Solution2::kernel, counted independently from mono: per start, the larger count of the lanes running it
+        {
+            int per[2][3] = {{0, 0, 0}, {0, 0, 0}};
+            bool done[2] = {false, false};
+            for (int a = 0; a < 3; ++a)
+                for (int l = 0; l < 2; ++l) {
+                    if (done[l]) continue;
+                    const Solution q = solve_grid<M>(p[l], c.K, st[l][a], c.par, c.g, nw);
+                    per[l][a] = q.it;
+                    done[l] = q.ok;
+                }
+            int want = 0, longest_prev = -1;
+            bool changes = false;
+            for (int a = 0; a < 3; ++a) {
+                want += std::max(per[0][a], per[1][a]);
+                if (per[0][a] != per[1][a]) {
+                    const int longest = per[0][a] > per[1][a] ? 0 : 1;
+                    changes = changes || (longest_prev >= 0 && longest != longest_prev);
+                    longest_prev = longest;
+                }
+            }
+            g_kernel_mismatch += s2[2].kernel != want;
+            g_kernel_mismatch += s2[0].kernel != std::max(m[0][0].it, m[1][0].it);
+            g_kernel_mismatch += s2[1].kernel != std::max(m[0][1].it, m[1][1].it);
+            g_kernel_longest_changes += changes;
+        }
+        for (int w = 0; w < 3; ++w) {
+            for (int l = 0; l < 2; ++l) {
+                const Solution& a = m[l][w];
+                const Solution2& b = s2[w];
+                bool bits = true;
+                double e = 0.0;
+                for (int q = 0; q < 4; ++q) { bits = bits && same_bits(a.v[q], lane(b.v[q], l)); e = std::max(e, std::fabs(a.v[q] - lane(b.v[q], l))); }
+                for (int k = 0; k < 3; ++k) { bits = bits && same_bits(a.i[k], lane(b.i[k], l)); e = std::max(e, 1e3 * std::fabs(a.i[k] - lane(b.i[k], l))); }
+                bits = bits && same_bits(a.fv, lane(b.fv, l));
+                const bool flags = a.it == b.it[l] && a.ok == b.ok[l] && a.attempts == b.attempts[l];
+                g_solve_exact += bits && flags;
+                g_solve_flag_mismatch += !flags;
+                if (flags && a.ok) g_solve_err = std::max(g_solve_err, e);     // converged lanes: TOL_SOLVE
+                if (!(bits && flags) && g_solve_reported++ < 5)
+                    std::fprintf(stderr, "stereo solve %d pair %d lane %d: it %d / %d, ok %d / %d, attempts %d / %d, err %.3g\n",
+                                 w, t, l, a.it, b.it[l], a.ok, b.ok[l], a.attempts, b.attempts[l], e);
+                ++g_solve_lanes;
+            }
+            g_solve_lanes_differ += m[0][w].it != m[1][w].it;
+            if (w == 2) g_solve_restart_differ += m[0][w].attempts != m[1][w].attempts;
+        }
+    }
+    (vec ? g_vec_exact : g_stereo_exact) &= g_solve_exact == g_solve_lanes;
+}
+static void test_stereo_solve() {
+    for (Mode md : {Mode::P1, Mode::T, Mode::P2}) {
+        Settings set = settings_of(md, 1.0, 0.45);
+        set.experimental = true;
+        Pack c;
+        check(build_pack(c, 384000.0, set) == Status::ok, "stereo solve: pack");
+        stereo_solve_pairs<LibmLaw, PerLaneLaw<LibmLaw>>(c, 11u + std::uint32_t(md), false);
+        stereo_solve_pairs<FastLaw, PerLaneLaw<FastLaw>>(c, 23u + std::uint32_t(md), false);
+        stereo_solve_pairs<FastLaw, VecFastLaw>(c, 37u + std::uint32_t(md), true);
+    }
+    // where the build does not guarantee bits (cpp/README.md, "Stereo"), the lanes that converge with mono's
+    // iteration count are within TOL_SOLVE; a wild start's failing solve may round to another iterate
+    check(g_solve_err <= TOL_SOLVE, "stereo solvers: converged lanes within TOL_SOLVE of mono (" + fmt(g_solve_err) + ")");
+    check(double(g_solve_flag_mismatch) <= 0.01 * double(g_solve_lanes), "stereo solvers: iteration / flag mismatches <= 1 %");
+    // the kernel's iteration count: per start the longer lane's, summed, also where the longer lane changes
+    check(g_kernel_mismatch == 0 || g_solve_flag_mismatch > 0, "stereo solvers: Solution2::kernel as counted from mono");
+    check(g_kernel_longest_changes > 0, "stereo solvers: some pairs swap the longer lane between starts");
+}
+
+// per-lane recovery, gains and float I/O: the left lane gets +-DBL_MAX, NaN / inf and an overflowing drive, the right
+// lane a clean signal; each lane equals its mono Stage, and the right lane never notices the left one's recoveries
+static void test_stereo_misc() {
+    for (LawMath m : {LawMath::libm, LawMath::fast}) {
+        Settings set; set.math = m;
+        dk6as6::Stage L, R;
+        StereoStage S;
+        L.prepare(48000.0, STANDARD, set); R.prepare(48000.0, STANDARD, set); S.prepare(48000.0, STANDARD, set);
+        Vec xl(1024), xr(1024), yl(1024), yr(1024), sl(1024), sr(1024);
+        for (size_t i = 0; i < xl.size(); ++i) { xl[i] = 2.0 * std::sin(0.031 * double(i)); xr[i] = 4.0 * std::sin(0.017 * double(i)); }
+        xl[100] = DBL_MAX; xl[200] = -DBL_MAX; xl[300] = NAN; xl[400] = INFINITY;
+        long allocs = 0;
+        {
+            CountAllocs c;
+            for (size_t o = 0; o < xl.size(); o += 128) {
+                if (o == 512) { L.set_drive(1e308); S.set_drive(1e308, 1.0); }
+                if (o == 640) { L.set_drive(NAN); L.set_drive(1.0); S.set_drive(NAN, NAN); S.set_drive(1.0, 1.0); }
+                L.process(&xl[o], &yl[o], 128); R.process(&xr[o], &yr[o], 128);
+                S.process(&xl[o], &xr[o], &sl[o], &sr[o], 128);
+            }
+            allocs = c.n();
+        }
+        g_stereo_allocs += allocs;
+        stereo_compare(std::string("misc ") + to_string(m) + " L", m == LawMath::fast, yl, sl, L.stats(), S.stats(0), true);
+        stereo_compare(std::string("misc ") + to_string(m) + " R", m == LawMath::fast, yr, sr, R.stats(), S.stats(1), true);
+        check(S.stats(0).recoveries >= 1 && S.stats(1).recoveries == 0 && S.stats(1).nonfinite_inputs == 0,
+              "stereo: per-lane recovery");
+        // float I/O = the double path rounded to float
+        StereoStage a, b;
+        a.prepare(48000.0, STANDARD, set); b.prepare(48000.0, STANDARD, set);
+        std::vector<float> fl(480), fr(480), gl(480), gr(480);
+        Vec dl(480), dr(480), el(480), er(480);
+        for (size_t i = 0; i < 480; ++i) { fl[i] = float(2.0 * std::sin(0.13 * double(i))); fr[i] = float(0.5 * std::sin(0.07 * double(i))); dl[i] = fl[i]; dr[i] = fr[i]; }
+        a.process(dl.data(), dr.data(), el.data(), er.data(), 480);
+        b.process(fl.data(), fr.data(), gl.data(), gr.data(), 480);
+        double e = 0.0;
+        for (size_t i = 0; i < 480; ++i) e = std::max({e, std::fabs(double(gl[i]) - double(float(el[i]))), std::fabs(double(gr[i]) - double(float(er[i])))});
+        check(e == 0.0, "stereo: float I/O = the double path rounded to float");
+    }
+#if defined(__aarch64__) || defined(DKCORE_X86_SSE)
+    StereoStage s;
+    s.prepare(48000.0);
+    double x[64] = {}, y[64], z[64];
+#if defined(__aarch64__)
+    std::uint64_t before, after;
+    __asm__ __volatile__("mrs %0, fpcr" : "=r"(before));
+    s.process(x, x, y, z, 64);
+    __asm__ __volatile__("mrs %0, fpcr" : "=r"(after));
+#else
+    const unsigned before = _mm_getcsr();
+    s.process(x, x, y, z, 64);
+    const unsigned after = _mm_getcsr();
+#endif
+    check(before == after, "stereo: process() restores the caller's FP mode");
+#endif
 }
 
 static const char* compiler() {
@@ -851,7 +1276,32 @@ static const char* compiler() {
 int main(int argc, char** argv) {
     const std::string a1 = argc > 1 ? argv[1] : "";
     if (a1 == "cli") return cli(argc, argv);
-    if (a1 == "law" || a1 == "solve2" || a1 == "solve3" || a1 == "restarts") return pipe_mode(a1);
+    if (a1 == "law" || a1 == "solve2" || a1 == "solve3" || a1 == "restarts" || a1 == "fastlaw" || a1 == "fm")
+        return pipe_mode(a1);
+    if (a1 == "stereo") {
+        const Vectors V = load(argc > 2 ? argv[2] : "vectors_6as6.txt");
+        test_stereo_cases(V);
+        test_stereo_solve();
+        test_stereo_misc();
+        metric("stereo_runs", double(g_stereo_runs)); metric("vector_runs", double(g_vec_runs));
+        metric("stereo_lanes_differ_runs", double(g_lanes_differ));
+        metric("stereo_restart_lanes_differ_runs", double(g_restart_lanes_differ));
+        metric("stereo_solve_lanes", double(g_solve_lanes));
+        metric("stereo_solve_bit_equal_frac", double(g_solve_exact) / double(g_solve_lanes));
+        metric("stereo_solve_flag_mismatch", double(g_solve_flag_mismatch)); metric("stereo_solve_err", g_solve_err); metric("stereo_solve_lanes_differ", double(g_solve_lanes_differ));
+        metric("stereo_solve_restart_differ", double(g_solve_restart_differ));
+        metric("stereo_max_err", g_stereo_err);     // the stage cases and misc, V
+        metric("stereo_record_runs", double(g_rec_runs)); metric("stereo_record_err", g_rec_err);
+        metric("stereo_kernel_mismatch", double(g_kernel_mismatch));
+        metric("stereo_kernel_longest_changes", double(g_kernel_longest_changes));
+        metric("stereo_exact", g_stereo_exact ? 1 : 0); metric("vector_exact", g_vec_exact ? 1 : 0);
+        metric("stereo_process_allocations", double(g_stereo_allocs));
+        metric("alloc_hooks", ALLOC_HOOKS ? 1 : 0);
+        metric("fma", dkcore::simd::FMA ? 1 : 0);
+        std::printf("{%s, \"simd\": \"%s\", \"compiler\": \"%s\", \"failures\": %d}\n", g_json.str().c_str(),
+                    dkcore::simd::NAME, compiler(), g_fail);
+        return g_fail ? 1 : 0;
+    }
     const Vectors V = load(argc > 1 ? argv[1] : "vectors_6as6.txt");
     test_params(V);
     test_law(V);
@@ -861,6 +1311,7 @@ int main(int argc, char** argv) {
     test_lpf_and_k140(V);
     test_internal(V);
     test_cases(V);
+    test_fast_mono(V);
     test_fallbacks();
     test_nonfinite_recovery();
     test_output_overflow();

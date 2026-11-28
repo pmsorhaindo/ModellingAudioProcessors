@@ -65,7 +65,7 @@ SCRATCH = os.path.join(os.path.dirname(os.path.dirname(ROOT)), ".dispatch", "scr
 JSONL = {"cpp": os.path.join(SCRATCH, "grid_bounds_inaudible_cpp.jsonl"),
          "python": os.path.join(SCRATCH, "grid_bounds_inaudible_py.jsonl")}
 OUT_JSON = os.path.join(HERE, "grid_bounds_inaudible.json")
-SCREEN_DEPS = ("alloc_hooks.h",)
+SCREEN_DEPS = ("alloc_hooks.h", "dk6as6_stereo.h")
 TABLE1 = {"RSD-1": "DZ_12AX7_RSD1", "RSD-2": "DZ_12AX7_RSD2", "EHX-1": "DZ_12AX7_EHX1"}
 
 

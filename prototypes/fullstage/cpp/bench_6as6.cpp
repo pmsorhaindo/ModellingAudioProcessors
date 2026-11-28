@@ -8,16 +8,20 @@
  * Stage; x2 two independent mono Stages on one thread, left then right per block: the stereo cost, as #20's x2) at the
  * default setting (P1, 0.45 mA, the default grid current, filter off, the core's DEFAULT_FIR: k140), plus x1 / block-64
  * rows that change one thing from the default: T 0.5 mA (the top of T's envelope), P1 0.1 and 0.6 mA (the ends of the
- * range), no grid current, the 7k post-filter, and the shipped resampler. There is no SIMD 6AS6 kernel (README-6as6.md,
- * "CPU"), so there are no s2 / v2 rows.
+ * range), no grid current, the 7k post-filter, and the shipped resampler. #135 adds, at the default setting and every
+ * quality / peak / block, the fast valve law (LawMath::fast) as x1 and x2 rows ("_fast"), and the two-lane kernel
+ * (cpp/dk6as6_stereo.h, one StereoStage on the x2 signals): s2 (libm), s2_fast_per_lane (fast, scalar lane maths: the
+ * bit-exact reference) and v2 (fast, vector lane maths); each stereo row says whether its output is bit-identical to
+ * its x2 twin's (matches_x2, same maths).
  * DK6AS6_BENCH_ADAA adds experimental rows from the offline #136 renderer.
  * DK6AS6_BENCH_GRID_ADAA adds experimental rows from the offline #154 grid renderer.
  */
-#include "dk6as6_core.h"
+#include "dk6as6_stereo.h"   // includes dk6as6_core.h
 
 #include <chrono>
 #include <cinttypes>
 #include <cstdlib>
+#include <memory>
 
 #include "bench_common.h"   // FS, the signal, the counters, thread_cpu_ns, pct / median / jnum
 #ifdef DK6AS6_BENCH_ADAA
@@ -33,8 +37,10 @@ using namespace dk6as6;
 // The #148 research run extends the same benchmark without changing the default configurations.
 #ifdef DK6AS6_BENCH_EXTENDED_RATES
 using BenchCore = StageT<64>;
+using BenchStereo = StereoStageT<64>;
 #else
 using BenchCore = Stage;
+using BenchStereo = StereoStage;
 #endif
 
 struct BenchQuality {
@@ -69,7 +75,21 @@ public:
 #endif
         return stage_.prepare(fs, q.rate, s);
     }
+    // #135: this BenchStage runs both channels on one StereoStage instead
+    Status prepare_stereo(double fs, const BenchQuality& q, const Settings& s, LaneMath lm) {
+        stereo_ = true;
+        stereo_stage_.reset(new BenchStereo);   // only stereo rows hold one: a mono row keeps #104's layout
+        stereo_stage_->set_lane_math(lm);
+        return stereo_stage_->prepare(fs, q.rate, s);
+    }
+    void process_stereo(const double* l, const double* r, double* yl, double* yr, std::size_t n) {
+        stereo_stage_->process(l, r, yl, yr, n);
+    }
+    bool stereo() const { return stereo_; }
+    const Stats& stats(int ch) const { return stereo_ ? stereo_stage_->stats(ch) : stats(); }
+    std::uint64_t kernel_iterations() const { return stereo_stage_->kernel_iterations(); }
     void reset() {
+        if (stereo_) { stereo_stage_->reset(); return; }
 #ifdef DK6AS6_BENCH_GRID_ADAA
         if (grid_adaa_) { grid_screen_.reset(); return; }
 #endif
@@ -98,6 +118,8 @@ public:
     }
 private:
     BenchCore stage_;
+    std::unique_ptr<BenchStereo> stereo_stage_;
+    bool stereo_ = false;
 #ifdef DK6AS6_BENCH_ADAA
     research::Screen screen_;
     bool adaa_ = false;
@@ -110,7 +132,7 @@ private:
 };
 
 struct Config {
-    std::string name, variant;
+    std::string name, variant, path = "mono";   // path: mono, stereo_simd, stereo_simd_per_lane, stereo_simd_vecmath
     BenchQuality q;
     Settings set;
     double level;
@@ -120,8 +142,11 @@ struct Config {
     std::vector<double> y[2];
     std::uint64_t checksum = 0, nonconverged = 0, restarted = 0;
     bool deterministic = true;
-    double newton_mean = 0.0, newton_mean_r = 0.0;
+    double newton_mean = 0.0, newton_mean_r = 0.0, newton_mean_max = 0.0;
     int newton_max = 0;
+    int matches_x2 = -1;                        // stereo rows: output bit-identical to the x2 twin's (-1: no twin run)
+    bool stereo() const { return path != "mono"; }
+    const Stats& st(int k) const { return stereo() ? s[0]->stats(k) : s[k]->stats(); }
     std::vector<double> ns, cpu_frac, cyc, ins, pfrac, ghz, blocks;
     bool cyc_ok = true;
 };
@@ -132,7 +157,7 @@ static std::uint64_t bits_sum(const std::vector<double>& a, std::uint64_t h) {
 }
 
 static void pass(Config& c, std::size_t n, std::vector<std::chrono::steady_clock::time_point>& tp, bool timed) {
-    for (int k = 0; k < c.inst; ++k) c.s[k]->reset();
+    for (int k = 0; k < (c.stereo() ? 1 : c.inst); ++k) c.s[k]->reset();
     const std::size_t nb = n / std::size_t(c.block);
     const double cpu0 = thread_cpu_ns();
     const Cnt k0 = counters_read();
@@ -142,7 +167,11 @@ static void pass(Config& c, std::size_t n, std::vector<std::chrono::steady_clock
     tp[0] = std::chrono::steady_clock::now();
     for (std::size_t b = 0; b < nb; ++b) {
         const std::size_t o = b * std::size_t(c.block);
-        for (int k = 0; k < c.inst; ++k) c.s[k]->process(c.x[k]->data() + o, c.y[k].data() + o, std::size_t(c.block));
+        if (c.stereo())
+            c.s[0]->process_stereo(c.x[0]->data() + o, c.x[1]->data() + o, c.y[0].data() + o, c.y[1].data() + o,
+                                   std::size_t(c.block));
+        else
+            for (int k = 0; k < c.inst; ++k) c.s[k]->process(c.x[k]->data() + o, c.y[k].data() + o, std::size_t(c.block));
         tp[b + 1] = std::chrono::steady_clock::now();
     }
     const Cnt k1 = counters_read();
@@ -151,14 +180,15 @@ static void pass(Config& c, std::size_t n, std::vector<std::chrono::steady_clock
     for (int k = 0; k < c.inst; ++k) h = bits_sum(c.y[k], h);
     if (!timed) {
         c.checksum = h;
-        const Stats& l = c.s[0]->stats();
+        const Stats& l = c.st(0);
         c.newton_mean = double(l.iterations) / double(l.samples);
         c.newton_max = l.max_iterations;
-        if (c.inst == 2) c.newton_mean_r = double(c.s[1]->stats().iterations) / double(c.s[1]->stats().samples);
+        if (c.inst == 2) c.newton_mean_r = double(c.st(1).iterations) / double(c.st(1).samples);
+        if (c.stereo()) c.newton_mean_max = double(c.s[0]->kernel_iterations()) / double(l.samples);
         for (int k = 0; k < c.inst; ++k) {
-            c.nonconverged += c.s[k]->stats().nonconverged;
-            c.restarted += c.s[k]->stats().restarted;
-            c.newton_max = std::max(c.newton_max, c.s[k]->stats().max_iterations);
+            c.nonconverged += c.st(k).nonconverged;
+            c.restarted += c.st(k).restarted;
+            c.newton_max = std::max(c.newton_max, c.st(k).max_iterations);
         }
         return;
     }
@@ -252,6 +282,27 @@ int main(int argc, char** argv) {
                         c.level = lv; c.block = blk; c.inst = inst;
                         cfg.push_back(std::move(c));
                     }
+    // #135: the default setting with the fast law (x1, x2) and on the two-lane kernel (s2, s2 fast per-lane, v2)
+    for (const auto& q : qs)
+        for (double lv : levels)
+            for (int blk : {64, 512}) {
+                struct Extra { const char* tag; int inst; LawMath math; const char* path; };
+                const Extra ex[5] = {{"x1_fast", 1, LawMath::fast, "mono"}, {"x2_fast", 2, LawMath::fast, "mono"},
+                                     {"s2", 2, LawMath::libm, "stereo_simd"},
+                                     {"s2_fast_per_lane", 2, LawMath::fast, "stereo_simd_per_lane"},
+                                     {"v2", 2, LawMath::fast, "stereo_simd_vecmath"}};
+                for (const Extra& e : ex) {
+                    char nm[112];
+                    std::snprintf(nm, sizeof nm, "%s_P1_0.45mA_%gV_b%d_%s", q.name.c_str(), lv, blk, e.tag);
+                    bool keep = only.empty();
+                    for (const auto& o : only) keep = keep || std::string(nm).find(o) != std::string::npos;
+                    if (!keep) continue;
+                    Config c;
+                    c.name = nm; c.variant = "P1_0.45mA"; c.q = q; c.set = Settings{}; c.set.math = e.math;
+                    c.path = e.path; c.level = lv; c.block = blk; c.inst = e.inst;
+                    cfg.push_back(std::move(c));
+                }
+            }
     if (list) { for (const auto& c : cfg) std::printf("%s\n", c.name.c_str()); return 0; }
     if (cfg.empty()) { std::fprintf(stderr, "no configuration matches --only\n"); return 2; }
 
@@ -276,8 +327,11 @@ int main(int argc, char** argv) {
     for (auto& c : cfg) {
         const int l = int(std::find(levels, levels + 3, c.level) - levels);
         for (int k = 0; k < c.inst; ++k) {
+            if (c.stereo() && k == 1) { c.x[1] = &sig[l][1]; c.y[1].assign(n, 0.0); continue; }
             c.s[k] = new BenchStage;
-            const Status st = c.s[k]->prepare(FS, c.q, c.set, c.variant);
+            const Status st = c.stereo() ? c.s[k]->prepare_stereo(FS, c.q, c.set, c.path == "stereo_simd_vecmath"
+                                                                   ? LaneMath::vector : LaneMath::per_lane)
+                                         : c.s[k]->prepare(FS, c.q, c.set, c.variant);
             if (st != Status::ok) { std::fprintf(stderr, "%s: prepare failed (%s)\n", c.name.c_str(), to_string(st)); return 3; }
             c.x[k] = &sig[l][k];
             c.y[k].assign(n, 0.0);
@@ -285,6 +339,13 @@ int main(int argc, char** argv) {
     }
     std::vector<std::chrono::steady_clock::time_point> tp(n / 64 + 1);
     for (auto& c : cfg) pass(c, n, tp, false);
+    for (auto& c : cfg) {                        // #135: a stereo row against its x2 twin (same maths), bit for bit
+        if (!c.stereo()) continue;
+        for (const auto& t : cfg)
+            if (!t.stereo() && t.inst == 2 && t.q.name == c.q.name && t.variant == c.variant && t.level == c.level &&
+                t.block == c.block && t.set.math == c.set.math && t.set.fir.later_taps == c.set.fir.later_taps)
+                c.matches_x2 = t.checksum == c.checksum;
+    }
     for (int r = 0; r < reps; ++r) {
         for (auto& c : cfg) pass(c, n, tp, true);
         std::fprintf(stderr, "\rpass %d / %d", r + 1, reps);
@@ -314,9 +375,10 @@ int main(int argc, char** argv) {
         const double nan = std::nan("");
         std::printf("%s\n{\"name\": \"%s\", \"quality\": \"%s\", \"os\": %d, \"variant\": \"%s\", \"mode\": \"%s\", "
                     "\"bias_ma\": %g, \"grid_hardness\": %g, \"lpf\": %d, \"fir\": \"%s\", \"level_v\": %g, \"block\": %d, "
-                    "\"instances\": %d, ", i ? "," : "", c.name.c_str(), c.q.name.c_str(), c.q.rate.os, c.variant.c_str(),
+                    "\"instances\": %d, \"math\": \"%s\", \"path\": \"%s\", ", i ? "," : "", c.name.c_str(), c.q.name.c_str(), c.q.rate.os, c.variant.c_str(),
                     to_string(c.set.mode), c.set.bias_ma, c.set.grid_hardness, int(c.set.lpf),
-                    c.set.fir.later_taps == dkcore::K140_FIR.later_taps ? "k140" : "shipped", c.level, c.block, c.inst);
+                    c.set.fir.later_taps == dkcore::K140_FIR.later_taps ? "k140" : "shipped", c.level, c.block, c.inst,
+                    to_string(c.set.math), c.path.c_str());
         jnum("ns_per_sample", med, "%.1f"); std::printf(", ");
         jnum("ns_min", pct(c.ns, 0.0), "%.1f"); std::printf(", ");
         jnum("ns_max", pct(c.ns, 100.0), "%.1f"); std::printf(", ");
@@ -334,12 +396,14 @@ int main(int argc, char** argv) {
         jnum("ghz_on_cpu", cy ? median(c.ghz) : nan, "%.3f"); std::printf(", ");
         jnum("newton_mean", c.newton_mean, "%.4f"); std::printf(", ");
         jnum("newton_mean_r", c.inst == 2 ? c.newton_mean_r : nan, "%.4f"); std::printf(", ");
+        jnum("newton_mean_max", c.stereo() ? c.newton_mean_max : nan, "%.4f"); std::printf(", ");
+        if (c.stereo()) std::printf("\"matches_x2\": %s, ", c.matches_x2 < 0 ? "null" : c.matches_x2 ? "true" : "false");
         std::printf("\"newton_max\": %d, \"nonconverged\": %" PRIu64 ", \"restarted\": %" PRIu64 ", \"deterministic\": %s}",
                     c.newton_max, c.nonconverged, c.restarted, c.deterministic ? "true" : "false");
         std::fprintf(stderr, "%-36s %8.1f ns/sample  %6.2f %% core  p99 block %6.2f %%  cycles %s\n", c.name.c_str(), med,
                      100.0 * med * FS / 1e9, pct(c.blocks, 99.0), cy ? std::to_string(long(median(c.cyc))).c_str() : "-");
     }
     std::printf("]}\n");
-    for (auto& c : cfg) for (int k = 0; k < c.inst; ++k) delete c.s[k];
+    for (auto& c : cfg) for (int k = 0; k < c.inst; ++k) delete c.s[k];   // (a stereo row's s[1] is null)
     return all_det ? 0 : 1;
 }

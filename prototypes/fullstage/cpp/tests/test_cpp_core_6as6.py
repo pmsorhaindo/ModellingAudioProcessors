@@ -16,6 +16,17 @@ g++, c++ or clang++): skipped without one, except under CI (CI set), where a mis
   test_validate_reproduced_6as6  dk6as6.validate.run on the C++ core reproduces every committed dk6as6/results*.json
                                (44 settings: both models, every mode and reference current, standard and hq) within
                                validate_cpp_6as6.LIMITS; every criterion reads as Python's; supported settings pass
+  #135 (cpp/README-6as6.md, "CPU (#135)"):
+  test_validate_fast_6as6      the same reproduction with the fast valve law (LawMath::fast), mono and on the two-lane
+                               kernel (vector lane maths): the same LIMITS, every criterion as Python's
+  test_stereo_parity_6as6      StereoStage (cpp/dk6as6_stereo.h) against two mono Stages (test_core_6as6 stereo), per
+                               build; bit-exact where the build guarantees it (as the 12AX7's, cpp/README.md "Stereo")
+  test_fastlaw_kernel_bounds   dk/fastmath.h's exp / log1p / pow (EX, XA, XI) against libm on grids covering the 6AS6's
+                               recorded domain (cpp/fastlaw_domain_6as6.json), within FASTLAW_BOUND
+  test_fastlaw_law_bounds      the fast valve law against the libm law (currents, Jacobian, where Python raises) on a
+                               box around the domain, within FASTLAW_BOUND
+  test_fastlaw_records         the committed domain record (the grids cover it; no converging trial whose skipped
+                               Jacobian would have been non-finite) and the committed fast-vs-libm deviation (dBc)
 Run from prototypes/fullstage:  python -m pytest -q cpp/tests/test_cpp_core_6as6.py
 """
 import math
@@ -59,6 +70,8 @@ def test_core_6as6_vectors():
     r = _run_vectors(_exe())
     assert r["alloc_hooks"] == 1 and r["process_allocations"] == 0 and r["block_size_diff_samples"] == 0
     assert r["cases"] >= 45 and r["packs"] >= 28 and r["restart_rows_recovered"] >= 4
+    # #135: the fast law on every case: within FASTLAW_BOUND["stage_rel_peak"] of the libm stage's output
+    assert r["fast_cases"] == r["cases"] and r["fast_vs_libm_max_rel_peak"] <= FASTLAW_BOUND["stage_rel_peak"]
 
 
 def test_core_6as6_no_contract():
@@ -124,8 +137,11 @@ def _problems(st, rng, n):
     return p, s
 
 
-def test_bit_exact_solvers():
-    exe = _exe(("-O2", "-ffp-contract=off"))
+@pytest.mark.parametrize("defines", [(), ("DK6AS6_LAZY_JACOBIAN",)], ids=["eager", "lazy"])
+def test_bit_exact_solvers(defines):
+    """The solvers against the live Python ones, bit for bit: the default (solver.py's evaluation order) and the
+    lazier Jacobian's research build (-DDK6AS6_LAZY_JACOBIAN, #135)."""
+    exe = _exe(("-O2", "-ffp-contract=off"), defines)
     rng = np.random.default_rng(1042)
     settings = [(solver.MAX_IT, solver.TOL_V, solver.TOL_F), (1, 0.0, 0.0), (3, 0.0, 0.0), (6, 1e-6, 1e-6)]
     for mode, h, tag in (("P1", 0.0, "solve2"), ("T", 0.0, "solve2"), ("P1", 1.0, "solve3"), ("T", 1.0, "solve3"),
@@ -256,18 +272,253 @@ def test_validate_reproduced_6as6():
     assert len(out["rows"]) == 44
 
 
+@pytest.mark.parametrize("stereo", [False, True], ids=["mono", "stereo_vector"])
+def test_validate_fast_6as6(stereo):
+    """#135: the fast valve law (and the two-lane kernel with vector lane maths) reproduces every committed Python
+    result within the libm path's LIMITS, every criterion as Python's, every supported setting passing."""
+    _exe()
+    out, bad = VC.main(workers=os.cpu_count(), write=False, math="fast", stereo=stereo)
+    assert not bad, [(r["model"], r["mode"], r["bias_ma"], r["quality"], r["failed"]) for r in bad]
+    assert len(out["rows"]) == 44 and all(r["math"] == "fast" and r["stereo"] == stereo for r in out["rows"])
+
+
+# ---- #135: the two-lane kernel and the fast valve law ---------------------------------------------------------------
+
+ARM64 = platform.machine().lower() in ("arm64", "aarch64")
+
+
+def _stereo_exact_expected(flags, scalar, compiler, fma):
+    """As cpp/tests/test_cpp_core.py (cpp/README.md, "Stereo"): bit-exact when nothing is contracted (-ffp-contract=off,
+    or no FMA instructions), or with clang's per-expression contraction on the native NEON / SSE2 types; not
+    guaranteed for the struct fallback with contraction, nor for GCC's -ffp-contract=fast with FMA."""
+    if "-ffp-contract=off" in flags or not fma:
+        return True
+    return not scalar and "clang" in compiler.lower()
+
+
+STEREO_BUILDS = [(("-O2",), False), (("-O3",), False), (("-O2", "-ffp-contract=off"), False),
+                 (("-O2",), True), (("-O2", "-ffp-contract=off"), True), (("-O2", "-march=x86-64-v3"), False),
+                 (("-O2", "-DDK6AS6_LAZY_JACOBIAN"), False)]    # the lazier Jacobian's research build, both kernels
+
+
+@pytest.mark.parametrize("flags,scalar", STEREO_BUILDS, ids=lambda v: "scalar" if v is True else
+                         "simd" if v is False else " ".join(v))
+def test_stereo_parity_6as6(flags, scalar):
+    """Every vector case on StereoStage (left: the case's input, right: 0.6 x it reversed) against two mono Stages,
+    for libm, per-lane fast and vector fast lane maths; the solvers on 32 400 fuzzed lanes (lanes diverging in
+    iterations and restarts, non-finite starts, max_it 1..50), each lane's internal record and the kernel's iteration
+    count; per-lane recovery, float I/O, the FP mode."""
+    if "-march=x86-64-v3" in flags and not X86:
+        pytest.skip("x86-64 only")
+    exe = _exe(flags, ("DKCORE_SIMD_SCALAR",) if scalar else ())
+    p = subprocess.run([exe, "stereo", VECTORS], capture_output=True, text=True)
+    if p.returncode == -signal.SIGILL:
+        pytest.skip("this CPU cannot run the build")
+    r = json.loads(p.stdout.strip().splitlines()[-1])
+    assert p.returncode == 0 and r["failures"] == 0, p.stderr[-3000:]     # every check within tolerance
+    assert r["simd"] == ("scalar" if scalar else "neon" if ARM64 else "sse2" if X86 else r["simd"])
+    assert r["alloc_hooks"] == 1 and r["stereo_process_allocations"] == 0
+    assert r["stereo_runs"] == 90 and r["vector_runs"] == 45 and r["stereo_lanes_differ_runs"] >= 100
+    assert r["stereo_solve_lanes"] == 32400 and r["stereo_solve_lanes_differ"] >= 5000
+    assert r["stereo_solve_restart_differ"] >= 500
+    # #135 review: each lane's internal record (Vg1k, Vg2k, Vak, Ig1, Ip + Ig2, iterations) is its mono Stage's; the
+    # kernel's iteration count is per start the longer lane's, summed, also where the longer lane changes
+    assert r["stereo_record_runs"] == 135 and r["stereo_record_err"] <= 1e-9
+    assert r["stereo_kernel_longest_changes"] > 0
+    if r["stereo_solve_flag_mismatch"] == 0:
+        assert r["stereo_kernel_mismatch"] == 0
+    if _stereo_exact_expected(flags, scalar, r["compiler"], r["fma"]):
+        assert r["stereo_exact"] == 1 and r["vector_exact"] == 1, f"{r['compiler']} fma={r['fma']}\n" + p.stderr[-3000:]
+
+
+# The fast law's error bounds (cpp/RESULTS-cpu-6as6.md, "Accuracy evidence"): measured worst (Apple clang 17 -O2,
+# macOS libm, 28 Nov 2026) in the comment, asserted with margin. Kernels: relative to libm, where libm's result is a
+# positive normal (below the fast domain exp / log1p call libm: bit-equal). Law: each current against its terms (#18's
+# convention): the grid law's Ip, Ig2 against Ik + Ig1 (they are (Ik - Ig1) f and (Ik - Ig1)(1 - f); a plain relative
+# error has no bound where Ig1 ~ Ik), the two-port law's against Ik; Ig1 relative; each Jacobian entry against its
+# row's L1 norm. LAW_I_CUTOFF is a test cutoff, not the subnormal range: below it (the two-port law only: Ik
+# underflowing towards E1^EX's subnormal range, where E1^EX / E1 loses relative precision; 0 in the stage under
+# FTZ / DAZ below 2.2e-308) the absolute error stays below it. "raised" (where Python raises) identical everywhere.
+FASTLAW_BOUND = dict(
+    exp=1e-12,            # 3.87e-13 (dk/fastmath.py BOUND["exp"], #18)
+    log1p=3e-13,          # 9.24e-14 (dk/fastmath.py BOUND["log1p"])
+    pow_EX=1e-12,         # 5.17e-13, bases to 1e-300 (|EX log s| to 1029); 3.93e-13 where |EX log s| <= 50
+    pow_XA=1e-12,         # 3.88e-13
+    pow_XI=1e-12,         # 4.13e-13
+    law_i=3e-12,          # grid law vs Ik + Ig1 1.17e-12, two-port vs Ik 1.21e-12 (#18's triode: 3e-12)
+    law_ig1=3e-12,        # 1.01e-12
+    law_j=3e-11,          # 8.4e-12
+    stage_rel_peak=1e-10,  # test_core_6as6 fast_vs_libm_max_rel_peak: 3.68e-12 (3.46e-11 V, case P1_g_0.6_s8)
+    deviation_dbc=-180.0,  # cpp/results_fastlaw_6as6.json: peak -205.4 dBc, RMS -210.4, largest line -211.8
+)
+LAW_I_CUTOFF = 1e-290
+DBL_MIN = 2.2250738585072014e-308
+
+
+def _fastlaw_domain():
+    path = os.path.join(ROOT, "cpp", "fastlaw_domain_6as6.json")
+    return json.load(open(path))
+
+
+def _kernel_grids(rng):
+    """(name, fn, x, y) grids over the recorded domain with margin (exp to EXP_LO and below, log1p on (0, 1] and 0,
+    each pow on (0, 1.25 x the largest base])."""
+    from dk import fastmath as fm
+    d = _fastlaw_domain()["ranges"]
+    n = 100000
+    out = [("exp", 0, np.concatenate([np.linspace(fm.EXP_LO, 0.0, n), -np.logspace(-40, np.log10(-fm.EXP_LO), n),
+                                      np.linspace(d["exp"]["min"] * 1.25, fm.EXP_LO, 2000)]), 0.0),
+           ("log1p", 1, np.concatenate([np.logspace(-300, 0, n), np.linspace(1e-6, 1.0, n), [0.0, 1.0]]), 0.0)]
+    names = {pentode.DUAL_CONTROL["EX"]: "pow_EX", pentode.DUAL_CONTROL["XA"]: "pow_XA", pentode.GRID["XI"]: "pow_XI"}
+    for k, v in d.items():
+        if k.startswith("pow_y") and not k.startswith("pow_ylog"):
+            g = float(k[len("pow_y"):])
+            hi = v["max"] * 1.25
+            lo = max(v["min"], 1e-300) if v["min"] > 0 else 1e-300
+            out.append((names[g], 2, np.concatenate([np.logspace(np.log10(lo), np.log10(hi), n),
+                                                     np.linspace(0.0, hi, n)[1:], rng.uniform(0.0, hi, n)]), g))
+    return out
+
+
+def test_fastlaw_kernel_bounds():
+    exe = _exe()
+    grids = _kernel_grids(np.random.default_rng(135))
+    assert sorted(g[0] for g in grids) == ["exp", "log1p", "pow_EX", "pow_XA", "pow_XI"]
+    for name, fn, x, y in grids:
+        o = _pipe(exe, "fm", np.column_stack([np.full_like(x, fn), x, np.full_like(x, y)])).reshape(-1, 2)
+        normal = o[:, 0] >= DBL_MIN
+        err = np.max(np.abs(o[normal, 1] / o[normal, 0] - 1))
+        assert err <= FASTLAW_BOUND[name], (name, err)
+        if fn < 2:      # exp / log1p outside the fast domain call libm: its bits
+            assert np.array_equal(o[~normal, 0], o[~normal, 1]), name
+        else:           # pow with a subnormal result (libm exp of the fast g log s; 0 in the stage, FTZ): absolute
+            assert np.max(np.abs(o[~normal, 1] - o[~normal, 0]), initial=0.0) <= 1e-12 * DBL_MIN, name
+
+
+def test_fastlaw_law_bounds():
+    exe = _exe()
+    rng = np.random.default_rng(1351)
+    n = 200000
+    pts = np.column_stack([rng.uniform(-30.0, 5.0, n), rng.uniform(-5.0, 250.0, n), rng.uniform(-30.0, 30.0, n),
+                           rng.uniform(-10.0, 450.0, n)])
+    pts[:10000, 1] = rng.uniform(-1e-3, 2e-3, 10000)          # the Vg2 floor
+    pts[10000:20000, 3] = rng.uniform(-1e-3, 2e-3, 10000)     # the Va floor and the knee
+    edge = np.array([[0.0, 120.0, 0.0, 1e160], [1e5, 1e-3, 0.0, 100.0], [600.0, 120.0, 0.0, 150.0],
+                     [-800.0, 120.0, 0.0, 150.0], [0.0, 0.0, 0.0, 0.0], [2.0, -5.0, -50.0, -5.0]])
+    pts = np.vstack([pts, edge])
+    o = _pipe(exe, "fastlaw", pts).reshape(-1, 2, 26)
+    L, F = o[:, 0], o[:, 1]
+    assert np.array_equal(L[:, 15], F[:, 15])                 # where Python would raise
+    L, F = L[L[:, 15] == 0], F[L[:, 15] == 0]
+    ik = L[:, 16] + L[:, 17]          # the cathode current Ik = Ip + Ig2 of the two-port law at the same point (libm)
+    ig1 = np.abs(L[:, 2])
+    # the grid law: Ip = (Ik - Ig1) f and Ig2 = (Ik - Ig1)(1 - f), so their terms are Ik and Ig1 (#18's convention,
+    # dk/fastmath.py BOUND["currents"]): the error against Ik + Ig1 where that is >= LAW_I_CUTOFF (every random point:
+    # Ig1 never underflows in the box), absolute below it (the edge rows, e.g. Vg1k = -800 V or all-zero voltages)
+    terms = np.abs(ik) + ig1
+    tb = terms >= LAW_I_CUTOFF
+    di = np.max(np.abs(F[:, 0:2] - L[:, 0:2]), axis=1)
+    assert np.mean(tb) > 0.9999 and np.max(di[tb] / terms[tb]) <= FASTLAW_BOUND["law_i"]
+    assert np.max(di[~tb], initial=0.0) <= LAW_I_CUTOFF
+    g1 = ig1 >= LAW_I_CUTOFF
+    assert np.max(np.abs(F[g1, 2] / L[g1, 2] - 1)) <= FASTLAW_BOUND["law_ig1"]
+    J, JF = L[:, 3:15].reshape(-1, 3, 4), F[:, 3:15].reshape(-1, 3, 4)
+    rs = np.sum(np.abs(J), axis=2, keepdims=True)
+    assert np.max((np.abs(JF - J) / np.where(rs > 0, rs, 1.0))[terms >= LAW_I_CUTOFF]) <= FASTLAW_BOUND["law_j"]
+    # the two-port law (no grid current): the error against Ik where Ik >= LAW_I_CUTOFF; below it, absolute
+    big = np.abs(ik) >= LAW_I_CUTOFF
+    d2 = np.max(np.abs(F[:, 16:18] - L[:, 16:18]), axis=1)
+    assert np.max(d2[big] / np.abs(ik[big])) <= FASTLAW_BOUND["law_i"]
+    assert np.max(d2[~big], initial=0.0) <= LAW_I_CUTOFF
+    J2, J2F = L[:, 18:26].reshape(-1, 2, 4), F[:, 18:26].reshape(-1, 2, 4)
+    rs2 = np.sum(np.abs(J2), axis=2, keepdims=True)
+    assert np.max((np.abs(J2F - J2) / np.where(rs2 > 0, rs2, 1.0))[big]) <= FASTLAW_BOUND["law_j"]
+
+
+@pytest.mark.parametrize("cmd", ["sweep", "scan", "guardgrid"])
+def test_aliasing_path_selectors_guard_only(cmd):
+    """#135 review: --math / --stereo would mix paths in sweep / scan's shared cache and write them to the canonical
+    (libm, mono) records, so only the guard takes them."""
+    for opt in (["--math", "fast"], ["--stereo"]):
+        p = subprocess.run([sys.executable, "-m", "cpp.aliasing_6as6", cmd, *opt], cwd=ROOT, capture_output=True,
+                           text=True)
+        assert p.returncode == 2 and "guard command only" in p.stderr, (cmd, opt, p.stderr[-500:])
+
+
+def test_cpp_stage_stereo_records_its_own_lane():
+    """#135 review: with STEREO, CppStage takes the output and the internal signals (the burst criteria's Vg1k, Vg2k)
+    from one two-lane run, the left lane's; an output-only call works. The stereo lane equals the mono stage bit for
+    bit on builds that guarantee it, else within the vectors' TOL_PINNED_ABS (1e-9 V)."""
+    _exe()
+    x = 4.0 * np.sin(2 * np.pi * 1000.0 * np.arange(4800) / 48000.0)
+    saved = (VC.STEREO, VC.MATH)
+    try:
+        out = {}
+        for stereo in (False, True):
+            VC.STEREO, VC.MATH = stereo, "fast"
+            st = VC.CppStage(48000.0, mode="P1")
+            out[stereo] = st.process(x, record=("out", "vgk", "vg2k"))
+            y = VC.CppStage(48000.0, mode="P1").process(np.zeros(1))["out"]     # output only
+            assert y.shape == (1,) and np.isfinite(y).all()
+        for k in ("vgk", "vg2k"):
+            assert out[True]["_internal"][k].shape == (4800 * 8,)
+            assert np.max(np.abs(out[True]["_internal"][k] - out[False]["_internal"][k])) <= 1e-9
+        assert np.max(np.abs(out[True]["out"] - out[False]["out"])) <= 1e-9
+    finally:
+        VC.STEREO, VC.MATH = saved
+
+
+def test_fastlaw_records():
+    """cpp/fastlaw_domain_6as6.json (python -m cpp.fastlaw_6as6 domain) and cpp/results_fastlaw_6as6.json (deviation):
+    every validation setting ran and passed with both maths; on the fast path the lazier Jacobian skipped the Jacobian
+    of many converging trials and none of them would have been non-finite (so skipping it changed no result, #135); the
+    kernel grids above cover every recorded argument range; the fast path's deviation from libm is within
+    FASTLAW_BOUND["deviation_dbc"] at every point, mono and stereo, with libm's Newton iterations."""
+    from dk import fastmath as fm
+    d = _fastlaw_domain()
+    assert d["validation"] == {"libm": {"rows": 44, "failed": 0}, "fast": {"rows": 44, "failed": 0}}
+    lj = d["lazy_jacobian"]["fast"]          # the lazier Jacobian's path (libm runs #104's eager solvers: none skipped)
+    assert lj["skipped_jacobians"] > 1e8 and lj["skipped_nonfinite"] == 0, lj
+    assert d["lazy_jacobian"]["libm"]["skipped_jacobians"] == 0
+    grids = {g[0]: g for g in _kernel_grids(np.random.default_rng(0))}
+    r = d["ranges"]
+    assert grids["exp"][2].min() <= r["exp"]["min"] and r["exp"]["max"] <= 0.0
+    assert 0.0 <= r["log1p"]["min"] and r["log1p"]["max"] <= 1.0
+    for k, v in r.items():
+        if k.startswith("pow_y") and not k.startswith("pow_ylog"):
+            g = float(k[len("pow_y"):])
+            name = {pentode.DUAL_CONTROL["EX"]: "pow_EX", pentode.DUAL_CONTROL["XA"]: "pow_XA",
+                    pentode.GRID["XI"]: "pow_XI"}[g]
+            assert grids[name][2].max() >= v["max"] and v["min"] >= 0.0, k
+    assert fm.EXP_LO <= 0.0
+    dev = json.load(open(os.path.join(ROOT, "cpp", "results_fastlaw_6as6.json")))
+    assert len(dev["rows"]) == 8 * 2 * 4 * 3
+    for row in dev["rows"]:
+        for tag in ("fast", "fast_stereo"):
+            q = row[tag]
+            assert q["peak_dbc"] <= FASTLAW_BOUND["deviation_dbc"] and q["nonconverged"] == 0, (row, tag)
+            assert abs(q["iterations"] - q["iterations_libm"]) <= 1e-3 * q["iterations_libm"], (row, tag)
+
+
 BENCH_KEYS = {"name", "quality", "os", "variant", "mode", "bias_ma", "grid_hardness", "lpf", "fir", "level_v", "block",
               "instances", "ns_per_sample", "ns_min", "ns_max", "pct_core", "block_pct_p50", "block_pct_p99",
               "block_pct_max", "cpu_on_fraction", "cycles_per_sample", "instr_per_sample", "ghz_on_cpu", "newton_mean",
               "newton_max", "nonconverged", "restarted", "deterministic"}
 
 
-def _bench_rows_ok(rows):
-    assert len(rows) == 60 and len({r["name"] for r in rows}) == 60
+def _bench_rows_ok(rows, meta=None):
+    # 60 rows before #135; #135 adds 60 (x1 / x2 fast, s2, s2 fast per-lane, v2 at the default setting)
+    assert len(rows) in (60, 120) and len({r["name"] for r in rows}) == len(rows)
     for r in rows:
         assert BENCH_KEYS <= set(r), r["name"]
         assert r["deterministic"] and r["ns_per_sample"] > 0 and r["newton_mean"] >= 1.0, r
         assert r["nonconverged"] == 0 and r["newton_max"] <= 3 * 50, r
+        if r.get("path", "mono") != "mono":     # #135: the two-lane kernel against two mono Stages of the same maths:
+            # bit-identical where the build guarantees it (as the 12AX7 bench test); else test_stereo_parity_6as6's
+            # tolerance holds for that build
+            assert r["newton_mean_max"] >= max(r["newton_mean"], r["newton_mean_r"]), r
+            if meta and _stereo_exact_expected(("-O2",), False, meta["compiler"], meta["fma"]):
+                assert r["matches_x2"] is True, r
 
 
 def test_bench_6as6_smoke():
@@ -275,12 +526,12 @@ def test_bench_6as6_smoke():
         pytest.skip("no C++ compiler")
     exe = B.build(name="bench_6as6")
     names = subprocess.run([exe, "--list"], capture_output=True, text=True, check=True).stdout.split()
-    assert len(names) == 2 * 3 * 2 * 2 + 6 * 2 * 3      # default: quality x peak x block x instances; 6 variants
+    assert len(names) == 2 * 3 * 2 * 2 + 6 * 2 * 3 + 2 * 3 * 2 * 5   # default, 6 variants, #135's 5 paths
     p = subprocess.run([exe, "--seconds", "0.011", "--reps", "1"], capture_output=True, text=True)
     assert p.returncode == 0, p.stderr[-2000:]           # 1: an output differed between passes
     d = json.loads(p.stdout)
     assert d["meta"]["samples_per_pass"] == 512 and d["meta"]["core"] == "cpp/dk6as6_core.h"
-    _bench_rows_ok(d["results"])
+    _bench_rows_ok(d["results"], d["meta"])
 
 
 def test_bench_6as6_records():
@@ -292,7 +543,7 @@ def test_bench_6as6_records():
         d = json.load(open(f))
         assert {"host", "build", "state_before", "state_after", "meta", "results"} <= set(d), f
         assert d["meta"]["reps"] >= 5 and not d["build"]["dirty"] and d["build"]["source"] == "cpp/bench_6as6.cpp", f
-        _bench_rows_ok(d["results"])
+        _bench_rows_ok(d["results"], d["meta"])
 
 
 def test_aliasing_records():

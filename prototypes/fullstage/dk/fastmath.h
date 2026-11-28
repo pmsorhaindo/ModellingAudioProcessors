@@ -13,10 +13,19 @@
 #include <string.h>
 #include "fastmath_tables.h"
 
-static inline uint64_t fm_asu(double d) { uint64_t u; memcpy(&u, &d, 8); return u; }
-static inline double fm_asd(uint64_t u) { double d; memcpy(&d, &u, 8); return d; }
+/* Forced inline where the compiler has the attribute (#135): GCC's -O3 inlining budget per translation unit can run out
+ * in a unit with many instantiations of a caller (cpp/dk6as6_core.h), and these kernels must stay inline. No change to
+ * the arithmetic. */
+#if defined(__GNUC__) || defined(__clang__)
+#define FM_INLINE static inline __attribute__((always_inline))
+#else
+#define FM_INLINE static inline
+#endif
 
-static inline double fm_exp(double x) {
+FM_INLINE uint64_t fm_asu(double d) { uint64_t u; memcpy(&u, &d, 8); return u; }
+FM_INLINE double fm_asd(uint64_t u) { double d; memcpy(&d, &u, 8); return d; }
+
+FM_INLINE double fm_exp(double x) {
     if (!(x >= FM_EXP_LO && x <= FM_EXP_HI)) return exp(x);
     double kd = x * FM_INV_LN2N + FM_SHIFT;
     int64_t k = (int64_t)(fm_asu(kd) - fm_asu(FM_SHIFT));      /* = (int64_t)(kd - SHIFT), without a cvt */
@@ -29,14 +38,14 @@ static inline double fm_exp(double x) {
     return fm_asd(sb) * p;
 }
 
-static inline double fm_log_poly(double r) {
+FM_INLINE double fm_log_poly(double r) {
     const double *a = FM_LOG_A;
     double r2 = r * r;
     return r + r2 * ((a[2] + r * a[3]) + r2 * (a[4] + r * a[5]));
 }
 
 /* x (positive normal) = 2^k m, m in [0.6875, 1.375); i = m's bin. Returns r = (m - c_i) / c_i. */
-static inline double fm_log_reduce(double x, double *kd, int *i) {
+FM_INLINE double fm_log_reduce(double x, double *kd, int *i) {
     uint64_t ix = fm_asu(x), tmp = ix - FM_LOG_OFF;
     *i = (int)((tmp >> (52 - FM_LOG_BITS)) & ((1 << FM_LOG_BITS) - 1));
     *kd = (double)((int64_t)tmp >> 52);
@@ -44,7 +53,7 @@ static inline double fm_log_reduce(double x, double *kd, int *i) {
     return (m - FM_LOG_C[*i]) * FM_LOG_INV[*i];
 }
 
-static inline double fm_log(double x) {
+FM_INLINE double fm_log(double x) {
     if (!(x >= 0x1p-1022 && x < INFINITY)) return log(x);
     double kd; int i;
     double r = fm_log_reduce(x, &kd, &i);
@@ -52,7 +61,7 @@ static inline double fm_log(double x) {
 }
 
 /* 0 < e <= 1 (the softplus' log1p(exp(-|z|))); libm outside. */
-static inline double fm_log1p(double e) {
+FM_INLINE double fm_log1p(double e) {
     if (!(e > 0.0 && e <= 1.0)) return log1p(e);
     double t = 1.0 + e, c = e - (t - 1.0);
     double kd; int i;
@@ -60,7 +69,7 @@ static inline double fm_log1p(double e) {
     return (kd * FM_LN2_HI + FM_LOG_LC[i]) + ((kd * FM_LN2_LO + fm_log_poly(r)) + c * FM_LOG_INV[i] * (1.0 - 0.5 * kd));
 }
 
-static inline double fm_pow(double s, double g) {
+FM_INLINE double fm_pow(double s, double g) {
     if (!(s >= 0x1p-1022 && s < INFINITY)) return pow(s, g);
     return fm_exp(g * fm_log(s));
 }
