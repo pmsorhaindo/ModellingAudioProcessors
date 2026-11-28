@@ -285,6 +285,11 @@ One change to the rule: with k140 at 2 V the 0.1 s window's analysis floor (−1
 
 ## CPU
 
+**#135** measured three ways to cut this cost: fast maths for the valve law (`Settings::math = LawMath::fast`), a lazier
+Jacobian (now always on, bit-exact with the libm path) and a two-lane stereo kernel (`dk6as6::StereoStage`,
+`cpp/dk6as6_stereo.h`). Speed, accuracy evidence and what was adopted: `cpp/RESULTS-cpu-6as6.md`. The numbers below
+are #104's, before #135.
+
 **Method**: the #20 / #67 harness and method unchanged (`cpp/BENCHMARK.md`): `bench_6as6.cpp` shares `bench.cpp`'s
 signal (the Karplus–Strong guitar phrase), counters, clocks, warm-up, round-robin passes, determinism check and
 percentiles through `bench_common.h`, and is run by `python -m cpp.bench --core 6as6`, which records the host, the

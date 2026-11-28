@@ -52,6 +52,12 @@
  *     (Stats::nonfinite_outputs).
  *   - Python's out-of-law check warns; here it is counted (Stats::out_of_law).
  *
+ * CPU (#135; cpp/RESULTS-cpu-6as6.md). The law is evaluated in two passes (values, then the Jacobian from the values'
+ * intermediates), and a solver adds the Jacobian only where the next Newton step uses it: the lazier Jacobian, always
+ * on (the one behaviour difference from solver._resid3_safe, a converging trial with finite values and a non-finite
+ * Jacobian, measured not to occur). Settings::math selects the law's maths per pack: LawMath::libm (default, Python's
+ * arithmetic, bit-exact) or LawMath::fast (dk/fastmath.h). cpp/dk6as6_stereo.h adds StereoStage, the two-lane kernel.
+ *
  * Do not build with -ffast-math (dk_core.h #errors): the fallbacks rely on NaN / inf comparisons.
  */
 #ifndef DK6AS6_CORE_H
