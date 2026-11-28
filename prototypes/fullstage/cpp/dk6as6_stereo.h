@@ -107,15 +107,18 @@ struct VecFastLaw {
 
 // ---- the law on two lanes (dk6as6_core.h detail::values* / jacobian*) ---------------------------------------------
 
-struct Law2 { dkcore::simd::V2 i[3]; dkcore::simd::V2 J[3][4]; dkcore::simd::M2 raised; };
+// Every member is value-initialised: the solvers blend whole structs under per-lane masks (select_work,
+// select_jacobian), so both operands of every blend must be defined, also in members the current law leaves unused
+// (the grid fields without grid current, J before the first Jacobian)
+struct Law2 { dkcore::simd::V2 i[3]{}; dkcore::simd::V2 J[3][4]{}; dkcore::simd::M2 raised{}; };
 
 namespace detail2 {
 using V2 = dkcore::simd::V2;
 using M2 = dkcore::simd::M2;
-struct LawWork2 {
-    V2 vg1, va, g2, a, ea, spa, e1, pe, x, xa, sm, s, knee, ik0, kf, ik, f;
-    V2 zg, eg, sg1, pg, ig1;
-    M2 floor, gon;
+struct LawWork2 {                       // value-initialised for the masked blends (Law2)
+    V2 vg1{}, va{}, g2{}, a{}, ea{}, spa{}, e1{}, pe{}, x{}, xa{}, sm{}, s{}, knee{}, ik0{}, kf{}, ik{}, f{};
+    V2 zg{}, eg{}, sg1{}, pg{}, ig1{};
+    M2 floor{}, gon{};
 };
 inline LawWork2 select_work(M2 m, const LawWork2& a, const LawWork2& b) {
     using simd2::select;
@@ -267,10 +270,13 @@ inline void select_values(M2 m, const Law2& a, Law2& o) {
 
 // ---- per-lane Newton on two lanes ---------------------------------------------------------------------------------
 
-/* Per lane, a Solution: v, i (as V2 lanes), it / ok / attempts per lane, fv per lane */
+/* Per lane, a Solution: v, i (as V2 lanes), it / ok / attempts per lane, fv per lane. kernel: the iterations the
+ * two-lane kernel ran, i.e. per start the larger iteration count of the lanes that ran it, summed over the starts
+ * (each start costs max(itL, itR) iterations of both lanes; the lane with the longer solve can change between starts) */
 struct Solution2 {
-    dkcore::simd::V2 v[4], i[3], fv;
-    int it[2]; bool ok[2]; int attempts[2];
+    dkcore::simd::V2 v[4]{}, i[3]{}, fv{};
+    int it[2] = {0, 0}; bool ok[2] = {false, false}; int attempts[2] = {0, 0};
+    int kernel = 0;
 };
 
 namespace detail2 {
@@ -376,6 +382,7 @@ inline Solution2 solve2(const dkcore::simd::V2 (&p)[4], const double (&K)[4][3],
     out.i[0] = select(act, bi0, i0 - r0); out.i[1] = select(act, bi1, i1 - r1); out.i[2] = splat(0.0);
     out.fv = select(act, fb, fv);
     out.attempts[0] = out.attempts[1] = 1;
+    out.kernel = out.it[0] > out.it[1] ? out.it[0] : out.it[1];
     return out;
 }
 
@@ -533,6 +540,7 @@ inline Solution2 solve_grid2(const dkcore::simd::V2 (&p)[4], const double (&K)[4
     }
     for (int l = 0; l < 2; ++l) if (bits(act) >> l & 1) it_l[l] = nw.max_it;   // at the cap (Python's range)
     for (int l = 0; l < 2; ++l) out.it[l] = it_l[l];
+    out.kernel = it_l[0] > it_l[1] ? it_l[0] : it_l[1];     // lanes outside `run` have it 0
     for (int q = 0; q < 4; ++q) out.v[q] = res_v[q];
     for (int k = 0; k < 3; ++k) out.i[k] = res_i[k];
     out.fv = select(lanes(int(out.ok[0]) | int(out.ok[1]) << 1), res_fv, fb);     // converged: fv; else the best
@@ -551,6 +559,7 @@ inline Solution2 solve_grid_restarts2(const dkcore::simd::V2 (&p)[4], const doub
     int total[2] = {0, 0};
     for (int k = 0; k < 3 && (need[0] || need[1]); ++k) {
         const Solution2 s = solve_grid2<L>(p, K, starts[k], par, g, nw, lanes(int(need[0]) | int(need[1]) << 1));
+        out.kernel += s.kernel;
         for (int l = 0; l < 2; ++l) {
             if (!need[l]) continue;
             const M2 m = lanes(1 << l);
@@ -630,12 +639,14 @@ public:
         }
         lpf_seen_ = want;
     }
-    // As Stage::process, per channel. inL may equal outL, and inR outR.
-    void process(const double* inL, const double* inR, double* outL, double* outR, std::size_t n) noexcept {
-        process_t(inL, inR, outL, outR, n);
+    // As Stage::process, per channel. inL may equal outL, and inR outR. recL / recR (optional): each lane's
+    // internal-rate signals, as Stage::process's Record (n * oversampling() values each).
+    void process(const double* inL, const double* inR, double* outL, double* outR, std::size_t n,
+                 const Record* recL = nullptr, const Record* recR = nullptr) noexcept {
+        process_t(inL, inR, outL, outR, n, recL, recR);
     }
     void process(const float* inL, const float* inR, float* outL, float* outR, std::size_t n) noexcept {
-        process_t(inL, inR, outL, outR, n);
+        process_t(inL, inR, outL, outR, n, nullptr, nullptr);
     }
 
     bool prepared() const { return prepared_; }
@@ -643,7 +654,8 @@ public:
     int oversampling() const { return rs_.os(); }
     int latency_samples() const { return rs_.latency_samples(); }
     const Stats& stats(int ch) const { return stats_[ch]; }        // ch 0 = left, 1 = right
-    // Newton iterations the 2-lane kernel ran since reset(): per internal sample and start, max(itL, itR), summed
+    // Newton iterations the 2-lane kernel ran since reset(): per internal sample and per start, the larger iteration
+    // count of the lanes that ran that start, summed (Solution2::kernel)
     std::uint64_t kernel_iterations() const { return kernel_iterations_; }
     double state_x(int ch, int i) const { return dkcore::simd::lane(x_[i], ch); }
     double state_i(int ch, int k) const { return dkcore::simd::lane(i_[k], ch); }
@@ -667,7 +679,7 @@ private:
     }
 
     // StageT::tick on both lanes: the same expressions with V2 for double
-    template <bool GRID, class L> V2 tick(V2 s) noexcept {
+    template <bool GRID, class L> V2 tick(V2 s, const Record* const (&rec)[2], std::size_t idx) noexcept {
         using namespace simd2;
         const Pack& c = pack_;
         V2 p[NV];
@@ -688,7 +700,6 @@ private:
             r = solve2<L>(p, c.K, e[0], e[1], c.par, c.newton);
         }
         for (int k = 0; k < NI_MAX; ++k) i_[k] = r.i[k];      // kept even when !ok: the best finite iterate (#7)
-        int kmax = 0;
         for (int l = 0; l < 2; ++l) {
             Stats& st = stats_[l];
             const int it = r.it[l];
@@ -700,9 +711,16 @@ private:
             if (GRID && r.attempts[l] > 1) ++st.restarted;
             const double v0 = lane(r.v[0], l), v3 = lane(r.v[3], l);
             if ((GRID ? lane(r.i[0], l) + lane(r.i[1], l) < 0.0 : v0 > 0.0) || v3 < 0.0) { ++st.out_of_law; ++st.out_of_law_block; }
-            kmax = it > kmax ? it : kmax;
+            if (const Record* q = rec[l]) {                // StageT::tick's record, per lane
+                if (q->vgk) q->vgk[idx] = v0;
+                if (q->vg2k) q->vg2k[idx] = lane(r.v[1], l);
+                if (q->vak) q->vak[idx] = v3;
+                if (q->ig1) q->ig1[idx] = GRID ? lane(r.i[2], l) : 0.0;
+                if (q->ipk) q->ipk[idx] = lane(r.i[0], l) + lane(r.i[1], l);
+                if (q->it) q->it[idx] = std::uint16_t(it);
+            }
         }
-        kernel_iterations_ += std::uint64_t(kmax);
+        kernel_iterations_ += std::uint64_t(r.kernel);
         V2 inl[NI_MAX];
         constexpr int NI = GRID ? 3 : 2;
         for (int k = 0; k < NI; ++k) inl[k] = i_[k] - splat(c.i_dc[k]);
@@ -724,7 +742,8 @@ private:
     }
 
     template <bool GRID, class L, class S>
-    void run(const S* inL, const S* inR, S* outL, S* outR, std::size_t n, V2 drive, V2 og) noexcept {
+    void run(const S* inL, const S* inR, S* outL, S* outR, std::size_t n, V2 drive, V2 og,
+             const Record* const (&rec)[2]) noexcept {
         using dkcore::simd::lane;
         V2 u[MaxOs], y[MaxOs];
         const int os = rs_.os();
@@ -735,7 +754,7 @@ private:
             if (!std::isfinite(xr)) { xr = 0.0; ++stats_[1].nonfinite_inputs; }
             rs_.up(dkcore::simd::make(xl, xr), u);
             for (int j = 0; j < os; ++j) {
-                const V2 t = tick<GRID, L>(u[j]);
+                const V2 t = tick<GRID, L>(u[j], rec, i * std::size_t(os) + std::size_t(j));
                 y[j] = dkcore::simd::make(lpf_[0].tick(lane(t, 0)), lpf_[1].tick(lane(t, 1)));
             }
             const V2 yd = rs_.down(y);
@@ -775,19 +794,24 @@ private:
         if (!(std::fabs(v) <= double(std::numeric_limits<S>::max()))) { ++stats_[ch].nonfinite_outputs; return S(0); }
         return S(v);
     }
-    template <class L, class S> void run_g(const S* inL, const S* inR, S* outL, S* outR, std::size_t n, V2 d, V2 o) noexcept {
-        if (pack_.grid) run<true, L>(inL, inR, outL, outR, n, d, o);
-        else run<false, L>(inL, inR, outL, outR, n, d, o);
+    template <class L, class S>
+    void run_g(const S* inL, const S* inR, S* outL, S* outR, std::size_t n, V2 d, V2 o,
+               const Record* const (&rec)[2]) noexcept {
+        if (pack_.grid) run<true, L>(inL, inR, outL, outR, n, d, o, rec);
+        else run<false, L>(inL, inR, outL, outR, n, d, o, rec);
     }
-    template <class S> void process_t(const S* inL, const S* inR, S* outL, S* outR, std::size_t n) noexcept {
+    template <class S>
+    void process_t(const S* inL, const S* inR, S* outL, S* outR, std::size_t n, const Record* recL,
+                   const Record* recR) noexcept {
         dkcore::ScopedFlushDenormals ftz;
         begin_block();
         if (!prepared_) { for (std::size_t i = 0; i < n; ++i) outL[i] = outR[i] = S(0); return; }
         const V2 d = dkcore::simd::make(drive_[0].load(std::memory_order_relaxed), drive_[1].load(std::memory_order_relaxed));
         const V2 o = dkcore::simd::make(output_[0].load(std::memory_order_relaxed), output_[1].load(std::memory_order_relaxed));
-        if (pack_.math != LawMath::fast) run_g<PerLaneLaw<LibmLaw>>(inL, inR, outL, outR, n, d, o);
-        else if (lane_math_.load(std::memory_order_relaxed) == LaneMath::vector) run_g<VecFastLaw>(inL, inR, outL, outR, n, d, o);
-        else run_g<PerLaneLaw<FastLaw>>(inL, inR, outL, outR, n, d, o);
+        const Record* const rec[2] = {recL, recR};
+        if (pack_.math != LawMath::fast) run_g<PerLaneLaw<LibmLaw>>(inL, inR, outL, outR, n, d, o, rec);
+        else if (lane_math_.load(std::memory_order_relaxed) == LaneMath::vector) run_g<VecFastLaw>(inL, inR, outL, outR, n, d, o, rec);
+        else run_g<PerLaneLaw<FastLaw>>(inL, inR, outL, outR, n, d, o, rec);
     }
 
     // audio-thread state: lane 0 = left, lane 1 = right
