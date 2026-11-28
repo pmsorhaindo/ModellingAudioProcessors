@@ -62,21 +62,6 @@ jobs:
           python -m cpp.bench $args --label head --out pair_head.json
           (cd "$RUNNER_TEMP/base/prototypes/fullstage" && python -m cpp.bench $args --out "$here/pair_base_b.json")
           python -m cpp.bench --pair pair_base_a.json pair_mixed.json pair_head.json pair_base_b.json >> "$GITHUB_STEP_SUMMARY"
-      # TEMPORARY #135 review diagnostic (to be removed): per-function x86 instruction counts of the base and this
-      # head on one row (callgrind), to explain the paired control's 1.14x
-      - name: Callgrind, base vs head (diagnostic)
-        continue-on-error: true
-        run: |
-          sudo apt-get install -y -qq valgrind > /dev/null
-          for v in base head; do
-            src=$([ $v = base ] && echo "$RUNNER_TEMP/base/prototypes/fullstage" || echo "$PWD")
-            g++ -std=c++17 -O3 -g -pthread -o "$RUNNER_TEMP/b_$v" "$src/cpp/bench_6as6.cpp"
-            valgrind --tool=callgrind --branch-sim=yes --cache-sim=yes --callgrind-out-file="cg_$v.out" "$RUNNER_TEMP/b_$v" \
-              --reps 1 --seconds 0.1 --only standard_P1_0.45mA_2V_b64_x1 > /dev/null 2>&1 || true
-            callgrind_annotate --inclusive=no "cg_$v.out" 2>/dev/null | head -40 > "cg_$v.txt"
-            callgrind_annotate --inclusive=no --auto=yes --show-percs=no "cg_$v.out" 2>/dev/null > "cg_${v}_lines.txt"
-            objdump -d --no-show-raw-insn -C "$RUNNER_TEMP/b_$v" > "dis_$v.txt"
-          done
       - uses: actions/upload-artifact@v4
         with:
           name: bench-6as6-x86-64-linux
@@ -86,6 +71,3 @@ jobs:
             prototypes/fullstage/pair_mixed.json
             prototypes/fullstage/pair_head.json
             prototypes/fullstage/pair_base_b.json
-            prototypes/fullstage/cg_*.txt
-            prototypes/fullstage/cg_*_lines.txt
-            prototypes/fullstage/dis_*.txt
