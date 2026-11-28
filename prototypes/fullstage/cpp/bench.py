@@ -325,6 +325,27 @@ def table(rec):
 
 
 
+def table_pair(base_a, head, base_b):
+    """#135 review: a paired control from one runner, base / head / base (A-B-A): per configuration of all three, %
+    of one core and instructions (where counted), head / mean(base), and the base's drift (second / first)."""
+    recs = [{r["name"]: r for r in x["results"]} for x in (base_a, head, base_b)]
+    names = [n for n in recs[0] if n in recs[1] and n in recs[2]]
+    cpu = [x["host"].get("lscpu", {}).get("Model name") or x["host"].get("cpu") for x in (base_a, head, base_b)]
+    out = [f"**paired control, base `{base_a['build']['git']}` / head `{head['build']['git']}` / base** "
+           f"(one runner: {cpu[0]}{'' if len(set(cpu)) == 1 else ' — NOT the same CPU: ' + str(cpu)}): % of one "
+           "core at 48 kHz (median)", "",
+           "| configuration | base (1st) | head | base (2nd) | head / base | base drift | instr head / base |",
+           "|---|---|---|---|---|---|---|"]
+    for n in names:
+        a, h, b = (r[n] for r in recs)
+        mb = (a["pct_core"] + b["pct_core"]) / 2
+        ins = [r.get("instr_per_sample") for r in (a, h, b)]
+        ir = "—" if None in ins else f"{ins[1] / ((ins[0] + ins[2]) / 2):.3f}"
+        out.append(f"| {n} | {a['pct_core']:.2f} | {h['pct_core']:.2f} | {b['pct_core']:.2f} | "
+                   f"{h['pct_core'] / mb:.3f} | {b['pct_core'] / a['pct_core']:.3f} | {ir} |")
+    return "\n".join(out)
+
+
 def _argv_with_flags(argv):
     """Rewrite argv so `--flags -O3` is accepted as well as `--flags=-O3` and `--flags "-O3 -march=..."`.
 
@@ -351,7 +372,12 @@ def main():
     ap.add_argument("--out", help="write the results file here (else stdout)")
     ap.add_argument("--table", metavar="RESULTS_JSON", help="print the markdown tables of a results file and exit")
     ap.add_argument("--core", choices=sorted(CORES), default="12ax7", help="which core's harness (default 12ax7)")
+    ap.add_argument("--pair", nargs=3, metavar=("BASE_A", "HEAD", "BASE_B"),
+                    help="#135: print the paired-control table of three results files from one runner and exit")
     a = ap.parse_args(_argv_with_flags(sys.argv[1:]))
+    if a.pair:
+        print(table_pair(*(json.load(open(f)) for f in a.pair)))
+        return
     if a.table:
         rec = json.load(open(a.table))
         print(table_6as6(rec) if rec["meta"].get("core") == "cpp/dk6as6_core.h" else table(rec))
