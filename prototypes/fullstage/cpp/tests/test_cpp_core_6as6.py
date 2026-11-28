@@ -448,15 +448,19 @@ BENCH_KEYS = {"name", "quality", "os", "variant", "mode", "bias_ma", "grid_hardn
               "newton_max", "nonconverged", "restarted", "deterministic"}
 
 
-def _bench_rows_ok(rows):
+def _bench_rows_ok(rows, meta=None):
     # 60 rows before #135; #135 adds 60 (x1 / x2 fast, s2, s2 fast per-lane, v2 at the default setting)
     assert len(rows) in (60, 120) and len({r["name"] for r in rows}) == len(rows)
     for r in rows:
         assert BENCH_KEYS <= set(r), r["name"]
         assert r["deterministic"] and r["ns_per_sample"] > 0 and r["newton_mean"] >= 1.0, r
         assert r["nonconverged"] == 0 and r["newton_max"] <= 3 * 50, r
-        if r.get("path", "mono") != "mono":     # #135: the two-lane kernel equals two mono Stages of the same maths
-            assert r["matches_x2"] is True and r["newton_mean_max"] >= max(r["newton_mean"], r["newton_mean_r"]), r
+        if r.get("path", "mono") != "mono":     # #135: the two-lane kernel against two mono Stages of the same maths:
+            # bit-identical where the build guarantees it (as the 12AX7 bench test); else test_stereo_parity_6as6's
+            # tolerance holds for that build
+            assert r["newton_mean_max"] >= max(r["newton_mean"], r["newton_mean_r"]), r
+            if meta and _stereo_exact_expected(("-O2",), False, meta["compiler"], meta["fma"]):
+                assert r["matches_x2"] is True, r
 
 
 def test_bench_6as6_smoke():
@@ -469,7 +473,7 @@ def test_bench_6as6_smoke():
     assert p.returncode == 0, p.stderr[-2000:]           # 1: an output differed between passes
     d = json.loads(p.stdout)
     assert d["meta"]["samples_per_pass"] == 512 and d["meta"]["core"] == "cpp/dk6as6_core.h"
-    _bench_rows_ok(d["results"])
+    _bench_rows_ok(d["results"], d["meta"])
 
 
 def test_bench_6as6_records():
@@ -481,7 +485,7 @@ def test_bench_6as6_records():
         d = json.load(open(f))
         assert {"host", "build", "state_before", "state_after", "meta", "results"} <= set(d), f
         assert d["meta"]["reps"] >= 5 and not d["build"]["dirty"] and d["build"]["source"] == "cpp/bench_6as6.cpp", f
-        _bench_rows_ok(d["results"])
+        _bench_rows_ok(d["results"], d["meta"])
 
 
 def test_aliasing_records():
