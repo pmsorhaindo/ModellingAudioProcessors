@@ -9,6 +9,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - prototypes/fullstage/cpp/dk6as6_core.h
+      - prototypes/fullstage/cpp/dk6as6_stereo.h
       - prototypes/fullstage/cpp/dk_core.h
       - prototypes/fullstage/cpp/bench_6as6.cpp
       - prototypes/fullstage/cpp/bench_common.h

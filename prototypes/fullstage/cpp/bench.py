@@ -7,7 +7,8 @@ Method and results: cpp/BENCHMARK.md. Run from prototypes/fullstage:
   python -m cpp.bench --seconds 0.011 --reps 1             # a functional smoke (512 samples); its numbers mean nothing
   python -m cpp.bench --table cpp/bench_<machine>.json     # the BENCHMARK.md tables from a results file
   python -m cpp.bench --core 6as6 --out cpp/bench_6as6_<machine>.json   # the 6AS6 core (#104, cpp/bench_6as6.cpp):
-                                                                 # 60 configurations, the same method
+                                                                 # 120 configurations (#135: fast law, two-lane
+                                                                 # kernel), the same method
 Pin on Linux with taskset (taskset -c 2 python -m cpp.bench ...); macOS has no pinning API (bench.cpp sets QoS).
 """
 import argparse
@@ -137,10 +138,60 @@ def _ratio(a, b, key):
     return "—" if va is None or vb is None else f"{va / vb:.2f}"
 
 
+def _path6(r):
+    """#135 rows: x1 / x2 (mono, by math), s2 (stereo libm), s2pl (stereo fast per-lane), v2 (stereo fast vector).
+    Records before #135 have no "math" / "path": libm mono."""
+    p, m = r.get("path", "mono"), r.get("math", "libm")
+    if p == "mono":
+        return f"x{r['instances']}" + ("" if m == "libm" else "_" + m)
+    return {"stereo_simd": "s2", "stereo_simd_per_lane": "s2pl", "stereo_simd_vecmath": "v2"}[p]
+
+
+def table_6as6_135(rec):
+    """#135: the default setting's paths side by side (block 64): instructions and cycles per base-rate sample, %
+    core, and the ratios to two libm mono instances (x2, the stereo cost before #135) and to one (x1)."""
+    R = {(r["quality"], r["level_v"], r["block"], _path6(r)): r for r in rec["results"] if r["variant"] == "P1_0.45mA"}
+    paths = [p for p in ("x1", "x1_fast", "x2", "x2_fast", "s2", "s2pl", "v2") if any(k[3] == p for k in R)]
+    if not any(p in paths for p in ("x1_fast", "s2", "v2")):
+        return ""
+    qs = [q for q in ("standard", "hq") if any(k[0] == q for k in R)]
+    lv = sorted({k[1] for k in R})
+    out = []
+    for key, title in (("instr_per_sample", "instructions per base-rate sample"),
+                       ("cycles_per_sample", "cycles per base-rate sample (* = not all on P-cores)"),
+                       ("pct_core", "% of one core at 48 kHz (median)")):
+        out += [f"**#135 paths, default setting, block 64: {title}**; in brackets / x2 (two libm mono instances)", "",
+                "| setting | peak | " + " | ".join(paths) + " |", "|---|---|" + "---|" * len(paths)]
+        for q in qs:
+            for v in lv:
+                base = R.get((q, v, 64, "x2"))
+                cells = []
+                for p in paths:
+                    r = R.get((q, v, 64, p))
+                    if r is None or r.get(key) is None:
+                        cells.append("—")
+                        continue
+                    fmt = ".2f" if key == "pct_core" else ".0f"
+                    val = _cycles(r) if key == "cycles_per_sample" else _cell(r, key, fmt)
+                    rat = _ratio(r, base, key)
+                    cells.append(f"{val} ({rat})" if p != "x2" else val)
+                os_ = next((R[k]["os"] for k in R if k[0] == q), "?")
+                out.append(f"| {q} {os_}× | {v:g} V | " + " | ".join(cells) + " |")
+        out.append("")
+    st = [r for r in rec["results"] if r.get("path", "mono") != "mono"]
+    if st:
+        m = {r.get("matches_x2") for r in st}
+        out.append(f"stereo rows bit-identical to their x2 twins (matches_x2): "
+                   f"{'all' if m == {True} else 'NOT all: ' + str(sorted(str(x) for x in m))}")
+    return "\n".join(out)
+
+
 def table_6as6(rec):
     """The cpp/README-6as6.md tables of a 6AS6 record: the default setting per quality / peak / block, mono and two
-    instances; then each variant (x1, block 64) against the default at the same quality and peak."""
-    R = {(r["quality"], r["variant"], r["level_v"], r["block"], r["instances"]): r for r in rec["results"]}
+    instances; then each variant (x1, block 64) against the default at the same quality and peak; then the #135
+    paths (table_6as6_135)."""
+    R = {(r["quality"], r["variant"], r["level_v"], r["block"], r["instances"]): r for r in rec["results"]
+         if r.get("math", "libm") == "libm" and r.get("path", "mono") == "mono"}
     qs = [q for q in ("standard", "hq") if any(k[0] == q for k in R)]
     lv = sorted({k[2] for k in R})
     fir = next((r["fir"] for r in rec["results"] if r["variant"] == "P1_0.45mA"), "?")
@@ -175,7 +226,8 @@ def table_6as6(rec):
                     lines.append(f"| {var} | {q} | {v:g} V | {_cell(a, 'pct_core', '.2f')} | "
                                  f"{_ratio(a, d, 'ns_per_sample')} | {_ratio(a, d, 'cycles_per_sample')} | "
                                  f"{a['newton_mean']:.2f}, {a['newton_max']} |")
-    return "\n".join(lines)
+    extra = table_6as6_135(rec)
+    return "\n".join(lines) + ("\n\n" + extra if extra else "")
 
 
 def table(rec):
