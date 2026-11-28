@@ -107,31 +107,33 @@ struct VecFastLaw {
 
 // ---- the law on two lanes (dk6as6_core.h detail::values* / jacobian*) ---------------------------------------------
 
-// Every member is value-initialised: the solvers blend whole structs under per-lane masks (select_work,
-// select_jacobian), so both operands of every blend must be defined, also in members the current law leaves unused
-// (the grid fields without grid current, J before the first Jacobian)
-struct Law2 { dkcore::simd::V2 i[3]{}; dkcore::simd::V2 J[3][4]{}; dkcore::simd::M2 raised{}; };
+// Both operands of every masked blend must be defined (#135 review): the solvers value-initialise the Law2 whose J
+// is blended before its first Jacobian, and blend_work blends only the LawWork2 fields the law in use writes
+struct Law2 { dkcore::simd::V2 i[3]; dkcore::simd::V2 J[3][4]; dkcore::simd::M2 raised; };
 
 namespace detail2 {
 using V2 = dkcore::simd::V2;
 using M2 = dkcore::simd::M2;
-struct LawWork2 {                       // value-initialised for the masked blends (Law2)
-    V2 vg1{}, va{}, g2{}, a{}, ea{}, spa{}, e1{}, pe{}, x{}, xa{}, sm{}, s{}, knee{}, ik0{}, kf{}, ik{}, f{};
-    V2 zg{}, eg{}, sg1{}, pg{}, ig1{};
-    M2 floor{}, gon{};
+struct LawWork2 {         // cathode_values writes the first row and floor; grid_values the second row and gon
+    V2 vg1, va, g2, a, ea, spa, e1, pe, x, xa, sm, s, knee, ik0, kf, ik, f;
+    V2 zg, eg, sg1, pg, ig1;
+    M2 floor, gon;
 };
-inline LawWork2 select_work(M2 m, const LawWork2& a, const LawWork2& b) {
+// o = a on the lanes of m, o elsewhere, for the fields the law writes: the cathode share's always, the grid
+// current's only with GRID (without it they are never written, so never read)
+template <bool GRID> inline void blend_work(M2 m, const LawWork2& a, LawWork2& o) {
     using simd2::select;
-    LawWork2 o;
-    o.vg1 = select(m, a.vg1, b.vg1); o.va = select(m, a.va, b.va); o.g2 = select(m, a.g2, b.g2);
-    o.a = select(m, a.a, b.a); o.ea = select(m, a.ea, b.ea); o.spa = select(m, a.spa, b.spa);
-    o.e1 = select(m, a.e1, b.e1); o.pe = select(m, a.pe, b.pe); o.x = select(m, a.x, b.x); o.xa = select(m, a.xa, b.xa);
-    o.sm = select(m, a.sm, b.sm); o.s = select(m, a.s, b.s); o.knee = select(m, a.knee, b.knee);
-    o.ik0 = select(m, a.ik0, b.ik0); o.kf = select(m, a.kf, b.kf); o.ik = select(m, a.ik, b.ik); o.f = select(m, a.f, b.f);
-    o.zg = select(m, a.zg, b.zg); o.eg = select(m, a.eg, b.eg); o.sg1 = select(m, a.sg1, b.sg1);
-    o.pg = select(m, a.pg, b.pg); o.ig1 = select(m, a.ig1, b.ig1);
-    o.floor = (m & a.floor) | (~m & b.floor); o.gon = (m & a.gon) | (~m & b.gon);
-    return o;
+    o.vg1 = select(m, a.vg1, o.vg1); o.va = select(m, a.va, o.va); o.g2 = select(m, a.g2, o.g2);
+    o.a = select(m, a.a, o.a); o.ea = select(m, a.ea, o.ea); o.spa = select(m, a.spa, o.spa);
+    o.e1 = select(m, a.e1, o.e1); o.pe = select(m, a.pe, o.pe); o.x = select(m, a.x, o.x); o.xa = select(m, a.xa, o.xa);
+    o.sm = select(m, a.sm, o.sm); o.s = select(m, a.s, o.s); o.knee = select(m, a.knee, o.knee);
+    o.ik0 = select(m, a.ik0, o.ik0); o.kf = select(m, a.kf, o.kf); o.ik = select(m, a.ik, o.ik); o.f = select(m, a.f, o.f);
+    o.floor = (m & a.floor) | (~m & o.floor);
+    if (GRID) {
+        o.zg = select(m, a.zg, o.zg); o.eg = select(m, a.eg, o.eg); o.sg1 = select(m, a.sg1, o.sg1);
+        o.pg = select(m, a.pg, o.pg); o.ig1 = select(m, a.ig1, o.ig1);
+        o.gon = (m & a.gon) | (~m & o.gon);
+    }
 }
 
 // detail::cathode_values on two lanes
@@ -274,9 +276,9 @@ inline void select_values(M2 m, const Law2& a, Law2& o) {
  * two-lane kernel ran, i.e. per start the larger iteration count of the lanes that ran it, summed over the starts
  * (each start costs max(itL, itR) iterations of both lanes; the lane with the longer solve can change between starts) */
 struct Solution2 {
-    dkcore::simd::V2 v[4]{}, i[3]{}, fv{};
-    int it[2] = {0, 0}; bool ok[2] = {false, false}; int attempts[2] = {0, 0};
-    int kernel = 0;
+    dkcore::simd::V2 v[4], i[3], fv;
+    int it[2]; bool ok[2]; int attempts[2];
+    int kernel;               // the solvers build their results value-initialised (Solution2 out{})
 };
 
 namespace detail2 {
@@ -313,7 +315,7 @@ inline Solution2 solve2(const dkcore::simd::V2 (&p)[4], const double (&K)[4][3],
     const V2 one = splat(1.0), half = splat(0.5), tol_v = splat(nw.tol_v), tol_f = splat(nw.tol_f),
              inf = splat(INFINITY);
     V2 r0, r1, fv, v[4];
-    Law2 Lw;
+    Law2 Lw{};
     detail2::LawWork2 w;
     resid2<L>(p, K, i0, i1, par, r0, r1, fv, v, Lw, w);
     detail2::jacobian2<L>(w, par, Lw);
@@ -352,7 +354,7 @@ inline Solution2 solve2(const dkcore::simd::V2 (&p)[4], const double (&K)[4][3],
                 g0 = select(ls, h0, g0); g1 = select(ls, h1, g1); gv = select(ls, hv, gv);
                 for (int k = 0; k < 4; ++k) gvolt[k] = select(ls, hvolt[k], gvolt[k]);
                 detail2::select_values(ls, hL, gL);
-                gw = detail2::select_work(ls, hw, gw);
+                detail2::blend_work<false>(ls, hw, gw);
                 ls = ls & ~lt(hv, fv);
             }
         }
@@ -458,7 +460,7 @@ inline Solution2 solve_grid2(const dkcore::simd::V2 (&p)[4], const double (&K)[4
     const V2 one = splat(1.0), half = splat(0.5), tol_v = splat(nw.tol_v), tol_f = splat(nw.tol_f),
              inf = splat(INFINITY);
     V2 i[3] = {i_start[0], i_start[1], i_start[2]}, r[3], fv, v[4];
-    Law2 Lw;
+    Law2 Lw{};                     // its J is blended (jacobian3_safe on the starting lanes) before it is first written
     detail2::LawWork2 w;
     Solution2 out{};
     out.attempts[0] = out.attempts[1] = 1;
@@ -506,7 +508,7 @@ inline Solution2 solve_grid2(const dkcore::simd::V2 (&p)[4], const double (&K)[4
                 gv = select(ls, hv, gv);
                 for (int q = 0; q < 4; ++q) gvolt[q] = select(ls, hvolt[q], gvolt[q]);
                 detail2::select_values(ls, hL, gL);
-                gw = detail2::select_work(ls, hw, gw);
+                detail2::blend_work<true>(ls, hw, gw);
                 gok = (ls & hok) | (~ls & gok);
                 ls = ls & ~lt(hv, fv);
             }

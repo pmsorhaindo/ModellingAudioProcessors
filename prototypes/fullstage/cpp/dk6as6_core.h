@@ -70,6 +70,17 @@
 
 namespace dk6as6 {
 
+/* The per-sample helpers below are forced inline (#135 review): with the libm and fast instantiations of the law and
+ * solvers (and the stereo kernel's three lane maths) in one translation unit, GCC's -O3 reaches its per-unit inlining
+ * budget (--param inline-unit-growth) and stops inlining them, which cost 12-16 % on CI's x86-64 runner (the paired
+ * control in cpp/RESULTS-cpu-6as6.md). Forcing them keeps every build's per-sample code as #104's was; it changes
+ * no arithmetic (the -ffp-contract=off builds stay bit-exact with Python). */
+#if defined(__GNUC__) || defined(__clang__)
+#define DK6AS6_HOT inline __attribute__((always_inline))
+#else
+#define DK6AS6_HOT inline
+#endif
+
 using dkcore::FirDesign;
 using dkcore::Newton;
 using dkcore::Quality;
@@ -189,7 +200,7 @@ using dkcore::detail::pmax;   // Python's max(a, b): b > a ? b : a, NaN included
 
 // CPython's float ** float for the bases used here (all >= 0): libm pow, plus the OverflowError CPython raises when
 // a finite pair overflows (Python's ** never returns inf from finite operands; it raises).
-inline double pypow(double x, double y, bool& raised) {
+DK6AS6_HOT double pypow(double x, double y, bool& raised) {
     const double r = std::pow(x, y);
     if (std::isinf(r) && std::isfinite(x) && std::isfinite(y)) raised = true;
     return r;
@@ -212,7 +223,7 @@ inline void softplus_sigmoid(double x, double& sp, double& sg) {
 }
 // CPython >= 3.12's sum() of four floats from the int start 0 (Neumaier compensated summation, bltinmodule.c): the
 // 2-current solver's dR/di entries use Python's sum(), so this keeps them bit-equal.
-inline double pysum4(double a0, double a1, double a2, double a3) {
+DK6AS6_HOT double pysum4(double a0, double a1, double a2, double a3) {
     double f = 0.0 + a0, c = 0.0;
     const double xs[3] = {a1, a2, a3};
     for (double x : xs) {
@@ -252,28 +263,28 @@ void skipped_jacobian(bool finite);
 #endif
 
 struct LibmLaw {
-    static double exp(double x) { return std::exp(x); }
-    static double log1p(double x) { return std::log1p(x); }
-    static double pow(double x, double y, bool& raised) { return detail::pypow(x, y, raised); }
-    static double atan(double x) { return std::atan(x); }
+    DK6AS6_HOT static double exp(double x) { return std::exp(x); }
+    DK6AS6_HOT static double log1p(double x) { return std::log1p(x); }
+    DK6AS6_HOT static double pow(double x, double y, bool& raised) { return detail::pypow(x, y, raised); }
+    DK6AS6_HOT static double atan(double x) { return std::atan(x); }
     // E1^(EX - 1), given pe = E1^EX: Python's own ** call
-    static double pow_m1(double e1, double ex, double /*pe*/, bool& raised) { return detail::pypow(e1, ex - 1.0, raised); }
+    DK6AS6_HOT static double pow_m1(double e1, double ex, double /*pe*/, bool& raised) { return detail::pypow(e1, ex - 1.0, raised); }
     // (Va / KVB) ** 2: a libm pow call, as CPython's
-    static double sq(double q, bool& raised) { return detail::pypow(q, detail::opaque(2.0), raised); }
+    DK6AS6_HOT static double sq(double q, bool& raised) { return detail::pypow(q, detail::opaque(2.0), raised); }
 };
 struct FastLaw {
-    static double exp(double x) { DK6AS6_PROBE_ARG("exp", x, 0.0); return fm_exp(x); }
-    static double log1p(double x) { DK6AS6_PROBE_ARG("log1p", x, 0.0); return fm_log1p(x); }
-    static double pow(double x, double y, bool& raised) {      // fm_pow, and the same overflow report as pypow
+    DK6AS6_HOT static double exp(double x) { DK6AS6_PROBE_ARG("exp", x, 0.0); return fm_exp(x); }
+    DK6AS6_HOT static double log1p(double x) { DK6AS6_PROBE_ARG("log1p", x, 0.0); return fm_log1p(x); }
+    DK6AS6_HOT static double pow(double x, double y, bool& raised) {      // fm_pow, and the same overflow report as pypow
         DK6AS6_PROBE_ARG("pow", x, y);
         const double r = fm_pow(x, y);
         if (std::isinf(r) && std::isfinite(x) && std::isfinite(y)) raised = true;
         return r;
     }
-    static double atan(double x) { DK6AS6_PROBE_ARG("atan", x, 0.0); return std::atan(x); }
+    DK6AS6_HOT static double atan(double x) { DK6AS6_PROBE_ARG("atan", x, 0.0); return std::atan(x); }
     // E1^(EX - 1) = E1^EX / E1 for E1 > 0; E1^(EX - 1) = 0 at E1 = 0 (EX > 1), where the quotient would be 0 / 0
-    static double pow_m1(double e1, double /*ex*/, double pe, bool& /*raised*/) { return e1 > 0.0 ? pe / e1 : 0.0; }
-    static double sq(double q, bool& /*raised*/) { DK6AS6_PROBE_ARG("sq", q, 0.0); return q * q; }
+    DK6AS6_HOT static double pow_m1(double e1, double /*ex*/, double pe, bool& /*raised*/) { return e1 > 0.0 ? pe / e1 : 0.0; }
+    DK6AS6_HOT static double sq(double q, bool& /*raised*/) { DK6AS6_PROBE_ARG("sq", q, 0.0); return q * q; }
 };
 
 namespace detail {
@@ -291,7 +302,7 @@ struct LawWork {
  * Jacobian's own ** calls raise only where these do (pow(E1, EX - 1) overflows only where pow(E1, EX) does; (Va / KVB)
  * ** 2 is checked here directly), so the values alone already say whether Python would raise. */
 template <class M>
-inline void cathode_values(double vg1, double vg2, double vg3, double va, const PentodeParams& p, LawWork& w,
+DK6AS6_HOT void cathode_values(double vg1, double vg2, double vg3, double va, const PentodeParams& p, LawWork& w,
                            bool& raised) {
     w.vg1 = vg1; w.va = va;
     w.floor = vg2 <= VG2_FLOOR;
@@ -323,7 +334,7 @@ inline void cathode_values(double vg1, double vg2, double vg3, double va, const 
 }
 // pentode.cathode_share, the gradients d/d(Vg1k, Vg2k, Vg3k, Vak) of Ik and f at w
 template <class M>
-inline void cathode_jacobian(const LawWork& w, const PentodeParams& p, double (&dik)[4], double (&dfs)[4], bool& raised) {
+DK6AS6_HOT void cathode_jacobian(const LawWork& w, const PentodeParams& p, double (&dik)[4], double (&dfs)[4], bool& raised) {
     const double sa = w.a >= 0.0 ? 1.0 / (1.0 + w.ea) : w.ea / (1.0 + w.ea);
     const double de1_g1 = sa;
     const double de1_g2 = w.floor ? 0.0 : w.spa / p.KP - sa * w.vg1 / w.g2;
@@ -359,18 +370,18 @@ inline void cathode_share(double vg1, double vg2, double vg3, double va, const P
 
 // pentode.grid_current, the value Ig1 (0 where softplus underflows) ...
 template <class M>
-inline double grid_values(double vg1, const GridParams& g, LawWork& w, bool& raised) {
+DK6AS6_HOT double grid_values(double vg1, const GridParams& g, LawWork& w, bool& raised) {
     w.zg = g.CG * vg1;
     w.eg = M::exp(-std::fabs(w.zg));
     const double sp = w.zg >= 0.0 ? w.zg + M::log1p(w.eg) : M::log1p(w.eg);
     w.sg1 = sp / g.CG;
     w.gon = !(w.sg1 <= 0.0);
-    if (!w.gon) return w.ig1 = 0.0;
+    if (!w.gon) { w.pg = 0.0; return w.ig1 = 0.0; }   // (pg unused then; set for the compilers)
     w.pg = M::pow(w.sg1, g.XI, raised);
     return w.ig1 = g.GG * w.pg;
 }
 // ... and dIg1/dVg1k (0 where softplus underflows)
-inline double grid_jacobian(const LawWork& w, const GridParams& g) {
+DK6AS6_HOT double grid_jacobian(const LawWork& w, const GridParams& g) {
     if (!w.gon) return 0.0;
     const double sg = w.zg >= 0.0 ? 1.0 / (1.0 + w.eg) : w.eg / (1.0 + w.eg);
     return g.GG * g.XI * w.pg / w.sg1 * sg;
@@ -382,13 +393,13 @@ struct Law { double i[3]; double J[3][4]; bool raised; };
 
 namespace detail {
 // pentode.currents in two passes: values (i, raised) into o, then the Jacobian into o.J
-template <class M> inline void values2(const double (&v)[4], const PentodeParams& p, Law& o, LawWork& w) {
+template <class M> DK6AS6_HOT void values2(const double (&v)[4], const PentodeParams& p, Law& o, LawWork& w) {
     o.raised = false;
     cathode_values<M>(v[0], v[1], v[2], v[3], p, w, o.raised);
     const double ip = w.ik * w.f;
     o.i[0] = ip; o.i[1] = w.ik - ip; o.i[2] = 0.0;
 }
-template <class M> inline void jacobian2(const LawWork& w, const PentodeParams& p, Law& o) {
+template <class M> DK6AS6_HOT void jacobian2(const LawWork& w, const PentodeParams& p, Law& o) {
     double dik[4], dfs[4];
     cathode_jacobian<M>(w, p, dik, dfs, o.raised);
     for (int j = 0; j < 4; ++j) {
@@ -398,7 +409,7 @@ template <class M> inline void jacobian2(const LawWork& w, const PentodeParams& 
 }
 // pentode.currents_grid in two passes: Ip = (Ik - Ig1) f, Ig2 = (Ik - Ig1)(1 - f)
 template <class M>
-inline void values3(const double (&v)[4], const PentodeParams& p, const GridParams& g, Law& o, LawWork& w) {
+DK6AS6_HOT void values3(const double (&v)[4], const PentodeParams& p, const GridParams& g, Law& o, LawWork& w) {
     o.raised = false;
     cathode_values<M>(v[0], v[1], v[2], v[3], p, w, o.raised);
     const double ig1 = grid_values<M>(v[0], g, w, o.raised);
@@ -406,7 +417,7 @@ inline void values3(const double (&v)[4], const PentodeParams& p, const GridPara
     const double ip = ipk * w.f;
     o.i[0] = ip; o.i[1] = ipk - ip; o.i[2] = ig1;
 }
-template <class M> inline void jacobian3(const LawWork& w, const PentodeParams& p, const GridParams& g, Law& o) {
+template <class M> DK6AS6_HOT void jacobian3(const LawWork& w, const PentodeParams& p, const GridParams& g, Law& o) {
     double dik[4], dfs[4];
     cathode_jacobian<M>(w, p, dik, dfs, o.raised);
     const double dig1 = grid_jacobian(w, g);
@@ -453,7 +464,7 @@ struct Solution { double v[4]; double i[3]; int it; bool ok; double fv; int atte
 namespace detail {
 // solver._resid: R = i - i(p - K i) and ||K R||inf, the values pass only (w: for the Jacobian)
 template <class M>
-inline void resid2(const double (&p)[4], const double (&K)[4][3], double i0, double i1, const PentodeParams& par,
+DK6AS6_HOT void resid2(const double (&p)[4], const double (&K)[4][3], double i0, double i1, const PentodeParams& par,
                    double& r0, double& r1, double& fv, double (&v)[4], Law& L, LawWork& w) {
     for (int r = 0; r < 4; ++r) v[r] = p[r] - K[r][0] * i0 - K[r][1] * i1;
     values2<M>(v, par, L, w);
@@ -524,7 +535,7 @@ namespace detail {
 // solver._resid3_safe, the values pass: false where Python's evaluation raises or the residual is not finite (the
 // trial counts as failed; fv = inf)
 template <class M>
-inline bool resid3(const double (&p)[4], const double (&K)[4][3], const double (&i)[3], const PentodeParams& par,
+DK6AS6_HOT bool resid3(const double (&p)[4], const double (&K)[4][3], const double (&i)[3], const PentodeParams& par,
                    const GridParams& g, double (&r)[3], double& fv, double (&v)[4], Law& L, LawWork& w) {
     for (int q = 0; q < 4; ++q) v[q] = p[q] - K[q][0] * i[0] - K[q][1] * i[1] - K[q][2] * i[2];
     values3<M>(v, par, g, L, w);
@@ -537,7 +548,7 @@ inline bool resid3(const double (&p)[4], const double (&K)[4][3], const double (
 }
 // ... and its Jacobian check: the Jacobian at w into L.J; false (fv = inf) where it raises or is not finite
 template <class M>
-inline bool jacobian3_safe(const LawWork& w, const PentodeParams& par, const GridParams& g, Law& L, double& fv) {
+DK6AS6_HOT bool jacobian3_safe(const LawWork& w, const PentodeParams& par, const GridParams& g, Law& L, double& fv) {
     jacobian3<M>(w, par, g, L);
     bool ok = !L.raised;
     for (int a = 0; a < 3; ++a) for (int b = 0; b < 4; ++b) ok = ok && std::isfinite(L.J[a][b]);
@@ -556,13 +567,13 @@ inline void skipped_jacobian(const LawWork& w, const PentodeParams& par, const G
 #endif
 }
 // ||lam K s||inf, as solver.solve_grid's dv
-inline double step_norm3(const double (&K)[4][3], const double (&s)[3], double lam) {
+DK6AS6_HOT double step_norm3(const double (&K)[4][3], const double (&s)[3], double lam) {
     double dv = std::fabs(lam * (K[0][0] * s[0] + K[0][1] * s[1] + K[0][2] * s[2]));
     for (int q = 1; q < 4; ++q) dv = pmax(dv, std::fabs(lam * (K[q][0] * s[0] + K[q][1] * s[1] + K[q][2] * s[2])));
     return dv;
 }
 // solver._step3: -(I + J K)^-1 r by Cramer's rule; false where Python's division by det raises (det == 0)
-inline bool step3(const double (&J)[3][4], const double (&K)[4][3], const double (&r)[3], double (&x)[3]) {
+DK6AS6_HOT bool step3(const double (&J)[3][4], const double (&K)[4][3], const double (&r)[3], double (&x)[3]) {
     const double j00 = J[0][0], j01 = J[0][1], j02 = J[0][2], j03 = J[0][3];
     const double j10 = J[1][0], j11 = J[1][1], j12 = J[1][2], j13 = J[1][3], j20 = J[2][0];
     const double m00 = 1.0 + j00 * K[0][0] + j01 * K[1][0] + j02 * K[2][0] + j03 * K[3][0];
@@ -1103,7 +1114,7 @@ struct Svf {
         return true;
     }
     void reset() { ic1 = ic2 = 0.0; }
-    double tick(double x) {
+    DK6AS6_HOT double tick(double x) {
         const double v3 = x - ic2;
         const double d1 = a2 * v3 - b1 * ic1;
         const double d2 = a2 * ic1 + a3 * v3;
@@ -1142,7 +1153,7 @@ public:
         const double w = std::fmin(double(t_) / double(n_fade_), 1.0);
         for (int k = 0; k < 3; ++k) g[k] = g_from_[k] + (g_to_[k] - g_from_[k]) * w;
     }
-    double tick(double x) {
+    DK6AS6_HOT double tick(double x) {
         const double y1 = svf_[0].tick(x), y2 = svf_[1].tick(x);
         const double w = std::fmin(double(t_ + 1) / double(n_fade_), 1.0);
         if (t_ < n_fade_) ++t_;
