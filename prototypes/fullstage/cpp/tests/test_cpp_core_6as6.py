@@ -469,16 +469,16 @@ def test_cpp_stage_stereo_records_its_own_lane():
 
 def test_fastlaw_records():
     """cpp/fastlaw_domain_6as6.json (python -m cpp.fastlaw_6as6 domain) and cpp/results_fastlaw_6as6.json (deviation):
-    every validation setting ran and passed with both maths; the lazier Jacobian skipped the Jacobian of many
-    converging trials and none of them would have been non-finite (so skipping it changed no result, #135); the
+    every validation setting ran and passed with both maths; on the fast path the lazier Jacobian skipped the Jacobian
+    of many converging trials and none of them would have been non-finite (so skipping it changed no result, #135); the
     kernel grids above cover every recorded argument range; the fast path's deviation from libm is within
     FASTLAW_BOUND["deviation_dbc"] at every point, mono and stereo, with libm's Newton iterations."""
     from dk import fastmath as fm
     d = _fastlaw_domain()
     assert d["validation"] == {"libm": {"rows": 44, "failed": 0}, "fast": {"rows": 44, "failed": 0}}
-    for m in ("libm", "fast"):
-        lj = d["lazy_jacobian"][m]
-        assert lj["skipped_jacobians"] > 1e8 and lj["skipped_nonfinite"] == 0, (m, lj)
+    lj = d["lazy_jacobian"]["fast"]          # the lazier Jacobian's path (libm runs #104's eager solvers: none skipped)
+    assert lj["skipped_jacobians"] > 1e8 and lj["skipped_nonfinite"] == 0, lj
+    assert d["lazy_jacobian"]["libm"]["skipped_jacobians"] == 0
     grids = {g[0]: g for g in _kernel_grids(np.random.default_rng(0))}
     r = d["ranges"]
     assert grids["exp"][2].min() <= r["exp"]["min"] and r["exp"]["max"] <= 0.0

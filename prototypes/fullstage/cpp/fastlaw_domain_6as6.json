@@ -4,8 +4,8 @@
   "  domain     the arguments FastLaw's exp / log1p / pow / atan / sq receive (every Newton trial and line-search point,",
   "             the DC solves excluded: they are libm) on dk6as6.validate's signals, all 44 settings, standard and hq",
   "             (cpp/validate_cpp_6as6.py --math fast with the research probes), as #18's dk/fastmath_domain.py did for the",
-  "             triode; and, with libm and with fast maths, every converging 3-current trial whose Jacobian the lazier",
-  "             Jacobian skips and whether that Jacobian would have been finite (solver._resid3_safe's contract). Plus the"
+  "             triode; and, with fast maths (the lazier Jacobian's path: the libm path is #104's, eager), every",
+  "             converging 3-current trial whose Jacobian the lazier Jacobian skips and whether that Jacobian would have"
  ],
  "validation": {
   "libm": {
@@ -20,7 +20,7 @@
  "deviation_points": 192,
  "lazy_jacobian": {
   "libm": {
-   "skipped_jacobians": 191411640,
+   "skipped_jacobians": 0,
    "skipped_nonfinite": 0
   },
   "fast": {

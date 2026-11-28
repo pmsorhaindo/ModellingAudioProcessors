@@ -4,9 +4,10 @@ kernel, next to their speed (cpp/RESULTS-cpu-6as6.md).
   domain     the arguments FastLaw's exp / log1p / pow / atan / sq receive (every Newton trial and line-search point,
              the DC solves excluded: they are libm) on dk6as6.validate's signals, all 44 settings, standard and hq
              (cpp/validate_cpp_6as6.py --math fast with the research probes), as #18's dk/fastmath_domain.py did for the
-             triode; and, with libm and with fast maths, every converging 3-current trial whose Jacobian the lazier
-             Jacobian skips and whether that Jacobian would have been finite (solver._resid3_safe's contract). Plus the
-             same probes on the deviation signals below. -> cpp/fastlaw_domain_6as6.json
+             triode; and, with fast maths (the lazier Jacobian's path: the libm path is #104's, eager), every
+             converging 3-current trial whose Jacobian the lazier Jacobian skips and whether that Jacobian would have
+             been finite (solver._resid3_safe's contract). Plus the same probes on the deviation signals below.
+             -> cpp/fastlaw_domain_6as6.json
   deviation  the fast path's output against the libm path's on the same input, mono and on the two-lane kernel (vector
              lane maths): sines at 0.05 / 0.5 / 2 / 8 V peak and 100 Hz / 1 kHz / 15 kHz, every supported setting with
              the default grid current and P1 0.45 mA without it, standard and hq, 48 kHz, after the 1.25 s settle; per

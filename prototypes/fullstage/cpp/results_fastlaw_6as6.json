@@ -1,10 +1,10 @@
 {
  "method": [
-  "             same probes on the deviation signals below. -> cpp/fastlaw_domain_6as6.json",
+  "             been finite (solver._resid3_safe's contract). Plus the same probes on the deviation signals below.",
+  "             -> cpp/fastlaw_domain_6as6.json",
   "  deviation  the fast path's output against the libm path's on the same input, mono and on the two-lane kernel (vector",
   "             lane maths): sines at 0.05 / 0.5 / 2 / 8 V peak and 100 Hz / 1 kHz / 15 kHz, every supported setting with",
-  "             the default grid current and P1 0.45 mA without it, standard and hq, 48 kHz, after the 1.25 s settle; per",
-  "             point max |y_fast - y_libm| and its RMS, relative to the libm output's fundamental (dBc, peak / RMS), and"
+  "             the default grid current and P1 0.45 mA without it, standard and hq, 48 kHz, after the 1.25 s settle; per"
  ],
  "settle_s": 1.25,
  "window_s": 0.5,
