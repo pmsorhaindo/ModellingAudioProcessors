@@ -291,11 +291,15 @@ namespace detail {
 /* One evaluation point of the law, split in two passes (#135): values() computes the currents and keeps what the
  * Jacobian needs; jacobian() adds the gradients from it. values() then jacobian() is pentode.currents(_grid) operation
  * for operation (the same expressions, the same values), so splitting changes no bit; it lets a solver evaluate a trial
- * without its Jacobian and add the Jacobian only where it is used. */
+ * without its Jacobian and add the Jacobian only where it is used. What is deferred is what costs: the two pow calls
+ * (E1^(EX - 1), (Va / KVB)^2) and the arithmetic after them. The gradients' other parts, divisions mostly, are
+ * computed in the values pass, where they overlap the libm calls' latency: deferred, they ran as one burst of ~15
+ * divisions on the Newton step's critical path, 14-16 % slower on CI's x86-64 runner (#135 review, the paired
+ * control in cpp/RESULTS-cpu-6as6.md). */
 struct LawWork {
-    double vg1, va, g2, a, ea, spa, e1, pe, x, xa, sm, s, knee, ik0, kf, ik, f;   // cathode share
-    double zg, eg, sg1, pg, ig1;                                                    // grid current
-    bool floor, gon;
+    double va, e1, pe, s, knee, ik0, kf, ik, f;                                     // cathode share
+    double sa, de1_g2, dz_g3, dz_a, ds, dik_z;                                      // ... its gradients' parts
+    double ig1, dig1;                                                               // grid current
 };
 
 /* pentode.cathode_share, the values: Ik and f; `raised` where Python's evaluation of the currents would raise. The
@@ -332,26 +336,26 @@ DK6AS6_HOT void cathode_values(double vg1, double vg2, double vg3, double va, co
     const double kf = 1.0 - p.KR * sm;
     const double ik = ik0 * kf;
     if (va > 0.0) { const double q = va / p.KVB; if (std::isinf(q * q) && std::isfinite(q)) raised = true; }
-    w.vg1 = vg1; w.va = va; w.floor = floor; w.g2 = g2; w.a = a; w.ea = ea; w.spa = spa; w.e1 = e1; w.pe = pe;
-    w.x = x; w.xa = xa; w.sm = sm; w.s = s; w.knee = knee; w.ik0 = ik0; w.kf = kf; w.ik = ik; w.f = f;
+    // the gradients' parts that need no pow (pentode.cathode_share's expressions)
+    const double sa = a >= 0.0 ? 1.0 / (1.0 + ea) : ea / (1.0 + ea);
+    const double de1_g2 = floor ? 0.0 : spa / p.KP - sa * vg1 / g2;
+    double dup;
+    if (p.XA == 1.0) dup = va > 0.0 ? 1.0 / p.MU3 : 0.0;
+    else dup = va > VA_FLOOR ? xa / x / p.MU3 : 0.0;
+    w.va = va; w.e1 = e1; w.pe = pe; w.s = s; w.knee = knee; w.ik0 = ik0; w.kf = kf; w.ik = ik; w.f = f;
+    w.sa = sa; w.de1_g2 = de1_g2; w.dz_g3 = 1.0 / p.S3; w.dz_a = dup / p.S3; w.ds = s * p.P3 * sm;
+    w.dik_z = ik0 * p.KR * sm * (1.0 - sm);
 }
 // pentode.cathode_share, the gradients d/d(Vg1k, Vg2k, Vg3k, Vak) of Ik and f at w
 template <class M>
 DK6AS6_HOT void cathode_jacobian(const LawWork& w, const PentodeParams& p, double (&dik)[4], double (&dfs)[4], bool& raised) {
-    const double sa = w.a >= 0.0 ? 1.0 / (1.0 + w.ea) : w.ea / (1.0 + w.ea);
-    const double de1_g1 = sa;
-    const double de1_g2 = w.floor ? 0.0 : w.spa / p.KP - sa * w.vg1 / w.g2;
+    const double de1_g1 = w.sa;
     const double dik0 = 2.0 * p.EX * M::pow_m1(w.e1, p.EX, w.pe, raised) / p.KG1;
-    double dup;
-    if (p.XA == 1.0) dup = w.va > 0.0 ? 1.0 / p.MU3 : 0.0;
-    else dup = w.va > VA_FLOOR ? w.xa / w.x / p.MU3 : 0.0;
-    const double dik0_g1 = dik0 * de1_g1, dik0_g2 = dik0 * de1_g2;
-    const double dz_g1 = -p.RI * dik0_g1 / p.S3, dz_g2 = -p.RI * dik0_g2 / p.S3, dz_g3 = 1.0 / p.S3,
-                 dz_a = dup / p.S3;
-    const double ds = w.s * p.P3 * w.sm;
+    const double dik0_g1 = dik0 * de1_g1, dik0_g2 = dik0 * w.de1_g2;
+    const double dz_g1 = -p.RI * dik0_g1 / p.S3, dz_g2 = -p.RI * dik0_g2 / p.S3, dz_g3 = w.dz_g3, dz_a = w.dz_a;
     const double dknee = w.va > 0.0 ? 2.0 / PI / p.KVB / (1.0 + M::sq(w.va / p.KVB, raised)) : 0.0;
-    const double df_z = p.FMAX * w.knee * ds, df_a = p.FMAX * dknee * w.s;
-    const double dik_z = w.ik0 * p.KR * w.sm * (1.0 - w.sm);
+    const double df_z = p.FMAX * w.knee * w.ds, df_a = p.FMAX * dknee * w.s;
+    const double dik_z = w.dik_z;
     dik[0] = dik0_g1 * w.kf + dik_z * dz_g1;
     dik[1] = dik0_g2 * w.kf + dik_z * dz_g2;
     dik[2] = dik_z * dz_g3;
@@ -378,18 +382,15 @@ DK6AS6_HOT double grid_values(double vg1, const GridParams& g, LawWork& w, bool&
     const double eg = M::exp(-std::fabs(zg));
     const double sp = zg >= 0.0 ? zg + M::log1p(eg) : M::log1p(eg);
     const double sg1 = sp / g.CG;
-    const bool gon = !(sg1 <= 0.0);
-    const double pg = gon ? M::pow(sg1, g.XI, raised) : 0.0;        // (pg unused when !gon)
-    const double ig1 = gon ? g.GG * pg : 0.0;
-    w.zg = zg; w.eg = eg; w.sg1 = sg1; w.gon = gon; w.pg = pg; w.ig1 = ig1;
-    return ig1;
+    if (sg1 <= 0.0) { w.ig1 = 0.0; w.dig1 = 0.0; return 0.0; }       // (0, 0) where softplus underflows
+    const double pg = M::pow(sg1, g.XI, raised);
+    const double sg = zg >= 0.0 ? 1.0 / (1.0 + eg) : eg / (1.0 + eg);
+    w.ig1 = g.GG * pg;
+    w.dig1 = g.GG * g.XI * pg / sg1 * sg;                            // dIg1/dVg1k: no pow of its own, so here
+    return w.ig1;
 }
-// ... and dIg1/dVg1k (0 where softplus underflows)
-DK6AS6_HOT double grid_jacobian(const LawWork& w, const GridParams& g) {
-    if (!w.gon) return 0.0;
-    const double sg = w.zg >= 0.0 ? 1.0 / (1.0 + w.eg) : w.eg / (1.0 + w.eg);
-    return g.GG * g.XI * w.pg / w.sg1 * sg;
-}
+// ... and dIg1/dVg1k
+DK6AS6_HOT double grid_jacobian(const LawWork& w, const GridParams&) { return w.dig1; }
 }  // namespace detail
 
 // i = (Ip, Ig2[, Ig1]) and J = d i / d(Vg1k, Vg2k, Vg3k, Vak); `raised`: where Python would raise
