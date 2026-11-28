@@ -302,7 +302,8 @@ STEREO_BUILDS = [(("-O2",), False), (("-O3",), False), (("-O2", "-ffp-contract=o
 def test_stereo_parity_6as6(flags, scalar):
     """Every vector case on StereoStage (left: the case's input, right: 0.6 x it reversed) against two mono Stages,
     for libm, per-lane fast and vector fast lane maths; the solvers on 32 400 fuzzed lanes (lanes diverging in
-    iterations and restarts, non-finite starts, max_it 1..50); per-lane recovery, float I/O, the FP mode."""
+    iterations and restarts, non-finite starts, max_it 1..50), each lane's internal record and the kernel's iteration
+    count; per-lane recovery, float I/O, the FP mode."""
     if "-march=x86-64-v3" in flags and not X86:
         pytest.skip("x86-64 only")
     exe = _exe(flags, ("DKCORE_SIMD_SCALAR",) if scalar else ())
@@ -316,29 +317,37 @@ def test_stereo_parity_6as6(flags, scalar):
     assert r["stereo_runs"] == 90 and r["vector_runs"] == 45 and r["stereo_lanes_differ_runs"] >= 100
     assert r["stereo_solve_lanes"] == 32400 and r["stereo_solve_lanes_differ"] >= 5000
     assert r["stereo_solve_restart_differ"] >= 500
+    # #135 review: each lane's internal record (Vg1k, Vg2k, Vak, Ig1, Ip + Ig2, iterations) is its mono Stage's; the
+    # kernel's iteration count is per start the longer lane's, summed, also where the longer lane changes
+    assert r["stereo_record_runs"] == 135 and r["stereo_record_err"] <= 1e-9
+    assert r["stereo_kernel_longest_changes"] > 0
+    if r["stereo_solve_flag_mismatch"] == 0:
+        assert r["stereo_kernel_mismatch"] == 0
     if _stereo_exact_expected(flags, scalar, r["compiler"], r["fma"]):
         assert r["stereo_exact"] == 1 and r["vector_exact"] == 1, f"{r['compiler']} fma={r['fma']}\n" + p.stderr[-3000:]
 
 
-# The fast law's error bounds (cpp/README-6as6.md, "CPU (#135)"): measured worst (Apple clang 17 -O2, macOS libm,
-# 28 Nov 2026) in the comment, asserted with margin. Kernels: relative to libm, where libm's result is a positive normal
-# (below the fast domain both call libm: bit-equal). Law: currents against the cathode current Ik = Ip + Ig2 + Ig1
-# (Ig2 = (Ik - Ig1) - Ip cancels; a plain relative error has no bound there), Ig1 relative, each Jacobian entry against
-# its row's L1 norm, where Ik >= LAW_IK_MIN; below it (subnormal currents: zero in the stage, FTZ / DAZ) the absolute
-# error stays below LAW_IK_MIN. "raised" (where Python raises) identical everywhere.
+# The fast law's error bounds (cpp/RESULTS-cpu-6as6.md, "Accuracy evidence"): measured worst (Apple clang 17 -O2,
+# macOS libm, 28 Nov 2026) in the comment, asserted with margin. Kernels: relative to libm, where libm's result is a
+# positive normal (below the fast domain exp / log1p call libm: bit-equal). Law: each current against its terms (#18's
+# convention): the grid law's Ip, Ig2 against Ik + Ig1 (they are (Ik - Ig1) f and (Ik - Ig1)(1 - f); a plain relative
+# error has no bound where Ig1 ~ Ik), the two-port law's against Ik; Ig1 relative; each Jacobian entry against its
+# row's L1 norm. LAW_I_CUTOFF is a test cutoff, not the subnormal range: below it (the two-port law only: Ik
+# underflowing towards E1^EX's subnormal range, where E1^EX / E1 loses relative precision; 0 in the stage under
+# FTZ / DAZ below 2.2e-308) the absolute error stays below it. "raised" (where Python raises) identical everywhere.
 FASTLAW_BOUND = dict(
     exp=1e-12,            # 3.87e-13 (dk/fastmath.py BOUND["exp"], #18)
     log1p=3e-13,          # 9.24e-14 (dk/fastmath.py BOUND["log1p"])
     pow_EX=1e-12,         # 5.17e-13, bases to 1e-300 (|EX log s| to 1029); 3.93e-13 where |EX log s| <= 50
     pow_XA=1e-12,         # 3.88e-13
     pow_XI=1e-12,         # 4.13e-13
-    law_i=3e-12,          # 1.21e-12 (dk/fastmath.py BOUND["currents"] is 3e-12 for the 12AX7)
+    law_i=3e-12,          # grid law vs Ik + Ig1 1.17e-12, two-port vs Ik 1.21e-12 (#18's triode: 3e-12)
     law_ig1=3e-12,        # 1.01e-12
-    law_j=3e-11,          # 8.63e-12
+    law_j=3e-11,          # 8.4e-12
     stage_rel_peak=1e-10,  # test_core_6as6 fast_vs_libm_max_rel_peak: 3.68e-12 (3.46e-11 V, case P1_g_0.6_s8)
     deviation_dbc=-180.0,  # cpp/results_fastlaw_6as6.json: peak -205.4 dBc, RMS -210.4, largest line -211.8
 )
-LAW_IK_MIN = 1e-290
+LAW_I_CUTOFF = 1e-290
 DBL_MIN = 2.2250738585072014e-308
 
 
@@ -397,17 +406,62 @@ def test_fastlaw_law_bounds():
     L, F = o[:, 0], o[:, 1]
     assert np.array_equal(L[:, 15], F[:, 15])                 # where Python would raise
     L, F = L[L[:, 15] == 0], F[L[:, 15] == 0]
-    for i0, ni, j0, nj in ((0, 3, 3, 3), (16, 2, 18, 2)):     # the grid law; the two-port law
-        ik = np.sum(np.abs(L[:, i0:i0 + ni]), axis=1)
-        big = ik >= LAW_IK_MIN
-        di = np.abs(F[:, i0:i0 + 2] - L[:, i0:i0 + 2])
-        assert np.max(di[big] / ik[big, None]) <= FASTLAW_BOUND["law_i"]
-        assert np.max(di[~big]) <= LAW_IK_MIN
-        J, JF = L[:, j0:j0 + 4 * nj].reshape(-1, nj, 4), F[:, j0:j0 + 4 * nj].reshape(-1, nj, 4)
-        rs = np.sum(np.abs(J), axis=2, keepdims=True)
-        assert np.max((np.abs(JF - J) / np.where(rs > 0, rs, 1.0))[big]) <= FASTLAW_BOUND["law_j"]
-    g1 = (np.abs(L[:, 2]) >= LAW_IK_MIN)
+    ik = L[:, 16] + L[:, 17]          # the cathode current Ik = Ip + Ig2 of the two-port law at the same point (libm)
+    ig1 = np.abs(L[:, 2])
+    # the grid law: Ip = (Ik - Ig1) f and Ig2 = (Ik - Ig1)(1 - f), so their terms are Ik and Ig1 (#18's convention,
+    # dk/fastmath.py BOUND["currents"]): the error against Ik + Ig1 where that is >= LAW_I_CUTOFF (every random point:
+    # Ig1 never underflows in the box), absolute below it (the edge rows, e.g. Vg1k = -800 V or all-zero voltages)
+    terms = np.abs(ik) + ig1
+    tb = terms >= LAW_I_CUTOFF
+    di = np.max(np.abs(F[:, 0:2] - L[:, 0:2]), axis=1)
+    assert np.mean(tb) > 0.9999 and np.max(di[tb] / terms[tb]) <= FASTLAW_BOUND["law_i"]
+    assert np.max(di[~tb], initial=0.0) <= LAW_I_CUTOFF
+    g1 = ig1 >= LAW_I_CUTOFF
     assert np.max(np.abs(F[g1, 2] / L[g1, 2] - 1)) <= FASTLAW_BOUND["law_ig1"]
+    J, JF = L[:, 3:15].reshape(-1, 3, 4), F[:, 3:15].reshape(-1, 3, 4)
+    rs = np.sum(np.abs(J), axis=2, keepdims=True)
+    assert np.max((np.abs(JF - J) / np.where(rs > 0, rs, 1.0))[terms >= LAW_I_CUTOFF]) <= FASTLAW_BOUND["law_j"]
+    # the two-port law (no grid current): the error against Ik where Ik >= LAW_I_CUTOFF; below it, absolute
+    big = np.abs(ik) >= LAW_I_CUTOFF
+    d2 = np.max(np.abs(F[:, 16:18] - L[:, 16:18]), axis=1)
+    assert np.max(d2[big] / np.abs(ik[big])) <= FASTLAW_BOUND["law_i"]
+    assert np.max(d2[~big], initial=0.0) <= LAW_I_CUTOFF
+    J2, J2F = L[:, 18:26].reshape(-1, 2, 4), F[:, 18:26].reshape(-1, 2, 4)
+    rs2 = np.sum(np.abs(J2), axis=2, keepdims=True)
+    assert np.max((np.abs(J2F - J2) / np.where(rs2 > 0, rs2, 1.0))[big]) <= FASTLAW_BOUND["law_j"]
+
+
+@pytest.mark.parametrize("cmd", ["sweep", "scan", "guardgrid"])
+def test_aliasing_path_selectors_guard_only(cmd):
+    """#135 review: --math / --stereo would mix paths in sweep / scan's shared cache and write them to the canonical
+    (libm, mono) records, so only the guard takes them."""
+    for opt in (["--math", "fast"], ["--stereo"]):
+        p = subprocess.run([sys.executable, "-m", "cpp.aliasing_6as6", cmd, *opt], cwd=ROOT, capture_output=True,
+                           text=True)
+        assert p.returncode == 2 and "guard command only" in p.stderr, (cmd, opt, p.stderr[-500:])
+
+
+def test_cpp_stage_stereo_records_its_own_lane():
+    """#135 review: with STEREO, CppStage takes the output and the internal signals (the burst criteria's Vg1k, Vg2k)
+    from one two-lane run, the left lane's; an output-only call works. The stereo lane equals the mono stage bit for
+    bit on builds that guarantee it, else within the vectors' TOL_PINNED_ABS (1e-9 V)."""
+    _exe()
+    x = 4.0 * np.sin(2 * np.pi * 1000.0 * np.arange(4800) / 48000.0)
+    saved = (VC.STEREO, VC.MATH)
+    try:
+        out = {}
+        for stereo in (False, True):
+            VC.STEREO, VC.MATH = stereo, "fast"
+            st = VC.CppStage(48000.0, mode="P1")
+            out[stereo] = st.process(x, record=("out", "vgk", "vg2k"))
+            y = VC.CppStage(48000.0, mode="P1").process(np.zeros(1))["out"]     # output only
+            assert y.shape == (1,) and np.isfinite(y).all()
+        for k in ("vgk", "vg2k"):
+            assert out[True]["_internal"][k].shape == (4800 * 8,)
+            assert np.max(np.abs(out[True]["_internal"][k] - out[False]["_internal"][k])) <= 1e-9
+        assert np.max(np.abs(out[True]["out"] - out[False]["out"])) <= 1e-9
+    finally:
+        VC.STEREO, VC.MATH = saved
 
 
 def test_fastlaw_records():

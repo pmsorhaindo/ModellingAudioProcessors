@@ -42,7 +42,8 @@ Run from prototypes/fullstage:
                                     [--update-baseline --reason "..."] [--math fast] [--stereo [--lanes per_lane]]
 #135: --math fast runs the guard on the fast valve law (LawMath::fast), --stereo on the two-lane kernel (the tone on the
 left lane, measured there), against the same limits and the same (libm, mono) baselines; the baselines are only ever
-written from the default path.
+written from the default path. Guard only: sweep / scan / guardgrid refuse the selectors (their cache and records are
+the libm mono path's).
 """
 import argparse
 import json
@@ -360,6 +361,10 @@ if __name__ == "__main__":
     ap.add_argument("--stereo", action="store_true", help="#135: the two-lane kernel")
     ap.add_argument("--lanes", choices=("vector", "per_lane"), default="vector")
     a = ap.parse_args()
+    if (a.math != "libm" or a.stereo) and a.cmd != "guard":
+        # sweep / scan share a cache keyed without the path, and sweep / scan / guardgrid write the canonical (libm,
+        # mono) records: the #135 selectors are for the guard only, which has no cache and writes no baseline from them
+        ap.error("--math / --stereo apply to the guard command only")
     if a.math != "libm":
         CLI_OPTS["math"] = a.math
     if a.stereo:

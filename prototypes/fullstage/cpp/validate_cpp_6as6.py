@@ -118,14 +118,10 @@ class CppStage:
             raise RuntimeError("CppStage: one process() call per instance")
         self._used = True
         rec = bool({"vgk", "vg2k"} & set(record))
-        if rec and STEREO:          # the two-lane kernel has no internal record: the internal signals are mono's
-            _, internal, _ = cli(vin, self.fs_base, self.os, self.mode, self.bias, self.grid_hardness,
-                                 drive=self.drive, output=self.output, fir=FIR, rec=True, math=MATH)
-        y, internal_m, info = cli(vin, self.fs_base, self.os, self.mode, self.bias, self.grid_hardness,
-                                  drive=self.drive, output=self.output, fir=FIR, rec=rec and not STEREO, math=MATH,
-                                  stereo=STEREO, lanes=LANES, probe=PROBE)
-        if not STEREO:
-            internal = internal_m
+        # with STEREO the signal is the left lane of the two-lane kernel, and so are the internal signals
+        y, internal, info = cli(vin, self.fs_base, self.os, self.mode, self.bias, self.grid_hardness,
+                                drive=self.drive, output=self.output, fir=FIR, rec=rec, math=MATH, stereo=STEREO,
+                                lanes=LANES, probe=PROBE)
         if PROBE:
             PROBES.append(info["probe"])
         self._stats = info["stats"]
