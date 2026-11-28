@@ -303,34 +303,37 @@ struct LawWork {
  * ** 2 is checked here directly), so the values alone already say whether Python would raise. */
 template <class M>
 DK6AS6_HOT void cathode_values(double vg1, double vg2, double vg3, double va, const PentodeParams& p, LawWork& w,
-                           bool& raised) {
-    w.vg1 = vg1; w.va = va;
-    w.floor = vg2 <= VG2_FLOOR;
-    w.g2 = w.floor ? VG2_FLOOR : vg2;
-    w.a = p.KP * (1.0 / p.MU + vg1 / w.g2);
-    w.ea = M::exp(-std::fabs(w.a));                                  // softplus_sigmoid(a)'s shared exp
-    w.spa = (w.a > 0.0 ? w.a : 0.0) + M::log1p(w.ea);
-    w.e1 = w.g2 / p.KP * w.spa;
-    w.pe = M::pow(w.e1, p.EX, raised);
-    w.ik0 = 2.0 * w.pe / p.KG1;
-    double up;
+                               bool& raised) {
+    // computed in locals and stored into w once at the end: GCC keeps w in memory, and a chain through its fields pays
+    // a store-to-load forward at every step (12-16 % on x86-64, #135 review); the arithmetic is the same
+    const bool floor = vg2 <= VG2_FLOOR;
+    const double g2 = floor ? VG2_FLOOR : vg2;
+    const double a = p.KP * (1.0 / p.MU + vg1 / g2);
+    const double ea = M::exp(-std::fabs(a));                         // softplus_sigmoid(a)'s shared exp
+    const double spa = (a > 0.0 ? a : 0.0) + M::log1p(ea);
+    const double e1 = g2 / p.KP * spa;
+    const double pe = M::pow(e1, p.EX, raised);
+    const double ik0 = 2.0 * pe / p.KG1;
+    double up, x = 1.0, xa = 1.0;                                    // (x, xa: unused when XA == 1)
     if (p.XA == 1.0) {
         up = va > 0.0 ? va / p.MU3 : 0.0;
     } else {
-        w.x = (va > VA_FLOOR ? va : VA_FLOOR) / VA0;
-        w.xa = M::pow(w.x, p.XA, raised);
-        up = VA0 / p.MU3 * (1.0 + (w.xa - 1.0) / p.XA);
+        x = (va > VA_FLOOR ? va : VA_FLOOR) / VA0;
+        xa = M::pow(x, p.XA, raised);
+        up = VA0 / p.MU3 * (1.0 + (xa - 1.0) / p.XA);
     }
-    const double mz = -((vg3 + up - p.V3C - p.RI * w.ik0) / p.S3);    // softplus_sigmoid(-z)
+    const double mz = -((vg3 + up - p.V3C - p.RI * ik0) / p.S3);     // softplus_sigmoid(-z)
     const double ez = M::exp(-std::fabs(mz));
     const double spz = (mz > 0.0 ? mz : 0.0) + M::log1p(ez);
-    w.sm = mz >= 0.0 ? 1.0 / (1.0 + ez) : ez / (1.0 + ez);
-    w.s = M::exp(-p.P3 * spz);
-    w.knee = va > 0.0 ? 2.0 / PI * M::atan(va / p.KVB) : 0.0;
-    w.f = p.FMAX * w.knee * w.s;
-    w.kf = 1.0 - p.KR * w.sm;
-    w.ik = w.ik0 * w.kf;
+    const double sm = mz >= 0.0 ? 1.0 / (1.0 + ez) : ez / (1.0 + ez);
+    const double s = M::exp(-p.P3 * spz);
+    const double knee = va > 0.0 ? 2.0 / PI * M::atan(va / p.KVB) : 0.0;
+    const double f = p.FMAX * knee * s;
+    const double kf = 1.0 - p.KR * sm;
+    const double ik = ik0 * kf;
     if (va > 0.0) { const double q = va / p.KVB; if (std::isinf(q * q) && std::isfinite(q)) raised = true; }
+    w.vg1 = vg1; w.va = va; w.floor = floor; w.g2 = g2; w.a = a; w.ea = ea; w.spa = spa; w.e1 = e1; w.pe = pe;
+    w.x = x; w.xa = xa; w.sm = sm; w.s = s; w.knee = knee; w.ik0 = ik0; w.kf = kf; w.ik = ik; w.f = f;
 }
 // pentode.cathode_share, the gradients d/d(Vg1k, Vg2k, Vg3k, Vak) of Ik and f at w
 template <class M>
@@ -371,14 +374,15 @@ inline void cathode_share(double vg1, double vg2, double vg3, double va, const P
 // pentode.grid_current, the value Ig1 (0 where softplus underflows) ...
 template <class M>
 DK6AS6_HOT double grid_values(double vg1, const GridParams& g, LawWork& w, bool& raised) {
-    w.zg = g.CG * vg1;
-    w.eg = M::exp(-std::fabs(w.zg));
-    const double sp = w.zg >= 0.0 ? w.zg + M::log1p(w.eg) : M::log1p(w.eg);
-    w.sg1 = sp / g.CG;
-    w.gon = !(w.sg1 <= 0.0);
-    if (!w.gon) { w.pg = 0.0; return w.ig1 = 0.0; }   // (pg unused then; set for the compilers)
-    w.pg = M::pow(w.sg1, g.XI, raised);
-    return w.ig1 = g.GG * w.pg;
+    const double zg = g.CG * vg1;                                    // locals first, as cathode_values
+    const double eg = M::exp(-std::fabs(zg));
+    const double sp = zg >= 0.0 ? zg + M::log1p(eg) : M::log1p(eg);
+    const double sg1 = sp / g.CG;
+    const bool gon = !(sg1 <= 0.0);
+    const double pg = gon ? M::pow(sg1, g.XI, raised) : 0.0;        // (pg unused when !gon)
+    const double ig1 = gon ? g.GG * pg : 0.0;
+    w.zg = zg; w.eg = eg; w.sg1 = sg1; w.gon = gon; w.pg = pg; w.ig1 = ig1;
+    return ig1;
 }
 // ... and dIg1/dVg1k (0 where softplus underflows)
 DK6AS6_HOT double grid_jacobian(const LawWork& w, const GridParams& g) {
