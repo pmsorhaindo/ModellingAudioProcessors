@@ -41,25 +41,33 @@ jobs:
         run: python -m cpp.bench --core 6as6 --reps 5 --seconds 1 --out bench_6as6_x86_64_linux_ci.json
       - name: Tables
         run: python -m cpp.bench --table bench_6as6_x86_64_linux_ci.json >> "$GITHUB_STEP_SUMMARY"
-      # #135 review: a paired control on this same runner. The base (git merge-base with main) and this head, the
-      # default setting's libm x1 / x2 rows at block 64, in the order base, head, base (A-B-A, so the drift of the VM
-      # is in the record); bench.py --pair prints head / base. Between the two the libm path differs by the lazier
+      # #135 review: a paired control on this same runner. The base (git merge-base with main), this head's core built
+      # with the base's harness (cpp/bench_6as6.cpp of the base: isolates the core from the harness), this head, and
+      # the base again (so the VM's drift is in the record): the default setting's libm x1 / x2 rows at block 64.
+      # bench.py --pair prints each / the base. Between the base and this head the libm path differs by the lazier
       # Jacobian (and the law's two passes it needs) only.
-      - name: Paired control (base / head / base, default libm rows)
+      - name: Paired control (base / head core + base harness / head / base, default libm rows)
         run: |
           base=$(git merge-base HEAD origin/main)
           git worktree add "$RUNNER_TEMP/base" "$base"
+          mixed="$RUNNER_TEMP/mixed/prototypes/fullstage"
+          mkdir -p "$mixed"
+          cp -r cpp dk "$mixed/"
+          cp "$RUNNER_TEMP/base/prototypes/fullstage/cpp/bench_6as6.cpp" "$mixed/cpp/bench_6as6.cpp"
           only="P1_0.45mA_0.5V_b64_x,P1_0.45mA_2V_b64_x,P1_0.45mA_8V_b64_x"
+          args="--core 6as6 --reps 5 --seconds 1 --only $only"
           here="$PWD"
-          (cd "$RUNNER_TEMP/base/prototypes/fullstage" && python -m cpp.bench --core 6as6 --reps 5 --seconds 1 --only "$only" --out "$here/pair_base_a.json")
-          python -m cpp.bench --core 6as6 --reps 5 --seconds 1 --only "$only" --out pair_head.json
-          (cd "$RUNNER_TEMP/base/prototypes/fullstage" && python -m cpp.bench --core 6as6 --reps 5 --seconds 1 --only "$only" --out "$here/pair_base_b.json")
-          python -m cpp.bench --pair pair_base_a.json pair_head.json pair_base_b.json >> "$GITHUB_STEP_SUMMARY"
+          (cd "$RUNNER_TEMP/base/prototypes/fullstage" && python -m cpp.bench $args --out "$here/pair_base_a.json")
+          (cd "$mixed" && python -m cpp.bench $args --label "head core, base harness" --out "$here/pair_mixed.json")
+          python -m cpp.bench $args --label head --out pair_head.json
+          (cd "$RUNNER_TEMP/base/prototypes/fullstage" && python -m cpp.bench $args --out "$here/pair_base_b.json")
+          python -m cpp.bench --pair pair_base_a.json pair_mixed.json pair_head.json pair_base_b.json >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: bench-6as6-x86-64-linux
           path: |
             prototypes/fullstage/bench_6as6_x86_64_linux_ci.json
             prototypes/fullstage/pair_base_a.json
+            prototypes/fullstage/pair_mixed.json
             prototypes/fullstage/pair_head.json
             prototypes/fullstage/pair_base_b.json

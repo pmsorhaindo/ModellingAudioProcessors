@@ -325,24 +325,27 @@ def table(rec):
 
 
 
-def table_pair(base_a, head, base_b):
-    """#135 review: a paired control from one runner, base / head / base (A-B-A): per configuration of all three, %
-    of one core and instructions (where counted), head / mean(base), and the base's drift (second / first)."""
-    recs = [{r["name"]: r for r in x["results"]} for x in (base_a, head, base_b)]
-    names = [n for n in recs[0] if n in recs[1] and n in recs[2]]
-    cpu = [x["host"].get("lscpu", {}).get("Model name") or x["host"].get("cpu") for x in (base_a, head, base_b)]
-    out = [f"**paired control, base `{base_a['build']['git']}` / head `{head['build']['git']}` / base** "
-           f"(one runner: {cpu[0]}{'' if len(set(cpu)) == 1 else ' — NOT the same CPU: ' + str(cpu)}): % of one "
-           "core at 48 kHz (median)", "",
-           "| configuration | base (1st) | head | base (2nd) | head / base | base drift | instr head / base |",
-           "|---|---|---|---|---|---|---|"]
+def table_pair(base_a, *rest):
+    """#135 review: a paired control from one runner: the base, then one or more builds, then the base again (A-B-A,
+    or A-B-C-A): per configuration in all, % of one core, each build / the mean of the two base runs, and the base's
+    drift (last / first)."""
+    runs = (base_a,) + rest
+    mids = runs[1:-1]
+    recs = [{r["name"]: r for r in x["results"]} for x in runs]
+    names = [n for n in recs[0] if all(n in r for r in recs)]
+    cpu = [x["host"].get("lscpu", {}).get("Model name") or x["host"].get("cpu") for x in runs]
+    labels = [x["build"].get("label") or x["build"]["git"] for x in mids]
+    out = [f"**paired control: base `{base_a['build']['git']}`, then {', '.join(labels)}, then the base** (one runner: "
+           f"{cpu[0]}{'' if len(set(cpu)) == 1 else ' — NOT the same CPU: ' + str(cpu)}): % of one core at 48 kHz "
+           "(median); / base = / the mean of the two base runs", "",
+           "| configuration | base (1st) | " + " | ".join(f"{lab} | {lab} / base" for lab in labels) +
+           " | base (2nd) | base drift |", "|---|---|" + "---|---|" * len(mids) + "---|---|"]
     for n in names:
-        a, h, b = (r[n] for r in recs)
+        a, b = recs[0][n], recs[-1][n]
         mb = (a["pct_core"] + b["pct_core"]) / 2
-        ins = [r.get("instr_per_sample") for r in (a, h, b)]
-        ir = "—" if None in ins else f"{ins[1] / ((ins[0] + ins[2]) / 2):.3f}"
-        out.append(f"| {n} | {a['pct_core']:.2f} | {h['pct_core']:.2f} | {b['pct_core']:.2f} | "
-                   f"{h['pct_core'] / mb:.3f} | {b['pct_core'] / a['pct_core']:.3f} | {ir} |")
+        cells = [f"{r[n]['pct_core']:.2f} | {r[n]['pct_core'] / mb:.3f}" for r in recs[1:-1]]
+        out.append(f"| {n} | {a['pct_core']:.2f} | " + " | ".join(cells) +
+                   f" | {b['pct_core']:.2f} | {b['pct_core'] / a['pct_core']:.3f} |")
     return "\n".join(out)
 
 
@@ -372,10 +375,13 @@ def main():
     ap.add_argument("--out", help="write the results file here (else stdout)")
     ap.add_argument("--table", metavar="RESULTS_JSON", help="print the markdown tables of a results file and exit")
     ap.add_argument("--core", choices=sorted(CORES), default="12ax7", help="which core's harness (default 12ax7)")
-    ap.add_argument("--pair", nargs=3, metavar=("BASE_A", "HEAD", "BASE_B"),
-                    help="#135: print the paired-control table of three results files from one runner and exit")
+    ap.add_argument("--pair", nargs="+", metavar="RESULTS_JSON",
+                    help="#135: the paired-control table of results files from one runner (base, builds..., base)")
+    ap.add_argument("--label", help="a name for this build in the record (build.label), e.g. for --pair")
     a = ap.parse_args(_argv_with_flags(sys.argv[1:]))
     if a.pair:
+        if len(a.pair) < 3:
+            ap.error("--pair needs the base, at least one build, and the base again")
         print(table_pair(*(json.load(open(f)) for f in a.pair)))
         return
     if a.table:
@@ -383,6 +389,8 @@ def main():
         print(table_6as6(rec) if rec["meta"].get("core") == "cpp/dk6as6_core.h" else table(rec))
         return
     rec = run(a.flags, a.reps, a.seconds, a.only, a.core)
+    if a.label:
+        rec["build"]["label"] = a.label
     if a.out:
         with open(a.out, "w") as f:
             dump(rec, f)

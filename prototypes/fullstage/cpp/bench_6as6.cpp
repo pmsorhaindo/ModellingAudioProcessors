@@ -21,6 +21,7 @@
 #include <chrono>
 #include <cinttypes>
 #include <cstdlib>
+#include <memory>
 
 #include "bench_common.h"   // FS, the signal, the counters, thread_cpu_ns, pct / median / jnum
 #ifdef DK6AS6_BENCH_ADAA
@@ -77,17 +78,18 @@ public:
     // #135: this BenchStage runs both channels on one StereoStage instead
     Status prepare_stereo(double fs, const BenchQuality& q, const Settings& s, LaneMath lm) {
         stereo_ = true;
-        stereo_stage_.set_lane_math(lm);
-        return stereo_stage_.prepare(fs, q.rate, s);
+        stereo_stage_.reset(new BenchStereo);   // only stereo rows hold one: a mono row keeps #104's layout
+        stereo_stage_->set_lane_math(lm);
+        return stereo_stage_->prepare(fs, q.rate, s);
     }
     void process_stereo(const double* l, const double* r, double* yl, double* yr, std::size_t n) {
-        stereo_stage_.process(l, r, yl, yr, n);
+        stereo_stage_->process(l, r, yl, yr, n);
     }
     bool stereo() const { return stereo_; }
-    const Stats& stats(int ch) const { return stereo_ ? stereo_stage_.stats(ch) : stats(); }
-    std::uint64_t kernel_iterations() const { return stereo_stage_.kernel_iterations(); }
+    const Stats& stats(int ch) const { return stereo_ ? stereo_stage_->stats(ch) : stats(); }
+    std::uint64_t kernel_iterations() const { return stereo_stage_->kernel_iterations(); }
     void reset() {
-        if (stereo_) { stereo_stage_.reset(); return; }
+        if (stereo_) { stereo_stage_->reset(); return; }
 #ifdef DK6AS6_BENCH_GRID_ADAA
         if (grid_adaa_) { grid_screen_.reset(); return; }
 #endif
@@ -116,7 +118,7 @@ public:
     }
 private:
     BenchCore stage_;
-    BenchStereo stereo_stage_;
+    std::unique_ptr<BenchStereo> stereo_stage_;
     bool stereo_ = false;
 #ifdef DK6AS6_BENCH_ADAA
     research::Screen screen_;
