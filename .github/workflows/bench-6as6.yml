@@ -43,8 +43,8 @@ jobs:
         run: python -m cpp.bench --table bench_6as6_x86_64_linux_ci.json >> "$GITHUB_STEP_SUMMARY"
       # #135 review: a paired control on this same runner, the default setting at block 64: the base (git merge-base with
       # main); this head's core with the base's harness (cpp/bench_6as6.cpp of the base: the libm rows, #104's law and
-      # solvers on both sides); this head with -DDK6AS6_EAGER_JACOBIAN (the Jacobian at every accepted trial, as
-      # solver.py) and without (the lazier Jacobian of the fast path, rows *_fast); the base again (the VM's drift).
+      # solvers on both sides); this head (the Jacobian at every accepted trial, as solver.py) and this head with
+      # -DDK6AS6_LAZY_JACOBIAN (the lazier Jacobian's research build; the fast rows *_fast differ); the base again.
       # bench.py --pair prints each / the base where the base has the row.
       - name: Paired control (base / head core / head eager / head / base)
         run: |
@@ -59,17 +59,17 @@ jobs:
           here="$PWD"
           (cd "$RUNNER_TEMP/base/prototypes/fullstage" && python -m cpp.bench $args --out "$here/pair_base_a.json")
           (cd "$mixed" && python -m cpp.bench $args --label "head core, base harness" --out "$here/pair_mixed.json")
-          python -m cpp.bench $args --flags "-O3 -DDK6AS6_EAGER_JACOBIAN" --label "head, eager J" --out pair_eager.json
-          python -m cpp.bench $args --label "head, lazy J" --out pair_head.json
+          python -m cpp.bench $args --label "head (eager J)" --out pair_head.json
+          python -m cpp.bench $args --flags "-O3 -DDK6AS6_LAZY_JACOBIAN" --label "head, lazy J" --out pair_lazy.json
           (cd "$RUNNER_TEMP/base/prototypes/fullstage" && python -m cpp.bench $args --out "$here/pair_base_b.json")
-          python -m cpp.bench --pair pair_base_a.json pair_mixed.json pair_eager.json pair_head.json pair_base_b.json >> "$GITHUB_STEP_SUMMARY"
+          python -m cpp.bench --pair pair_base_a.json pair_mixed.json pair_head.json pair_lazy.json pair_base_b.json >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: bench-6as6-x86-64-linux
           path: |
             prototypes/fullstage/bench_6as6_x86_64_linux_ci.json
             prototypes/fullstage/pair_base_a.json
-            prototypes/fullstage/pair_eager.json
+            prototypes/fullstage/pair_lazy.json
             prototypes/fullstage/pair_mixed.json
             prototypes/fullstage/pair_head.json
             prototypes/fullstage/pair_base_b.json

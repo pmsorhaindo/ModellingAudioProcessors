@@ -137,10 +137,10 @@ def _problems(st, rng, n):
     return p, s
 
 
-@pytest.mark.parametrize("defines", [(), ("DK6AS6_EAGER_JACOBIAN",)], ids=["lazy", "eager"])
+@pytest.mark.parametrize("defines", [(), ("DK6AS6_LAZY_JACOBIAN",)], ids=["eager", "lazy"])
 def test_bit_exact_solvers(defines):
-    """The solvers against the live Python ones, bit for bit: the lazier Jacobian (default) and the eager control
-    build (-DDK6AS6_EAGER_JACOBIAN, solver.py's evaluation order, #135 review)."""
+    """The solvers against the live Python ones, bit for bit: the default (solver.py's evaluation order) and the
+    lazier Jacobian's research build (-DDK6AS6_LAZY_JACOBIAN, #135)."""
     exe = _exe(("-O2", "-ffp-contract=off"), defines)
     rng = np.random.default_rng(1042)
     settings = [(solver.MAX_IT, solver.TOL_V, solver.TOL_F), (1, 0.0, 0.0), (3, 0.0, 0.0), (6, 1e-6, 1e-6)]
@@ -297,7 +297,8 @@ def _stereo_exact_expected(flags, scalar, compiler, fma):
 
 
 STEREO_BUILDS = [(("-O2",), False), (("-O3",), False), (("-O2", "-ffp-contract=off"), False),
-                 (("-O2",), True), (("-O2", "-ffp-contract=off"), True), (("-O2", "-march=x86-64-v3"), False)]
+                 (("-O2",), True), (("-O2", "-ffp-contract=off"), True), (("-O2", "-march=x86-64-v3"), False),
+                 (("-O2", "-DDK6AS6_LAZY_JACOBIAN"), False)]    # the lazier Jacobian's research build, both kernels
 
 
 @pytest.mark.parametrize("flags,scalar", STEREO_BUILDS, ids=lambda v: "scalar" if v is True else

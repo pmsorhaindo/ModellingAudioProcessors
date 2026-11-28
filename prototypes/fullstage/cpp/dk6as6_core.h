@@ -54,8 +54,8 @@
  *
  * CPU (#135; cpp/RESULTS-cpu-6as6.md). Settings::math selects the law's maths per pack: LawMath::libm (default,
  * Python's arithmetic, bit-exact; #104's law and solvers, namespace fused) or LawMath::fast (dk/fastmath.h; the law in
- * two passes with the lazier Jacobian, namespace twopass: a solver adds the Jacobian only where the next Newton step
- * uses it). cpp/dk6as6_stereo.h adds StereoStage, the two-lane kernel (the twopass law and solvers on two lanes).
+ * two passes, namespace twopass). cpp/dk6as6_stereo.h adds StereoStage, the two-lane kernel (the twopass law and
+ * solvers on two lanes). The lazier Jacobian is a research switch (-DDK6AS6_LAZY_JACOBIAN), off by default.
  *
  * Do not build with -ffast-math (dk_core.h #errors): the fallbacks rely on NaN / inf comparisons.
  */
@@ -446,9 +446,9 @@ inline void currents_grid(const double (&v)[4], const PentodeParams& p, const Gr
 /* v = (Vg1k, Vg2k, Vg3k, Vak) at the returned iterate; i = the valve law there (as solver.py returns it: i - R);
  * it = iterations (summed over restarts); fv = ||K R||inf there (inf if no finite iterate); attempts = starts tried.
  *
- * The lazier Jacobian (#135; twopass: LawMath::fast and the two-lane kernel; the libm path is fused's, eager):
- * solver.py evaluates the law with its Jacobian at every accepted trial, the one that converges included, whose
- * Jacobian is never used. Here a trial is evaluated without it (detail::values*) and the
+ * The lazier Jacobian (#135; twopass, with -DDK6AS6_LAZY_JACOBIAN only, see EAGER_JACOBIAN below; the libm path is
+ * fused's): solver.py evaluates the law with its Jacobian at every accepted trial, the one that converges included,
+ * whose Jacobian is never used. Here a trial is evaluated without it (detail::values*) and the
  * Jacobian is added from the same evaluation (detail::jacobian*) only where the next Newton step uses it: at the
  * start and at an accepted trial that has not converged. The line search, whose trials need no Jacobian in Python
  * either, takes it at the point it accepts, from that point's own values pass instead of a second evaluation. The
@@ -458,13 +458,15 @@ inline void currents_grid(const double (&v)[4], const PentodeParams& p, const Gr
  * Measured not to occur (cpp/RESULTS-cpu-6as6.md: 0 of 191 411 640 skipped Jacobians; the fuzzed solves). */
 struct Solution { double v[4]; double i[3]; int it; bool ok; double fv; int attempts; };
 
-/* -DDK6AS6_EAGER_JACOBIAN (control builds only, #135 review: the paired eager / lazy benchmark): the solvers evaluate
- * the Jacobian at every accepted trial, the converging one included, as solver.py does; the 3-current solve then
- * applies solver._resid3_safe's Jacobian check there too. */
-#ifdef DK6AS6_EAGER_JACOBIAN
-inline constexpr bool EAGER_JACOBIAN = true;
-#else
+/* The lazier Jacobian is OFF by default (#135 review): measured, it gains nothing (lazy / eager 0.996-1.004 on an
+ * Intel Xeon 6975P-C and 8573C, 1.000-1.009 on an AMD EPYC 9V74, 0.4-0.7 % fewer instructions on the M1; the paired
+ * control in cpp/RESULTS-cpu-6as6.md). By default the solvers evaluate the Jacobian at every accepted trial, the
+ * converging one included, as solver.py does, with solver._resid3_safe's Jacobian check there too.
+ * -DDK6AS6_LAZY_JACOBIAN (research and control builds only) skips the converging trial's Jacobian. */
+#ifdef DK6AS6_LAZY_JACOBIAN
 inline constexpr bool EAGER_JACOBIAN = false;
+#else
+inline constexpr bool EAGER_JACOBIAN = true;
 #endif
 
 namespace detail {

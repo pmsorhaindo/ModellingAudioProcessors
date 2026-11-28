@@ -10,8 +10,9 @@
  * Per-lane Newton (#21's method). Both lanes iterate in lock step under an "active" mask; a lane that converges, or
  * leaves its solve for any of solve_grid's reasons (a singular step, a non-finite step, no finite trial), is recorded
  * with its iteration count and frozen (every later update to it is select(active, new, old)). The line search is
- * masked the same way. The lazier Jacobian (#135, dk6as6_core.h "per-sample Newton") is the mono one, per lane: the
- * Jacobian is evaluated where any lane needs it and kept on those lanes only.
+ * masked the same way. The Jacobian follows the mono solvers' EAGER_JACOBIAN (dk6as6_core.h: at every accepted trial by
+ * default; with -DDK6AS6_LAZY_JACOBIAN not at a converging one), per lane: evaluated where any lane needs it and kept
+ * on those lanes only.
  * The #112 restart contract, per lane: solve_grid_restarts2 runs each start on the lanes that have not converged
  * yet (a lane that converges on its first start sits out the second), so the lanes diverge in restarts as they do
  * in iterations; each lane's result, iteration count (summed over its starts), attempts and flags are mono's. The
@@ -355,13 +356,14 @@ inline Solution2 solve2(const dkcore::simd::V2 (&p)[4], const double (&K)[4][3],
         r0 = select(act, g0, r0); r1 = select(act, g1, r1); fv = select(act, gv, fv);
         for (int k = 0; k < 4; ++k) v[k] = select(act, gvolt[k], v[k]);
         const M2 conv = act & lt(dv, tol_v) & lt(fv, tol_f);
+        if (EAGER_JACOBIAN) detail2::jacobian2<L>(gw, par, gL);   // as solve(): also at the converging trial
         if (const int cb = bits(conv)) {
             for (int l = 0; l < 2; ++l)
                 if (cb >> l & 1) { out.it[l] = it; out.ok[l] = true; }
             act = act & ~conv;
             if (!any(act)) break;
         }
-        detail2::jacobian2<L>(gw, par, gL);                // the Jacobian at the accepted point (active lanes)
+        if (!EAGER_JACOBIAN) detail2::jacobian2<L>(gw, par, gL);  // the Jacobian at the accepted point (active lanes)
         detail2::select_jacobian(act, gL, Lw, 2);
         const M2 better = act & (lt(fv, fb) | ~lt(fb, inf)) & lt(vabs(r0) + vabs(r1), inf);
         fb = select(better, fv, fb);
@@ -481,7 +483,8 @@ inline Solution2 solve_grid2(const dkcore::simd::V2 (&p)[4], const double (&K)[4
         M2 gok = detail2::resid3<L>(p, K, t, par, g, gr, gv, gvolt, gL, gw);
         for (int a = 0; a < 3; ++a) for (int b = 0; b < 4; ++b) gL.J[a][b] = Lw.J[a][b];
         // the full step accepted on its values: its Jacobian, unless it converges (as solve_grid)
-        const M2 need = act & gok & (lt(gv, fv) | lt(fv, tol_f)) & ~(lt(step_norm3(K, s, lam), tol_v) & lt(gv, tol_f));
+        const M2 need = act & gok & (lt(gv, fv) | lt(fv, tol_f)) &
+                        (EAGER_JACOBIAN ? all() : ~(lt(step_norm3(K, s, lam), tol_v) & lt(gv, tol_f)));
         if (any(need)) gok = (gok & ~need) | detail2::jacobian3_safe<L>(need, gw, par, g, gL, gv);
         const M2 search = act & ~(lt(gv, fv) | lt(fv, tol_f));
         if (any(search)) {
@@ -501,7 +504,8 @@ inline Solution2 solve_grid2(const dkcore::simd::V2 (&p)[4], const double (&K)[4
                 gok = (ls & hok) | (~ls & gok);
                 ls = ls & ~lt(hv, fv);
             }
-            const M2 need2 = search & gok & ~(lt(step_norm3(K, s, lam), tol_v) & lt(gv, tol_f));
+            const M2 need2 = search & gok &
+                             (EAGER_JACOBIAN ? all() : ~(lt(step_norm3(K, s, lam), tol_v) & lt(gv, tol_f)));
             if (any(need2)) gok = (gok & ~need2) | detail2::jacobian3_safe<L>(need2, gw, par, g, gL, gv);
         }
         const M2 fail = act & ~gok;                   // no finite trial along the step: leave with the best
