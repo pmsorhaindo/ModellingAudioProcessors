@@ -127,9 +127,11 @@ load average 7.7 / 11.6 / 12.6 (1 / 5 / 15 min) before the run, 6.0 / 7.2 / 7.5 
 harness.) Every stereo row is bit-identical to its x2 twin (`matches_x2`). Some passes ran partly on E-cores, so
 cycles are not quoted.
 
-**The clean M1 timing** in #135's comment is #143's acceptance item ("Clean M1 figures (percent of one core,
-method stated) for the 12AX7 stage and … the 6AS6 stage"), open, with PR #162 recording it as still to do. This
-machine stayed loaded (load average 5–17) through #135, so no clean figure could be taken here.
+**The clean M1 timing is still to do.** Michael asked for it on #135 (a quiet-machine `python -m cpp.bench --core
+6as6`), and #143's acceptance also lists it ("Clean M1 figures (percent of one core, method stated) for the 12AX7
+stage and … the 6AS6 stage"); PR #162 records it as still open. This machine stayed loaded (load average 5–17)
+through #135, so no clean figure could be taken here. The PR that adds this report is therefore *part of* #135, which
+stays open for that timing.
 
 **Where the time goes** (M1, `values3` per call, a 2 V trajectory, an informal micro-benchmark). The law is ~70 % of
 the stage. In libm, `pow` costs ~140 instructions, and the Jacobian law calls it 5 times (≈ 700 of 1 549
